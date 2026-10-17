@@ -4,7 +4,7 @@
   "private": true,
   "author": "Ruderud",
   "license": "MIT",
-  "description": "Windows tray app to run SRBMiner-MULTI on NVIDIA GPUs with fan/temperature safety watch, power limits and a read-only local status API",
+  "description": "Coin mining hub + PC manager for Windows/NVIDIA: miner recommendations with repo links, GPU dashboard, fan/temperature safety stop, power limits, mining and profit tracking",
   "repository": {
     "type": "git",
     "url": "https://github.com/Ruderud/crypthy.git"
