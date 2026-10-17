@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "author": "Ruderud",
+  "license": "MIT",
   "description": "Windows tray app to run SRBMiner-MULTI on NVIDIA GPUs with fan/temperature safety watch, power limits and a read-only local status API",
   "repository": {
     "type": "git",
@@ -37,6 +38,10 @@
       {
         "from": "resources/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
       }
     ],
     "directories": {
@@ -73,7 +78,8 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Crypthy-${version}-setup-${arch}.${ext}"
+      "artifactName": "Crypthy-${version}-setup-${arch}.${ext}",
+      "license": "LICENSE"
     }
   },
   "dependencies": {

@@ -230,3 +230,9 @@ Mac에서 wine 없이 Windows 패키지를 만들 수 있습니다. 코드 서�
 
   필드가 없으면 화면에 `-`로 표시될 뿐 앱은 계속 동작합니다. 다만 `bus_id`가 없으면 자동 매핑이 되지 않으므로 SRBMiner id를 직접 입력해야 합니다.
 - **Kryptex `miner/payouts` 항목 필드**: 지급 이력이 있는 지갑으로 아직 확인하지 못했습니다. 파서는 `amount`/`value`, `txid`/`id`/시각 중 있는 값을 사용합니다.
+
+## License
+
+[MIT](LICENSE) © 2026 Ruderud
+
+SRBMiner-MULTI는 이 저장소에 포함되지 않으며 자체 라이선스를 따릅니다(doktor83/SRBMiner-Multi).
