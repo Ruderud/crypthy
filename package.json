@@ -11,7 +11,57 @@
     "test": "vitest run",
     "start": "npm run build && electron .",
     "start:mock": "npm run build && CRYPTHY_MOCK=1 electron .",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never && node scripts/checksums.mjs"
+  },
+  "build": {
+    "appId": "io.github.ruderud.crypthy",
+    "productName": "Crypthy",
+    "artifactName": "Crypthy-${version}-win-${arch}.${ext}",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/ps",
+        "to": "ps",
+        "filter": [
+          "*.ps1"
+        ]
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Crypthy-${version}-setup-${arch}.${ext}"
+    }
   },
   "devDependencies": {
     "@types/node": "24.19.1",
