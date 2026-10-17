@@ -2,7 +2,7 @@
 // Windows 는 Electron 의 setLoginItemSettings 를 쓴다.
 import fs from 'node:fs';
 import os from 'node:os';
-import { posix as path } from 'node:path';
+import nodePath, { posix as path } from 'node:path';
 
 /** Desktop Entry Exec 값 규칙에 맞게 따옴표로 감싸고 " ` $ \ 를 이스케이프 */
 export function quoteExec(p: string): string {
@@ -33,6 +33,6 @@ export function setLinuxAutostart(enabled: boolean, execPath = process.env.APPIM
     fs.rmSync(file, { force: true });
     return;
   }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(nodePath.dirname(file), { recursive: true });
   fs.writeFileSync(file, buildDesktopEntry(execPath), { mode: 0o644 });
 }
