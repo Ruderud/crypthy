@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   minerApi: { adapter: 'srbminer', port: 21550 },
   safetyKill: true,
   openAtLogin: false,
+  updateIntervalMin: 60,
   gpus: [],
   safety: { fanStopPowerW: 100, fanStopSeconds: 10, tempWarnC: 80, tempStopC: 85 },
   profit: {

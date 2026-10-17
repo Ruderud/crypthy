@@ -22,7 +22,7 @@ import { fetchCoingecko, fetchKryptex, fetchMarketChart, fetchVastMedian } from 
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
 import { startStatusServer } from './statusApi';
-import { createUpdateController, DISABLED_UPDATE } from './updater';
+import { createUpdateController, DISABLED_UPDATE, MAX_INTERVAL_MIN, MIN_INTERVAL_MIN, mockUpdater, type UpdaterLike } from './updater';
 
 const APP_NAME = 'Crypthy';
 const MOCK = process.env.CRYPTHY_MOCK === '1';
@@ -33,8 +33,8 @@ const MAX_ALERTS = 50;
 const KILL_RETRY_MS = 15_000;
 const KILL_CONFIRM_MS = 4000;
 const REVIEW_REPEAT_MS = 6 * 3600_000;
-const UPDATE_FIRST_CHECK_MS = 60_000;
-const UPDATE_INTERVAL_MS = 6 * 3600_000;
+/** 창이 뜬 뒤 몇 초 안에 첫 확인 */
+const UPDATE_FIRST_CHECK_MS = 5_000;
 
 const IS_LINUX = process.platform === 'linux';
 const hw = MOCK ? mockHardware() : IS_LINUX ? linuxHardware(() => knownMiners) : windowsHardware;
@@ -463,13 +463,22 @@ function updateTray(st: AppState): void {
   const status = st.miner.running ? `채굴기 실행 중 (${st.miner.processes.join(', ') || 'API'})` : '채굴기 없음';
   const temps = st.gpus.filter((g) => g.present).map((g) => `${g.label} ${g.tempC ?? '-'}°C${g.hold ? ' 보류' : ''}`).join(' / ');
   tray.setToolTip(`${APP_NAME}\n${status}\n${temps}`.slice(0, 127));
-  if (status === trayKey) return;
-  trayKey = status;
+  const u = st.update;
+  const key = `${status}|${u.status}|${u.version}|${u.prompt}`;
+  if (key === trayKey) return;
+  trayKey = key;
+  const updateItem =
+    u.status === 'disabled'
+      ? []
+      : u.prompt || u.status === 'ready' || u.status === 'available'
+        ? [{ label: u.status === 'ready' ? `업데이트 v${u.version} 설치 준비됨…` : `새 버전 v${u.version} 있음…`, click: showWindow }]
+        : [{ label: '업데이트 확인', click: () => void updater?.checkNow() }];
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: status, enabled: false },
       { type: 'separator' },
       { label: '대시보드 열기', click: showWindow },
+      ...updateItem,
       { type: 'separator' },
       { label: '종료', click: () => { quitting = true; app.quit(); } },
     ]),
@@ -485,6 +494,9 @@ function validatePatch(p: Partial<Settings>): string | null {
   if (!catalog.coins.some((c) => c.id === next.coin)) return '알 수 없는 코인입니다';
   if (next.minerApi.adapter !== 'none' && !Object.hasOwn(MINER_APIS, next.minerApi.adapter)) return '지원하지 않는 채굴기 API 입니다';
   if (!Number.isInteger(next.minerApi.port) || next.minerApi.port < 1024 || next.minerApi.port > 65535) return '채굴기 API 포트는 1024~65535 정수여야 합니다';
+  if (!Number.isInteger(next.updateIntervalMin) || next.updateIntervalMin < MIN_INTERVAL_MIN || next.updateIntervalMin > MAX_INTERVAL_MIN) {
+    return `업데이트 확인 주기는 ${MIN_INTERVAL_MIN}~${MAX_INTERVAL_MIN}분 정수여야 합니다`;
+  }
   for (const g of next.gpus) {
     const nv = nvOf(g.id);
     const err = validateWatts(g.powerLimitW, nv?.powerMinW ?? null, nv?.powerMaxW ?? null);
@@ -518,28 +530,39 @@ function applyPatch(p: Partial<Settings>): string | null {
   }
   saveSettings();
   applyLoginItem();
+  updater?.setIntervalMin(settings.updateIntervalMin);
   return null;
 }
 
 /** 설치형(Windows NSIS) 과 Linux AppImage 에서만 자동 업데이트 (deb·zip 은 수동). 실패해도 안전 감시와 무관 */
 function startUpdater(): void {
+  const mockUpdate = MOCK && process.env.CRYPTHY_MOCK_UPDATE === '1';
   const supported = process.platform === 'win32' || (IS_LINUX && !!process.env.APPIMAGE);
-  if (MOCK || !app.isPackaged || !supported) return;
+  if (!mockUpdate && (MOCK || !app.isPackaged || !supported)) return;
   try {
-    const { autoUpdater } = require('electron-updater') as typeof import('electron-updater');
+    const source: UpdaterLike = mockUpdate ? mockUpdater() : (require('electron-updater') as typeof import('electron-updater')).autoUpdater;
     let lastStatus = '';
-    updater = createUpdateController(autoUpdater, {
+    updater = createUpdateController(source, {
       initialDelayMs: UPDATE_FIRST_CHECK_MS,
-      intervalMs: UPDATE_INTERVAL_MS,
+      intervalMin: settings.updateIntervalMin,
       onChange: (v) => {
-        if (v.status === lastStatus) return;
-        lastStatus = v.status;
-        if (v.status === 'ready') {
-          pushAlert({ ts: Date.now(), level: 'info', code: 'update_ready', message: `업데이트 v${v.version} 준비됨 — 화면 상단 "업데이트 설치"를 누르면 앱이 다시 시작됩니다` }, true);
-        } else if (v.status === 'error') {
+        if (v.status === 'error' && lastStatus !== 'error') {
           alertOnce({ ts: Date.now(), level: 'info', code: 'update_error', message: `업데이트 확인 실패: ${v.error}` }, 6 * 3600_000);
         }
+        lastStatus = v.status;
         broadcast();
+      },
+      // 새 안내가 뜰 때 OS 알림 (트레이에만 있어도 보이도록). 클릭하면 창을 연다
+      onPrompt: (v) => {
+        const message = v.prompt === 'ready'
+          ? `v${v.version} 를 받아 두었습니다. 재시작하면 설치됩니다 — 채굴은 계속됩니다`
+          : `새 버전 v${v.version} 이 있습니다. 앱에서 받기 / 나중에 를 고르세요`;
+        pushAlert({ ts: Date.now(), level: 'info', code: v.prompt === 'ready' ? 'update_ready' : 'update_available', message }, false);
+        if (Notification.isSupported()) {
+          const n = new Notification({ title: `${APP_NAME} 업데이트`, body: message });
+          n.on('click', showWindow);
+          n.show();
+        }
       },
     });
   } catch (e) {
@@ -547,22 +570,12 @@ function startUpdater(): void {
   }
 }
 
-async function installUpdate(): Promise<string | null> {
+/** 받아 둔 업데이트 설치 (사용자가 누를 때만). 채굴기는 앱과 별도 프로세스라 계속 돈다 */
+function installUpdate(): string | null {
   if (!updater || updater.view().status !== 'ready') return '설치할 업데이트가 없습니다';
-  if (running) {
-    const r = await dialog.showMessageBox({
-      type: 'question',
-      buttons: ['지금 설치', '나중에'],
-      defaultId: 1,
-      cancelId: 1,
-      title: `${APP_NAME} 업데이트`,
-      message: '채굴기가 실행 중입니다. 지금 업데이트를 설치할까요?',
-      detail: '채굴기는 앱과 별도 프로세스라 계속 돌지만, 앱이 다시 시작되는 동안(수십 초) 안전 감시가 멈춥니다.',
-    });
-    if (r.response !== 0) return '설치를 미뤘습니다';
-  }
   saveRuntime();
   writeJson(file('ledger.json'), ledger);
+  writeJson(file('history.json'), historyToJson(history));
   quitting = true;
   updater.install();
   return null;
@@ -588,7 +601,9 @@ function registerIpc(): void {
   ipcMain.handle('hub:openLink', async (_e, url: unknown) => {
     if (typeof url === 'string' && links.has(url)) await shell.openExternal(url);
   });
-  ipcMain.handle('update:check', () => updater?.check());
+  ipcMain.handle('update:check', () => updater?.checkNow());
+  ipcMain.handle('update:download', () => updater?.download());
+  ipcMain.handle('update:dismiss', () => updater?.dismiss());
   ipcMain.handle('update:install', () => installUpdate());
   ipcMain.handle('power:register', async () => {
     if (MOCK) return 'mock 모드에서는 예약 작업을 등록하지 않습니다';

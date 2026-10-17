@@ -25,8 +25,10 @@ export interface Settings {
   minerApi: { adapter: string; port: number };
   /** 위험 조건에서 실행 중인 알려진 채굴기 프로세스를 정지(재시작은 안 함) */
   safetyKill: boolean;
-  /** Windows 로그인 시 앱 자동 실행 */
+  /** 로그인 시 앱 자동 실행 */
   openAtLogin: boolean;
+  /** 업데이트 확인 주기(분). 30~1440, 기본 60 */
+  updateIntervalMin: number;
   gpus: GpuConfig[];
   safety: SafetyConfig;
   profit: ProfitConfig;
@@ -155,11 +157,17 @@ export interface HubView {
 }
 
 export interface UpdateView {
-  status: 'disabled' | 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
+  /** available = 새 버전 발견(아직 안 받음), ready = 받아 둠(재시작하면 설치) */
+  status: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
   version: string | null;
+  /** 릴리스 노트 요약(텍스트, 길이 제한) */
+  notes: string | null;
   progressPct: number | null;
   error: string | null;
   checkedAt: number | null;
+  /** 지금 사용자에게 띄울 안내. "나중에" 를 누르면 다음 확인 주기까지 null */
+  prompt: 'available' | 'ready' | null;
+  intervalMin: number;
 }
 
 /** 1분 평균 (null = 그 분에 값 없음) */
@@ -212,6 +220,8 @@ export interface Api {
   registerPowerTask(): Promise<string | null>;
   applyPowerLimits(): Promise<string | null>;
   checkUpdate(): Promise<void>;
+  downloadUpdate(): Promise<void>;
+  dismissUpdate(): Promise<void>;
   installUpdate(): Promise<string | null>;
   openLink(url: string): Promise<void>;
   getCharts(): Promise<ChartsView>;

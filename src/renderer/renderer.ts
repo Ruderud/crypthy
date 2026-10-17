@@ -130,6 +130,7 @@ function render(st: AppState) {
     disabled: `v${st.appVersion}`,
     idle: `v${st.appVersion}`,
     checking: `v${st.appVersion} · 업데이트 확인 중`,
+    available: `v${st.appVersion} · 새 버전 v${u.version} 있음`,
     downloading: `v${st.appVersion} · v${u.version ?? '?'} 내려받는 중 ${u.progressPct ?? 0}%`,
     ready: `v${st.appVersion} → v${u.version} 준비됨`,
     error: `v${st.appVersion} · 업데이트 확인 실패`,

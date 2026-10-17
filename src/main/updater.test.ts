@@ -1,72 +1,144 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import type { UpdateView } from '../shared/types';
-import { createUpdateController } from './updater';
+import { clampInterval, createUpdateController, summarizeNotes } from './updater';
 
-function fake(checkImpl: () => Promise<unknown> | null = () => Promise.resolve(null)) {
+function fake(onCheck?: (em: EventEmitter) => void) {
   const em = new EventEmitter();
   return Object.assign(em, {
-    autoDownload: false,
+    autoDownload: true,
     autoInstallOnAppQuit: true,
     allowPrerelease: true,
-    checkForUpdates: vi.fn(checkImpl),
+    checkForUpdates: vi.fn(async () => {
+      onCheck?.(em);
+      return null;
+    }),
+    downloadUpdate: vi.fn(async () => {
+      em.emit('download-progress', { percent: 50 });
+      em.emit('update-downloaded', { version: '0.4.0' });
+      return [];
+    }),
     quitAndInstall: vi.fn(),
   });
 }
 
-function setup(u = fake()) {
-  const views: UpdateView[] = [];
-  const timers: { ms: number; fn: () => void; repeat: boolean }[] = [];
+/** 새 버전(0.4.0)이 있는 서버 */
+const withUpdate = () => fake((em) => em.emit('update-available', { version: '0.4.0', releaseNotes: '<ul><li>fix A</li><li>fix B</li></ul>' }));
+
+function setup(u = withUpdate(), intervalMin = 60) {
+  const prompts: UpdateView[] = [];
+  const timers: { id: number; ms: number; fn: () => void; repeat: boolean; cleared?: boolean }[] = [];
+  let id = 0;
   const c = createUpdateController(u, {
-    initialDelayMs: 30_000,
-    intervalMs: 6 * 3600_000,
-    onChange: (v) => views.push(v),
-    setTimeout: (fn, ms) => timers.push({ fn, ms, repeat: false }),
-    setInterval: (fn, ms) => timers.push({ fn, ms, repeat: true }),
+    initialDelayMs: 3000,
+    intervalMin,
+    onChange: () => undefined,
+    onPrompt: (v) => prompts.push(v),
+    setTimeout: (fn, ms) => timers.push({ id: ++id, fn, ms, repeat: false }),
+    setInterval: (fn, ms) => (timers.push({ id: ++id, fn, ms, repeat: true }), id),
+    clearInterval: (h) => {
+      const t = timers.find((x) => x.id === h);
+      if (t) t.cleared = true;
+    },
     now: () => 42,
   });
-  return { u, c, views, timers };
+  const live = () => timers.filter((t) => t.repeat && !t.cleared);
+  const fire = async (t: { fn: () => void }) => {
+    t.fn();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  return { u, c, prompts, timers, live, fire };
 }
 
-describe('update controller', () => {
-  it('configures download-only behaviour (no install on quit, no prerelease)', () => {
-    const { u, timers } = setup();
-    expect(u.autoDownload).toBe(true);
+describe('schedule', () => {
+  it('checks shortly after launch, then every interval (default 1h); asks before downloading', async () => {
+    const { u, timers, live, fire, c } = setup();
+    expect(u.autoDownload).toBe(false);
     expect(u.autoInstallOnAppQuit).toBe(false);
-    expect(u.allowPrerelease).toBe(false);
-    expect(timers.map((t) => [t.ms, t.repeat])).toEqual([[30_000, false], [6 * 3600_000, true]]);
+    expect(timers[0]).toMatchObject({ ms: 3000, repeat: false });
+    expect(live().map((t) => t.ms)).toEqual([3_600_000]);
+    await fire(timers[0]);
+    expect(u.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(c.view()).toMatchObject({ status: 'available', version: '0.4.0', prompt: 'available', notes: '• fix A\n• fix B' });
+    expect(u.downloadUpdate).not.toHaveBeenCalled();
   });
 
-  it('tracks check → download → ready and installs only when ready', () => {
-    const { u, c } = setup();
-    expect(c.install()).toBe(false);
-    u.emit('checking-for-update');
-    u.emit('update-available', { version: '0.2.0' });
-    u.emit('download-progress', { percent: 41.6 });
-    expect(c.view()).toMatchObject({ status: 'downloading', version: '0.2.0', progressPct: 42 });
-    u.emit('update-downloaded', { version: '0.2.0' });
-    expect(c.view()).toMatchObject({ status: 'ready', version: '0.2.0' });
+  it('clamps the interval to 30 min – 24 h and reschedules on change', () => {
+    expect([clampInterval(5), clampInterval(90.4), clampInterval(99_999), clampInterval(Number.NaN)]).toEqual([30, 90, 1440, 60]);
+    const { c, live } = setup(withUpdate(), 5);
+    expect(live().map((t) => t.ms)).toEqual([30 * 60_000]);
+    c.setIntervalMin(120);
+    expect(live().map((t) => t.ms)).toEqual([120 * 60_000]);
+    expect(c.view().intervalMin).toBe(120);
+  });
+});
+
+describe('prompts and "later"', () => {
+  it('notifies once per version/stage per check cycle', async () => {
+    const { u, timers, prompts, fire, live } = setup();
+    await fire(timers[0]);
+    u.emit('update-available', { version: '0.4.0' }); // 같은 주기 안에 같은 이벤트가 또 와도
+    expect(prompts.map((p) => p.prompt)).toEqual(['available']);
+    await fire(live()[0]); // 다음 정기 확인 → 다시 알림
+    expect(prompts.map((p) => p.prompt)).toEqual(['available', 'available']);
+  });
+
+  it('"later" hides the same version until the next scheduled check', async () => {
+    const { c, timers, fire, live, prompts } = setup();
+    await fire(timers[0]);
+    c.dismiss();
+    expect(c.view().prompt).toBeNull();
+    expect(c.view().status).toBe('available');
+    await fire(live()[0]);
+    expect(c.view().prompt).toBe('available');
+    expect(prompts).toHaveLength(2);
+  });
+
+  it('a manual check shows a dismissed update again right away', async () => {
+    const { c, timers, fire } = setup();
+    await fire(timers[0]);
+    c.dismiss();
+    await c.checkNow();
+    expect(c.view().prompt).toBe('available');
+  });
+
+  it('download → ready prompt, which can also be postponed; install only on request', async () => {
+    const { u, c, timers, fire, live, prompts } = setup();
+    await fire(timers[0]);
+    await c.download();
+    expect(c.view()).toMatchObject({ status: 'ready', prompt: 'ready', version: '0.4.0' });
+    expect(prompts.map((p) => p.prompt)).toEqual(['available', 'ready']);
+    c.dismiss();
+    expect(c.view().prompt).toBeNull();
+    expect(u.quitAndInstall).not.toHaveBeenCalled();
+    await fire(live()[0]); // 정기 확인: 받아 둔 업데이트는 다시 받지 않고 안내만 다시
+    expect(u.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(c.view().prompt).toBe('ready');
     expect(c.install()).toBe(true);
     expect(u.quitAndInstall).toHaveBeenCalledWith(true, true);
   });
 
-  it('turns errors into state instead of throwing', async () => {
-    const { c } = setup(fake(() => Promise.reject(new Error('net::ERR_INTERNET_DISCONNECTED'))));
-    await expect(c.check()).resolves.toBeUndefined();
-    expect(c.view()).toMatchObject({ status: 'error', error: 'net::ERR_INTERNET_DISCONNECTED', checkedAt: 42 });
-  });
+  it('no update → no prompt; errors become state, never throw', async () => {
+    const quiet = setup(fake((em) => em.emit('update-not-available', {})));
+    await quiet.fire(quiet.timers[0]);
+    expect(quiet.c.view()).toMatchObject({ status: 'idle', prompt: null });
+    expect(quiet.prompts).toEqual([]);
 
-  it('does not re-check while an update is downloading or ready', async () => {
-    const { u, c } = setup();
-    u.emit('update-downloaded', { version: '0.2.0' });
-    await c.check();
-    expect(u.checkForUpdates).not.toHaveBeenCalled();
+    const broken = fake();
+    broken.checkForUpdates = vi.fn(async () => {
+      throw new Error('net::ERR_INTERNET_DISCONNECTED');
+    });
+    const b = setup(broken);
+    await b.fire(b.timers[0]);
+    expect(b.c.view()).toMatchObject({ status: 'error', error: 'net::ERR_INTERNET_DISCONNECTED', prompt: null });
   });
+});
 
-  it('scheduled timers call check', async () => {
-    const { u, timers } = setup();
-    timers[0].fn();
-    await Promise.resolve();
-    expect(u.checkForUpdates).toHaveBeenCalledTimes(1);
+describe('summarizeNotes', () => {
+  it('turns HTML or note arrays into short text', () => {
+    expect(summarizeNotes('<h2>Changes</h2><p>a &amp; b</p>')).toBe('Changes\na & b');
+    expect(summarizeNotes([{ version: '1', note: '<li>x</li>' }])).toBe('• x');
+    expect(summarizeNotes('')).toBeNull();
+    expect(summarizeNotes('x'.repeat(1000))!.length).toBe(600);
   });
 });
