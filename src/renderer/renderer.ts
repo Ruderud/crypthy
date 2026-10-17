@@ -1,4 +1,5 @@
 import type { Api, AppState, GpuConfig, GpuView, Settings } from '../shared/types';
+import { createCharts } from './charts.js';
 
 const crypthy = (window as unknown as { crypthy: Api }).crypthy;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -301,5 +302,34 @@ $('updateBtn').addEventListener('click', async () => {
   if (err) $('updateInfo').textContent = err;
 });
 
-crypthy.onState(render);
+const charts = createCharts({ gpu: $('gpuChart'), price: $('priceChart'), daily: $('dailyChart'), legend: $('chartLegend') });
+async function refreshCharts() {
+  const v = await crypthy.getCharts();
+  $('priceTitle').textContent = `${v.symbol} 시세 (USD, 30일)`;
+  charts.render(v);
+}
+$('metricTabs').addEventListener('click', (e) => {
+  const m = (e.target as HTMLElement).dataset.metric as 'hash' | 'temp' | 'power' | undefined;
+  if (!m) return;
+  document.querySelectorAll('#metricTabs button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.metric === m));
+  charts.setMetric(m);
+});
+document.querySelector('footer')!.addEventListener('click', (e) => {
+  const url = (e.target as HTMLElement).closest<HTMLElement>('[data-link]')?.dataset.link;
+  if (!url) return;
+  e.preventDefault();
+  void crypthy.openLink(url);
+});
+
+// 시세·풀 데이터가 새로 들어오면(updatedAt 변경) 차트도 다시 받는다
+let chartsAt: number | null = null;
+crypthy.onState((st) => {
+  render(st);
+  if (st.profit.updatedAt !== chartsAt) {
+    chartsAt = st.profit.updatedAt;
+    void refreshCharts();
+  }
+});
 void refresh();
+void refreshCharts();
+setInterval(() => void refreshCharts(), 60_000);

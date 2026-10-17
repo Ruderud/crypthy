@@ -100,3 +100,23 @@ export function mockHardware(): Hardware {
     },
   };
 }
+
+/** 모의 모드 전용: 차트가 비어 보이지 않게 최근 6시간 GPU 기록과 14일 장부를 합성한다 */
+export function mockSeed(now: number): { gpus: { id: string; points: { t: number; hash: number; temp: number; power: number }[] }[]; days: Record<string, { prl: number; kwh: number }> } {
+  const minute = 60_000;
+  const start = Math.floor(now / minute) * minute - 6 * 60 * minute;
+  const gpu = (id: string, hash: number, temp: number, power: number, phase: number) => ({
+    id,
+    points: Array.from({ length: 6 * 60 }, (_, i) => {
+      const w = Math.sin(i / 37 + phase) * 0.03 + Math.sin(i / 7) * 0.01;
+      return { t: start + i * minute, hash: hash * (1 + w), temp: Math.round((temp + w * 60) * 10) / 10, power: Math.round(power * (1 + w / 2)) };
+    }),
+  });
+  const days: Record<string, { prl: number; kwh: number }> = {};
+  for (let d = 13; d >= 0; d--) {
+    const t = new Date(now - d * 86_400_000);
+    const key = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    days[key] = { prl: Math.round((5.6 + Math.sin(d / 2) * 0.6) * 1000) / 1000, kwh: Math.round((20.5 + Math.cos(d) * 0.8) * 10) / 10 };
+  }
+  return { gpus: [gpu('00000000:01:00.0', 354e12, 63, 588, 0), gpu('00000000:10:00.0', 226e12, 68, 279, 1.3)], days };
+}

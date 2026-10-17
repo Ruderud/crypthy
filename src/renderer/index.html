@@ -29,6 +29,20 @@
       <p class="muted small">Crypthy 는 채굴기를 내려받거나 실행하지 않습니다. 저장소 링크를 열어 직접 확인·설치하세요. dev fee 는 각 출처에서 확인한 값이며, 확인하지 못한 값은 "미확인"으로 표시합니다. 채굴기 바이너리는 보안 프로그램에 탐지될 수 있으니 출처와 해시를 직접 확인하세요.</p>
     </section>
 
+    <section class="card wide">
+      <h2>차트
+        <span class="tabs" id="metricTabs">
+          <button data-metric="hash" class="on">해시레이트</button><button data-metric="temp">온도</button><button data-metric="power">전력</button>
+        </span>
+        <span class="muted small" id="chartLegend"></span>
+      </h2>
+      <div class="chart" id="gpuChart"></div>
+      <div class="chart-row">
+        <div><h3 id="priceTitle">시세 (USD, 30일)</h3><div class="chart small-chart" id="priceChart"></div></div>
+        <div><h3>일별 채굴량 <span class="muted small">(막대, 왼쪽)</span> · 순수익 원 <span class="muted small">(선, 오른쪽)</span></h3><div class="chart small-chart" id="dailyChart"></div></div>
+      </div>
+    </section>
+
     <section class="card wide setup" id="setupCard" hidden>
       <h2>처음 설정 <span class="muted small">Crypthy 는 채굴기를 설치·실행하지 않습니다. 채굴기는 직접 설치·실행하고, 여기서는 감시·수익 확인만 합니다</span></h2>
       <ol class="steps">
@@ -108,6 +122,11 @@
       <p class="muted small">로컬 상태 API: http://127.0.0.1:47321/v1/status (읽기 전용, 이 PC에서만 접근)</p>
     </section>
   </main>
+  <footer class="muted small">
+    Crypthy · MIT · 차트: <a href="#" data-link="https://www.tradingview.com/">TradingView Lightweight Charts™</a>
+    (Copyright (c) 2025 TradingView, Inc., Apache-2.0)
+  </footer>
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
   <script type="module" src="renderer.js"></script>
 </body>
 </html>

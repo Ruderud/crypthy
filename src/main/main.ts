@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Alert, AppState, ChartsView, CompareRow, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
 import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog } from './catalog';
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
-import { mockHardware, realHardware } from './hardware';
+import { mockHardware, mockSeed, realHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
@@ -612,6 +612,8 @@ function loadState(): void {
   catalog = loadCatalog(path.join(__dirname, '..', 'catalog.json'));
   knownMiners = knownProcessNames(catalog);
   links = allowedLinks(catalog);
+  // 차트 라이브러리 라이선스 고지 링크
+  links.add('https://www.tradingview.com/');
   const raw = readJson<Partial<Settings> & { apiPort?: unknown }>(file('settings.json'), {});
   settings = mergeSettings(DEFAULT_SETTINGS, raw);
   // 0.1.x 의 SRBMiner API 포트(apiPort)를 이어받는다
@@ -619,6 +621,11 @@ function loadState(): void {
   if (!catalog.coins.some((c) => c.id === settings.coin)) settings.coin = catalog.coins[0].id;
   ledger = { ...emptyLedger(), ...readJson<Partial<Ledger>>(file('ledger.json'), {}) };
   history = loadHistory(readJson<unknown>(file('history.json'), null));
+  if (MOCK && Object.keys(history.series).length === 0) {
+    const seed = mockSeed(Date.now());
+    for (const g of seed.gpus) history.series[g.id] = g.points;
+    ledger.days = { ...seed.days, ...ledger.days };
+  }
   // 0.1.x 의 안전 제외(excluded)는 보류(holds)로 이어받는다
   const saved = readJson<{ holds?: Record<string, string>; excluded?: Record<string, string> }>(file('runtime.json'), {});
   runtime = { holds: saved.holds ?? saved.excluded ?? {} };
