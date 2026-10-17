@@ -2,7 +2,10 @@
   "name": "crypthy",
   "version": "0.2.1",
   "private": true,
-  "author": "Ruderud",
+  "author": {
+    "name": "Ruderud",
+    "email": "Ruderud@users.noreply.github.com"
+  },
   "license": "MIT",
   "description": "Coin mining hub + PC manager for Windows/NVIDIA: miner recommendations with repo links, GPU dashboard, fan/temperature safety stop, power limits, mining and profit tracking",
   "repository": {
@@ -17,7 +20,8 @@
     "start": "npm run build && electron .",
     "start:mock": "npm run build && CRYPTHY_MOCK=1 electron .",
     "icons": "node scripts/make-icons.mjs",
-    "dist:win": "npm run build && electron-builder --win --x64 --publish never && node scripts/checksums.mjs"
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never && node scripts/checksums.mjs",
+    "dist:linux": "npm run build && electron-builder --linux --x64 --publish never && node scripts/checksums.mjs"
   },
   "build": {
     "appId": "io.github.ruderud.crypthy",
@@ -28,13 +32,6 @@
       "package.json"
     ],
     "extraResources": [
-      {
-        "from": "resources/ps",
-        "to": "ps",
-        "filter": [
-          "*.ps1"
-        ]
-      },
       {
         "from": "resources/icon.png",
         "to": "icon.png"
@@ -72,7 +69,16 @@
       ],
       "icon": "resources/icon.png",
       "signExecutable": false,
-      "verifyUpdateCodeSignature": false
+      "verifyUpdateCodeSignature": false,
+      "extraResources": [
+        {
+          "from": "resources/ps",
+          "to": "ps",
+          "filter": [
+            "*.ps1"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -80,6 +86,41 @@
       "allowToChangeInstallationDirectory": true,
       "artifactName": "Crypthy-${version}-setup-${arch}.${ext}",
       "license": "LICENSE"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "icon": "resources/icon.png",
+      "executableName": "crypthy",
+      "synopsis": "Coin mining hub and PC manager",
+      "artifactName": "Crypthy-${version}-linux-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "resources/linux",
+          "to": "linux",
+          "filter": [
+            "*.sh",
+            "*.py"
+          ]
+        }
+      ],
+      "syncDesktopName": true
+    },
+    "deb": {
+      "artifactName": "Crypthy-${version}-linux-${arch}.${ext}"
     }
   },
   "dependencies": {
@@ -92,5 +133,7 @@
     "lightweight-charts": "5.2.1",
     "typescript": "6.0.3",
     "vitest": "5.0.3"
-  }
+  },
+  "homepage": "https://github.com/Ruderud/crypthy",
+  "desktopName": "crypthy.desktop"
 }
