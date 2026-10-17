@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { allowedLinks, knownProcessNames, loadCatalog, parseCatalog, parseVendors, recommend, type Catalog } from './catalog';
+import { allowedLinks, knownProcessNames, loadCatalog, parseCatalog, parseVendors, recommend, vendorsFromPciIds, type Catalog } from './catalog';
 
 const catalog = loadCatalog(path.join(__dirname, '../../catalog/catalog.json'));
 
@@ -89,6 +89,11 @@ describe('helpers', () => {
     const links = allowedLinks(catalog);
     expect(links.has('https://github.com/doktor83/SRBMiner-Multi')).toBe(true);
     expect(links.has('https://example.com')).toBe(false);
+  });
+
+  it('maps Linux PCI vendor ids to GPU vendors', () => {
+    expect(vendorsFromPciIds(['0x10de\n', '0x8086\n', '0x10de\n', '0x1af4\n'])).toEqual(['nvidia', 'intel']);
+    expect(vendorsFromPciIds([])).toEqual([]);
   });
 
   it('parses GPU vendors from Win32_VideoController names', () => {

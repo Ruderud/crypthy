@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Alert, AppState, ChartsView, CompareRow, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
 import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog } from './catalog';
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
-import { mockHardware, mockSeed, realHardware } from './hardware';
+import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
@@ -33,7 +33,8 @@ const REVIEW_REPEAT_MS = 6 * 3600_000;
 const UPDATE_FIRST_CHECK_MS = 60_000;
 const UPDATE_INTERVAL_MS = 6 * 3600_000;
 
-const hw = MOCK ? mockHardware() : realHardware;
+const IS_LINUX = process.platform === 'linux';
+const hw = MOCK ? mockHardware() : IS_LINUX ? linuxHardware(() => knownMiners) : windowsHardware;
 const file = (name: string) => path.join(app.getPath('userData'), name);
 
 interface Runtime {
@@ -618,7 +619,7 @@ function applyLoginItem(): void {
 
 function loadState(): void {
   catalog = loadCatalog(path.join(__dirname, '..', 'catalog.json'));
-  knownMiners = knownProcessNames(catalog, process.platform === 'linux' ? 'linux' : 'windows');
+  knownMiners = knownProcessNames(catalog, IS_LINUX ? 'linux' : 'windows');
   links = allowedLinks(catalog);
   // 차트 라이브러리 라이선스 고지 링크
   links.add('https://www.tradingview.com/');

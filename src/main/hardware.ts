@@ -6,8 +6,10 @@
 //   CRYPTHY_MOCK_UNNAMED=1                    프로세스 이름을 모르는 채굴기 (API 로만 감지)
 //   CRYPTHY_MOCK_TASKLISTFAIL=1               tasklist 가 항상 실패
 import { execFile } from 'node:child_process';
-import { parseVendors, type Vendor } from './catalog';
+import fs from 'node:fs';
+import { parseVendors, vendorsFromPciIds, type Vendor } from './catalog';
 import { killMiner, runningMiners } from './miner';
+import { killMinerLinux, runningMinersLinux } from './procLinux';
 import { minerApi, type MinerStats } from './minerApi';
 import { queryNvsmi, type NvGpu } from './nvsmi';
 
@@ -20,7 +22,13 @@ export interface Hardware {
   kill(exe: string): Promise<string | null>;
 }
 
-export const realHardware: Hardware = {
+function minerStatsVia(adapter: string, port: number): Promise<MinerStats> {
+  const a = minerApi(adapter);
+  return a ? a.fetch(port) : Promise.reject(new Error(`unknown miner API ${adapter}`));
+}
+
+/** Windows: tasklist/taskkill, Win32_VideoController */
+export const windowsHardware: Hardware = {
   queryGpus: () => queryNvsmi(),
   gpuVendors: () =>
     new Promise((resolve, reject) =>
@@ -31,13 +39,31 @@ export const realHardware: Hardware = {
         (err, stdout) => (err ? reject(err) : resolve(parseVendors(stdout))),
       ),
     ),
-  minerStats: (adapter, port) => {
-    const a = minerApi(adapter);
-    return a ? a.fetch(port) : Promise.reject(new Error(`unknown miner API ${adapter}`));
-  },
+  minerStats: minerStatsVia,
   runningMiners: (known) => runningMiners(known),
   kill: (exe) => killMiner(exe),
 };
+
+/** Linux: /proc 스캔(컨테이너 제외), sysfs 벤더 id */
+export function linuxHardware(known: () => string[]): Hardware {
+  return {
+    queryGpus: () => queryNvsmi(),
+    gpuVendors: async () => {
+      const ids: string[] = [];
+      for (const card of fs.readdirSync('/sys/class/drm').filter((d) => /^card\d+$/.test(d))) {
+        try {
+          ids.push(fs.readFileSync(`/sys/class/drm/${card}/device/vendor`, 'utf8'));
+        } catch {
+          // 가상 카드 등 vendor 파일이 없는 항목은 건너뜀
+        }
+      }
+      return vendorsFromPciIds(ids);
+    },
+    minerStats: minerStatsVia,
+    runningMiners: async (names) => runningMinersLinux(names),
+    kill: (name) => killMinerLinux(name, known()),
+  };
+}
 
 export function mockHardware(): Hardware {
   const t0 = Date.now();

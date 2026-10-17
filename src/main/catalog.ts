@@ -129,6 +129,13 @@ export function allowedLinks(catalog: Catalog): Set<string> {
   return urls;
 }
 
+/** Linux sysfs(/sys/class/drm/cardN/device/vendor) 의 PCI 벤더 id(예: 0x10de) → GPU 벤더 */
+export function vendorsFromPciIds(ids: string[]): Vendor[] {
+  const map: Record<string, Vendor> = { '0x10de': 'nvidia', '0x1002': 'amd', '0x8086': 'intel' };
+  const found = new Set(ids.map((id) => map[id.trim().toLowerCase()]).filter(Boolean));
+  return (['nvidia', 'amd', 'intel'] as const).filter((v) => found.has(v));
+}
+
 /** Win32_VideoController 이름 목록 → GPU 벤더 */
 export function parseVendors(out: string): Vendor[] {
   const vendors = new Set<Vendor>();
