@@ -23,7 +23,7 @@ describe('catalog file', () => {
 });
 
 describe('parseCatalog', () => {
-  const tool = { name: 'A', repo: 'https://github.com/x/a', repoKind: 'developer' as const, processNames: ['a.exe'], statsApi: null, apiNote: '', sources: ['https://x.example/a'] };
+  const tool = { name: 'A', repo: 'https://github.com/x/a', repoKind: 'developer' as const, processNames: { windows: ['a.exe'], linux: ['a'] }, statsApi: null, apiNote: '', sources: ['https://x.example/a'] };
   const coin = (devFee: object, toolId = 'a', source = 'https://pool.example/guide') => ({ id: 'c', name: 'C', symbol: 'C', algorithm: 'x', coingeckoId: 'c', pools: [{ name: 'P', stats: 'kryptex', ticker: 'c', examples: [], source }], tools: [{ tool: toolId, vendors: [], devFee, note: '' }] });
   const base = (): Catalog => ({ version: 1, checkedAt: '2026-10-17', tools: { a: { ...tool } }, coins: [coin({ pct: 1, status: 'verified', source: 'https://x.example/fee' })] as Catalog['coins'] });
 
@@ -42,7 +42,9 @@ describe('parseCatalog', () => {
     expect(() => parseCatalog({ ...base(), coins: [] })).toThrow(/no coins/);
     expect(() => parseCatalog({ ...base(), coins: [coin({ pct: null, status: 'unverified', source: null }, 'a', 'javascript:alert(1)')] })).toThrow(/non-https/);
     expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, sources: ['file:///etc/passwd'] } } })).toThrow(/non-https/);
-    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, processNames: ['a.exe /f /im explorer.exe'] } } })).toThrow(/process name/);
+    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, processNames: { windows: ['a.exe /f /im explorer.exe'], linux: [] } } } })).toThrow(/process name/);
+    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, processNames: { windows: [], linux: ['bad name; rm'] } } } })).toThrow(/linux process name/);
+    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, processNames: ['a.exe'] } } } as never)).toThrow(/process name/);
   });
 });
 
@@ -78,8 +80,9 @@ describe('recommend', () => {
 });
 
 describe('helpers', () => {
-  it('collects known miner process names', () => {
-    expect(knownProcessNames(catalog)).toEqual(['SRBMiner-MULTI.exe', 'peakminer.exe', 'forge.exe', 'arc-miner.exe']);
+  it('collects known miner process names per platform', () => {
+    expect(knownProcessNames(catalog, 'windows')).toEqual(['SRBMiner-MULTI.exe', 'peakminer.exe', 'forge.exe', 'arc-miner.exe']);
+    expect(knownProcessNames(catalog, 'linux')).toEqual(['SRBMiner-MULTI', 'peakminer', 'forge']);
   });
 
   it('allows only catalog links', () => {

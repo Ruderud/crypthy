@@ -1,45 +1,69 @@
 {
   "version": 1,
   "checkedAt": "2026-10-17",
-  "note": "큐레이션 목록. Crypthy 는 채굴기를 내려받거나 실행하지 않고 저장소 링크만 보여 준다. 수치는 sources 의 페이지에서 확인한 값이며, 확인하지 못한 값은 null + status 'unverified' 로 둔다.",
+  "note": "큐레이션 목록. Crypthy 는 채굴기를 내려받거나 실행하지 않고 저장소 링크만 보여 준다. 수치는 sources 의 페이지에서 확인한 값이며, 확인하지 못한 값은 null + status 'unverified' 로 둔다. processNames 는 플랫폼별로, 릴리스 아카이브 안의 실행 파일 이름을 확인한 것만 넣는다(Linux 는 v3.7.6/2.19.1/1.8.8 아카이브 목록으로 확인).",
   "tools": {
     "srbminer": {
       "name": "SRBMiner-MULTI",
       "repo": "https://github.com/doktor83/SRBMiner-Multi",
       "repoKind": "developer",
-      "processNames": ["SRBMiner-MULTI.exe"],
+      "processNames": {
+        "windows": ["SRBMiner-MULTI.exe"],
+        "linux": ["SRBMiner-MULTI"]
+      },
       "statsApi": "srbminer",
       "apiNote": "--api-enable --api-port <port> (기본 21550)",
-      "sources": ["https://github.com/doktor83/SRBMiner-Multi/blob/master/README.md", "https://github.com/doktor83/SRBMiner-Multi/blob/master/Parameters"]
+      "sources": [
+        "https://github.com/doktor83/SRBMiner-Multi/blob/master/README.md",
+        "https://github.com/doktor83/SRBMiner-Multi/blob/master/Parameters",
+        "https://github.com/doktor83/SRBMiner-Multi/releases/tag/3.7.6"
+      ]
     },
     "peakminer": {
       "name": "PeakMiner",
       "repo": "https://github.com/kryptex-miners-org/kryptex-miners",
       "repoKind": "distribution",
       "repoNote": "Kryptex 풀 가이드가 링크하는 배포처(miner.download) 의 GitHub 릴리스 저장소. 개발자 정보는 미확인",
-      "processNames": ["peakminer.exe"],
+      "processNames": {
+        "windows": ["peakminer.exe"],
+        "linux": ["peakminer"]
+      },
       "statsApi": null,
       "apiNote": "내장 HTTP 통계 API 언급만 있음 (포트·형식 미확인)",
-      "sources": ["https://miner.download/en/peakminer", "https://pool.kryptex.com/en/articles/how-to-mine-pearl-en"]
+      "sources": [
+        "https://miner.download/en/peakminer",
+        "https://pool.kryptex.com/en/articles/how-to-mine-pearl-en",
+        "https://github.com/kryptex-miners-org/kryptex-miners/releases/tag/peakminer-2-19-1"
+      ]
     },
     "forgeminer": {
       "name": "ForgeMiner",
       "repo": "https://github.com/kryptex-miners-org/kryptex-miners",
       "repoKind": "distribution",
       "repoNote": "Kryptex 풀 가이드가 링크하는 배포처(miner.download) 의 GitHub 릴리스 저장소. 개발자 정보는 미확인",
-      "processNames": ["forge.exe"],
+      "processNames": {
+        "windows": ["forge.exe"],
+        "linux": ["forge"]
+      },
       "statsApi": null,
       "apiNote": "통계 API 미확인",
-      "sources": ["https://miner.download/en/forge", "https://pool.kryptex.com/en/articles/how-to-mine-pearl-en"]
+      "sources": [
+        "https://miner.download/en/forge",
+        "https://pool.kryptex.com/en/articles/how-to-mine-pearl-en",
+        "https://github.com/kryptex-miners-org/kryptex-miners/releases/tag/forge-1-8-8"
+      ]
     },
     "arcminer": {
       "name": "ARCMiner",
       "repo": null,
       "repoKind": "unverified",
       "repoNote": "Kryptex Pearl 가이드에 Intel Arc 전용(Windows) 으로만 언급됨. 공식 저장소·dev fee 미확인이라 링크하지 않음",
-      "processNames": ["arc-miner.exe"],
+      "processNames": {
+        "windows": ["arc-miner.exe"],
+        "linux": []
+      },
       "statsApi": null,
-      "apiNote": "미확인",
+      "apiNote": "미확인 (Windows 전용)",
       "sources": ["https://pool.kryptex.com/en/articles/how-to-mine-pearl-en"]
     },
     "quantus-miner": {
@@ -47,7 +71,10 @@
       "repo": "https://github.com/Quantus-Network/quantus-miner",
       "repoKind": "developer",
       "repoNote": "Quantus Network 공식 채굴기. GPU 는 wgpu(Vulkan/DX12) 와 CUDA(--cuda-gpu) 경로",
-      "processNames": [],
+      "processNames": {
+        "windows": [],
+        "linux": []
+      },
       "statsApi": null,
       "apiNote": "실행 파일 이름·통계 API 미확인 (안전 감시 자동 정지 대상 아님)",
       "sources": ["https://github.com/Quantus-Network/quantus-miner"]
@@ -65,15 +92,59 @@
           "name": "Kryptex",
           "stats": "kryptex",
           "ticker": "prl",
-          "examples": ["prl.kryptex.network:8048", "prl-hk.kryptex.network:8048", "prl-sg.kryptex.network:8048", "prl-eu.kryptex.network:8048"],
+          "examples": [
+            "prl.kryptex.network:8048",
+            "prl-hk.kryptex.network:8048",
+            "prl-sg.kryptex.network:8048",
+            "prl-eu.kryptex.network:8048"
+          ],
           "source": "https://pool.kryptex.com/en/articles/how-to-mine-pearl-en"
         }
       ],
       "tools": [
-        { "tool": "srbminer", "vendors": ["nvidia", "amd"], "devFee": { "pct": 2.0, "status": "verified", "source": "https://github.com/doktor83/SRBMiner-Multi/blob/master/README.md" }, "note": "README 기준 pearlhash 는 AMD·NVIDIA (Intel 미지원)" },
-        { "tool": "forgeminer", "vendors": ["nvidia"], "devFee": { "pct": 2.0, "status": "verified", "source": "https://miner.download/en/forge" }, "note": "NVIDIA 전용" },
-        { "tool": "peakminer", "vendors": ["nvidia"], "devFee": { "pct": 3.0, "status": "verified", "source": "https://miner.download/en/peakminer" }, "note": "NVIDIA Turing(RTX 20) 이상" },
-        { "tool": "arcminer", "vendors": ["intel"], "devFee": { "pct": null, "status": "unverified", "source": null }, "note": "Intel Arc 전용, Windows 전용 (가이드 언급만)" }
+        {
+          "tool": "srbminer",
+          "vendors": [
+            "nvidia",
+            "amd"
+          ],
+          "devFee": {
+            "pct": 2.0,
+            "status": "verified",
+            "source": "https://github.com/doktor83/SRBMiner-Multi/blob/master/README.md"
+          },
+          "note": "README 기준 pearlhash 는 AMD·NVIDIA (Intel 미지원)"
+        },
+        {
+          "tool": "forgeminer",
+          "vendors": ["nvidia"],
+          "devFee": {
+            "pct": 2.0,
+            "status": "verified",
+            "source": "https://miner.download/en/forge"
+          },
+          "note": "NVIDIA 전용"
+        },
+        {
+          "tool": "peakminer",
+          "vendors": ["nvidia"],
+          "devFee": {
+            "pct": 3.0,
+            "status": "verified",
+            "source": "https://miner.download/en/peakminer"
+          },
+          "note": "NVIDIA Turing(RTX 20) 이상"
+        },
+        {
+          "tool": "arcminer",
+          "vendors": ["intel"],
+          "devFee": {
+            "pct": null,
+            "status": "unverified",
+            "source": null
+          },
+          "note": "Intel Arc 전용, Windows 전용 (가이드 언급만)"
+        }
       ]
     },
     {
@@ -92,10 +163,55 @@
         }
       ],
       "tools": [
-        { "tool": "srbminer", "vendors": ["nvidia", "amd", "intel"], "devFee": { "pct": null, "status": "conflict", "source": "https://github.com/doktor83/SRBMiner-Multi/blob/master/README.md", "note": "README 2.00% / miner.download·Kryptex 가이드 2.5% 로 출처가 다름" }, "note": "Kryptex 가이드는 NVIDIA RTX 30 이상·AMD RX 6000 이상으로 안내" },
-        { "tool": "forgeminer", "vendors": ["nvidia"], "devFee": { "pct": 2.0, "status": "verified", "source": "https://miner.download/en/forge" }, "note": "NVIDIA 전용. Kryptex Quantus 가이드에는 없음" },
-        { "tool": "peakminer", "vendors": ["nvidia"], "devFee": { "pct": 2.0, "status": "verified", "source": "https://miner.download/en/peakminer" }, "note": "NVIDIA 전용. Kryptex Quantus 가이드에는 없음" },
-        { "tool": "quantus-miner", "vendors": ["nvidia", "amd", "intel"], "devFee": { "pct": null, "status": "unverified", "source": null }, "note": "공식 채굴기. 벤더별 성능 미확인" }
+        {
+          "tool": "srbminer",
+          "vendors": [
+            "nvidia",
+            "amd",
+            "intel"
+          ],
+          "devFee": {
+            "pct": null,
+            "status": "conflict",
+            "source": "https://github.com/doktor83/SRBMiner-Multi/blob/master/README.md",
+            "note": "README 2.00% / miner.download·Kryptex 가이드 2.5% 로 출처가 다름"
+          },
+          "note": "Kryptex 가이드는 NVIDIA RTX 30 이상·AMD RX 6000 이상으로 안내"
+        },
+        {
+          "tool": "forgeminer",
+          "vendors": ["nvidia"],
+          "devFee": {
+            "pct": 2.0,
+            "status": "verified",
+            "source": "https://miner.download/en/forge"
+          },
+          "note": "NVIDIA 전용. Kryptex Quantus 가이드에는 없음"
+        },
+        {
+          "tool": "peakminer",
+          "vendors": ["nvidia"],
+          "devFee": {
+            "pct": 2.0,
+            "status": "verified",
+            "source": "https://miner.download/en/peakminer"
+          },
+          "note": "NVIDIA 전용. Kryptex Quantus 가이드에는 없음"
+        },
+        {
+          "tool": "quantus-miner",
+          "vendors": [
+            "nvidia",
+            "amd",
+            "intel"
+          ],
+          "devFee": {
+            "pct": null,
+            "status": "unverified",
+            "source": null
+          },
+          "note": "공식 채굴기. 벤더별 성능 미확인"
+        }
       ]
     }
   ]

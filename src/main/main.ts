@@ -618,7 +618,7 @@ function applyLoginItem(): void {
 
 function loadState(): void {
   catalog = loadCatalog(path.join(__dirname, '..', 'catalog.json'));
-  knownMiners = knownProcessNames(catalog);
+  knownMiners = knownProcessNames(catalog, process.platform === 'linux' ? 'linux' : 'windows');
   links = allowedLinks(catalog);
   // 차트 라이브러리 라이선스 고지 링크
   links.add('https://www.tradingview.com/');

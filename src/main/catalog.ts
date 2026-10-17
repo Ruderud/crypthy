@@ -5,12 +5,15 @@ import type { FeeStatus, RecommendationView, Vendor } from '../shared/types';
 
 export type { FeeStatus, Vendor };
 
+export type Platform = 'windows' | 'linux';
+
 export interface CatalogTool {
   name: string;
   repo: string | null;
   repoKind: 'developer' | 'distribution' | 'unverified';
   repoNote?: string;
-  processNames: string[];
+  /** 플랫폼별 실행 파일 이름 (릴리스 아카이브에서 확인한 것만) */
+  processNames: Record<Platform, string[]>;
   statsApi: string | null;
   apiNote: string;
   sources: string[];
@@ -60,7 +63,9 @@ export function parseCatalog(json: unknown): Catalog {
   for (const [id, t] of Object.entries(c.tools)) {
     if (!t.sources.every(https)) throw new Error(`catalog: ${id} has a non-https source`);
     // taskkill /im 에 넘기는 값이라 단순 실행 파일 이름만 허용
-    if (!t.processNames.every((n) => /^[\w.-]+\.exe$/i.test(n))) throw new Error(`catalog: ${id} has an invalid process name`);
+    const names = t.processNames ?? ({} as CatalogTool['processNames']);
+    if (!Array.isArray(names.windows) || !names.windows.every((n) => /^[\w.-]+\.exe$/i.test(n))) throw new Error(`catalog: ${id} has an invalid windows process name`);
+    if (!Array.isArray(names.linux) || !names.linux.every((n) => /^[\w.-]{1,64}$/.test(n) && !n.endsWith('.exe'))) throw new Error(`catalog: ${id} has an invalid linux process name`);
     if (t.repo !== null && !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(t.repo)) throw new Error(`catalog: ${id} repo must be a GitHub repository URL`);
     if (t.repo === null && t.repoKind !== 'unverified') throw new Error(`catalog: ${id} without repo must be unverified`);
   }
@@ -105,9 +110,9 @@ export function recommend(catalog: Catalog, coinId: string, vendors: Vendor[]): 
     }));
 }
 
-/** 안전 감시가 정지할 수 있는 알려진 채굴기 실행 파일 */
-export function knownProcessNames(catalog: Catalog): string[] {
-  return [...new Set(Object.values(catalog.tools).flatMap((t) => t.processNames))];
+/** 안전 감시가 정지할 수 있는 알려진 채굴기 실행 파일 (플랫폼별) */
+export function knownProcessNames(catalog: Catalog, platform: Platform): string[] {
+  return [...new Set(Object.values(catalog.tools).flatMap((t) => t.processNames[platform]))];
 }
 
 /** 외부로 열 수 있는 링크는 카탈로그에 있는 저장소·출처뿐 */
