@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { buildInstallArgs } from './powerLimitLinux';
 
 const LINUX_DIR = path.join(__dirname, '../../resources/linux');
-const hasPython = spawnSync('python3', ['--version']).status === 0;
+const hasPython = process.platform !== 'win32' && spawnSync('python3', ['--version']).status === 0;
 const isWin = process.platform === 'win32';
 
 describe('buildInstallArgs', () => {
@@ -33,7 +33,8 @@ describe.skipIf(isWin)('install-power-service.sh', () => {
   });
 });
 
-describe.skipIf(!hasPython)('apply_power_limits.py (--dry-run)', () => {
+// Linux 전용 스크립트라 Windows 에서는 건너뛴다 (Windows 러너의 python3 첫 실행이 매우 느림)
+describe.skipIf(!hasPython || isWin)('apply_power_limits.py (--dry-run)', { timeout: 30_000 }, () => {
   const runDry = (cfg: unknown) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crypthy-pl-'));
     const file = path.join(dir, 'power-limits.json');
