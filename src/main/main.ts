@@ -430,7 +430,15 @@ function showWindow(): void {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    // 차트의 TradingView 출처 링크(라이선스 고지)만 기본 브라우저로 연다
+    try {
+      if (new URL(url).origin === 'https://www.tradingview.com') void shell.openExternal(url);
+    } catch {
+      // 잘못된 URL 은 무시
+    }
+    return { action: 'deny' };
+  });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.on('close', (e) => {
     if (!quitting) {

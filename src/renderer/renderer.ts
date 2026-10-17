@@ -302,12 +302,39 @@ $('updateBtn').addEventListener('click', async () => {
   if (err) $('updateInfo').textContent = err;
 });
 
+// 테마: 화면별 편의 설정이라 localStorage 에만 둔다 (dark → light → system)
+const THEMES = ['dark', 'light', 'system'] as const;
+const THEME_LABEL = { dark: '다크', light: '라이트', system: '시스템' } as const;
+function readTheme(): (typeof THEMES)[number] {
+  try {
+    const t = localStorage.getItem('crypthy.theme');
+    return THEMES.includes(t as never) ? (t as (typeof THEMES)[number]) : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+function applyTheme(t: (typeof THEMES)[number]) {
+  document.documentElement.dataset.theme = t;
+  $('themeBtn').textContent = THEME_LABEL[t];
+  try {
+    localStorage.setItem('crypthy.theme', t);
+  } catch {
+    // 저장이 막혀 있어도 현재 화면에는 적용
+  }
+}
+applyTheme(readTheme());
+
 const charts = createCharts({ gpu: $('gpuChart'), price: $('priceChart'), daily: $('dailyChart'), legend: $('chartLegend') });
 async function refreshCharts() {
   const v = await crypthy.getCharts();
   $('priceTitle').textContent = `${v.symbol} 시세 (USD, 30일)`;
   charts.render(v);
 }
+$('themeBtn').addEventListener('click', () => {
+  applyTheme(THEMES[(THEMES.indexOf(readTheme()) + 1) % THEMES.length]);
+  charts.applyTheme();
+});
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => charts.applyTheme());
 $('metricTabs').addEventListener('click', (e) => {
   const m = (e.target as HTMLElement).dataset.metric as 'hash' | 'temp' | 'power' | undefined;
   if (!m) return;
