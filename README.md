@@ -213,14 +213,24 @@ Remove-Item -Recurse C:\ProgramData\Crypthy
 
 ## 자동 업데이트
 
-- **확인 시점**: 설치형(NSIS)에서만 동작합니다. 앱 시작 1분 뒤와 그 뒤 6시간마다 GitHub Releases의 `latest.yml`을 확인합니다(electron-updater).
-- **다운로드·검증**: 새 버전은 백그라운드에서 받고 `latest.yml`의 sha512로 확인합니다.
+- **확인 시점**: Windows 설치형(NSIS)과 Linux AppImage에서 동작합니다. zip·deb는 수동으로 업데이트합니다.
+  - 앱 창이 뜬 뒤 몇 초 안에 한 번 확인하고, 이후 1시간마다 확인합니다.
+  - 확인 주기는 **설정 → 업데이트 확인 주기**에서 30분~24시간 사이로 바꿀 수 있습니다.
+  - 앱 상단과 트레이 메뉴의 **업데이트 확인**으로 바로 확인할 수도 있습니다.
+- **새 버전 발견**: 앱 상단 배너와 OS 알림이 함께 뜹니다. 트레이에만 떠 있어도 OS 알림이 오고, 알림을 누르면 창이 열립니다. 배너에서 고를 수 있는 것:
+  - 새 버전 번호와 릴리스 노트 요약을 보여 주고, **받기 / 나중에** 를 고를 수 있습니다.
+  - **받기**를 누르면 백그라운드로 내려받고 진행률을 보여 줍니다.
+  - 다 받으면 다시 안내합니다. 이때는 **지금 재시작해 설치 / 나중에** 를 고를 수 있습니다.
+- **나중에**: 같은 버전의 같은 안내를 다음 정기 확인 때까지 다시 띄우지 않습니다. 수동으로 확인하면 바로 다시 보입니다.
+- **설치**: **지금 재시작해 설치**를 누를 때만 설치하며, 강제 재시작이나 종료 시 자동 설치는 없습니다.
+  - Crypthy는 채굴기를 관리하지 않으므로, 재시작해도 채굴은 계속됩니다.
+  - 재시작하는 몇 초~수십 초 동안은 안전 감시만 잠시 멈춥니다.
+- **검증**: 받은 파일은 `latest.yml`(Windows) 또는 `latest-linux.yml`(Linux)의 sha512로 확인합니다.
   - 코드 서명이 없으므로 서명 검증(`verifyUpdateCodeSignature`)은 끕니다.
-  - 따라서 이 확인은 받은 파일이 GitHub Releases에 올라간 파일과 같다는 것까지만 보장합니다.
-- **설치**: 다 받으면 알림과 **업데이트 설치** 버튼이 나오고, 버튼을 누를 때만 설치합니다.
-  - 강제 재시작이나 종료 시 자동 설치는 하지 않습니다.
-  - 채굴기가 실행 중이면 먼저 확인합니다. 앱이 다시 시작되는 수십 초 동안 안전 감시가 멈춥니다.
-- **실패 처리**: 업데이트가 실패해도 알림만 남기고 안전 감시에는 영향을 주지 않습니다.
+  - 따라서 이 검증은 받은 파일이 GitHub Releases에 올라간 파일과 같다는 것까지만 보장합니다.
+- **실패해도 안전**: 업데이트가 실패해도 알림만 남기고, 안전 감시에는 영향을 주지 않습니다.
+- **릴리스 노트**: Release 워크플로가 직전 태그 이후의 커밋 제목으로 자동 작성합니다.
+- **모의 모드로 확인**: `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1`로 실행하면 가짜 업데이트로 안내 흐름을 확인할 수 있습니다.
 
 ## 로컬 상태 API
 
@@ -248,7 +258,7 @@ Remove-Item -Recurse C:\ProgramData\Crypthy
 - **alert code 목록**
   - 안전: `fan_stopped`, `temp_stop`, `temp_warn`, `telemetry_lost`, `miner_killed`, `miner_killed_again`, `kill_failed`, `safety_hold_running`, `hold_cleared`
   - 재검토: `review_rental_price`, `review_rental_better`, `review_prl`
-  - 업데이트: `update_ready`, `update_error`
+  - 업데이트: `update_available`, `update_ready`, `update_error`
   - 기타: `status_api`
 
 ## 파일 위치
@@ -277,6 +287,7 @@ npm run dist:linux  # Linux x64 AppImage + deb + latest-linux.yml (macOS 에서�
 - `CRYPTHY_MOCK_FANSTOP=<nvidia-smi 번호>`: 30초 뒤 해당 GPU의 팬이 0%가 됩니다.
 - `CRYPTHY_MOCK_KILLFAIL=1`: 채굴기 정지에 실패하는 상황을 재현합니다.
 - `CRYPTHY_MOCK_IDLE=1`: 채굴기가 없는 상태로 시작합니다.
+- `CRYPTHY_MOCK_UPDATE=1`: 가짜 업데이트(v0.9.9)로 업데이트 안내 흐름을 확인합니다.
 
 카탈로그를 수정할 때:
 - `catalog/catalog.json`에 출처 URL과 확인일을 남깁니다.
