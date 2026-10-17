@@ -32,6 +32,14 @@ describe('mergeSettings', () => {
   });
 });
 
+describe('mergeSettings robustness', () => {
+  it('survives null / malformed settings files', () => {
+    expect(mergeSettings(DEFAULT_SETTINGS, null as never)).toEqual(DEFAULT_SETTINGS);
+    expect(mergeSettings(DEFAULT_SETTINGS, { gpus: 'x' } as never).gpus).toEqual([]);
+    expect(mergeSettings(DEFAULT_SETTINGS, { gpus: [null, { id: 1 }, { id: 'a' }, { id: 'b', label: 'B' }] } as never).gpus.map((g) => g.id)).toEqual(['b']);
+  });
+});
+
 describe('validateAccount', () => {
   it('allows empty values and checks formats when filled', () => {
     expect(validateAccount({ wallet: '', pool: '' })).toBeNull();

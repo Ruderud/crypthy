@@ -51,7 +51,7 @@ let hubKey = '';
 
 function feeText(r: AppState['hub']['recommendations'][number]) {
   const f = r.devFee;
-  if (f.status === 'verified') return `${f.pct}%`;
+  if (f.status === 'verified') return `${esc(f.pct)}%`;
   if (f.status === 'conflict') return `<span class="warn">출처 불일치</span>`;
   return '<span class="muted">미확인</span>';
 }
@@ -181,7 +181,7 @@ function render(st: AppState) {
         <td>${r.rentalUsd === null ? '-' : `$${r.rentalUsd.toFixed(3)}/h <span class="muted small">${r.rentalSource === 'manual' ? '수동' : 'Vast 중앙값'}</span>`}</td>
         <td>${krw(r.rentalKrwPerH)}/h</td><td class="${verdict.startsWith('대여') ? 'warn' : 'good'}">${verdict}</td></tr>`;
     })
-    .join('')}<tr><td colspan="5" class="muted small">가정: 호스트 몫 ${Math.round(pr.vastHostShare * 100)}%, 임대 중 ${pr.rentalPowerW}W, ${pr.krwPerKwh}원/kWh, ${pr.krwPerUsd}원/$</td></tr>`;
+    .join('')}<tr><td colspan="5" class="muted small">가정: 호스트 몫 ${esc(Math.round(pr.vastHostShare * 100))}%, 임대 중 ${esc(pr.rentalPowerW)}W, ${esc(pr.krwPerKwh)}원/kWh, ${esc(pr.krwPerUsd)}원/$</td></tr>`;
 
   $('powerTask').textContent = st.power.registered
     ? '전력 제한 예약 작업 등록됨: 로그온 30초 뒤 자동 재적용'

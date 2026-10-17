@@ -35,10 +35,14 @@ const pick = <T extends object>(base: T, patch: unknown): Partial<T> => {
  * (minerDir, selected, consentAt, srbId 등)은 자연스럽게 버려진다.
  */
 export function mergeSettings(base: Settings, patch: Partial<Settings>): Settings {
+  patch = patch && typeof patch === 'object' ? patch : {};
   const known = pick(base, patch);
+  delete known.gpus;
   const sample = newGpu('', '');
-  const gpus = base.gpus.map((g) => ({ ...g, ...pick(sample, patch.gpus?.find((p) => p.id === g.id)) }));
-  for (const p of patch.gpus ?? []) if (!gpus.some((g) => g.id === p.id)) gpus.push({ ...newGpu(p.id, p.label), ...pick(sample, p), id: p.id });
+  // 깨진 항목(id·label 이 문자열이 아님)은 버린다
+  const patchGpus = (Array.isArray(patch.gpus) ? patch.gpus : []).filter((p) => p && typeof p.id === 'string' && typeof p.label === 'string');
+  const gpus = base.gpus.map((g) => ({ ...g, ...pick(sample, patchGpus.find((p) => p.id === g.id)) }));
+  for (const p of patchGpus) if (!gpus.some((g) => g.id === p.id)) gpus.push({ ...newGpu(p.id, p.label), ...pick(sample, p), id: p.id });
   return {
     ...base,
     ...known,

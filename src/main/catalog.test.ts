@@ -23,13 +23,26 @@ describe('catalog file', () => {
 });
 
 describe('parseCatalog', () => {
-  const base: Catalog = { version: 1, checkedAt: '2026-10-17', tools: { a: { name: 'A', repo: 'https://github.com/x/a', repoKind: 'developer', processNames: ['a.exe'], statsApi: null, apiNote: '', sources: [] } }, coins: [] };
+  const tool = { name: 'A', repo: 'https://github.com/x/a', repoKind: 'developer' as const, processNames: ['a.exe'], statsApi: null, apiNote: '', sources: ['https://x.example/a'] };
+  const coin = (devFee: object, toolId = 'a', source = 'https://pool.example/guide') => ({ id: 'c', name: 'C', symbol: 'C', algorithm: 'x', coingeckoId: 'c', pools: [{ name: 'P', stats: 'kryptex', ticker: 'c', examples: [], source }], tools: [{ tool: toolId, vendors: [], devFee, note: '' }] });
+  const base = (): Catalog => ({ version: 1, checkedAt: '2026-10-17', tools: { a: { ...tool } }, coins: [coin({ pct: 1, status: 'verified', source: 'https://x.example/fee' })] as Catalog['coins'] });
+
+  it('accepts a minimal valid catalog', () => {
+    expect(() => parseCatalog(base())).not.toThrow();
+  });
+
   it('rejects unknown tool references, non-GitHub repos and sourceless verified fees', () => {
-    const coin = (devFee: object, tool = 'a') => ({ id: 'c', name: 'C', symbol: 'C', algorithm: 'x', coingeckoId: 'c', pools: [], tools: [{ tool, vendors: [], devFee, note: '' }] });
-    expect(() => parseCatalog({ ...base, coins: [coin({ pct: 1, status: 'verified', source: 'u' }, 'zzz')] })).toThrow(/unknown tool/);
-    expect(() => parseCatalog({ ...base, coins: [coin({ pct: 1, status: 'verified', source: null })] })).toThrow(/needs pct and source/);
-    expect(() => parseCatalog({ ...base, tools: { a: { ...base.tools.a, repo: 'https://evil.example/a' } } })).toThrow(/GitHub/);
-    expect(() => parseCatalog({ ...base, tools: { a: { ...base.tools.a, repo: null } } })).toThrow(/unverified/);
+    expect(() => parseCatalog({ ...base(), coins: [coin({ pct: 1, status: 'verified', source: 'https://u' }, 'zzz')] })).toThrow(/unknown tool/);
+    expect(() => parseCatalog({ ...base(), coins: [coin({ pct: 1, status: 'verified', source: null })] })).toThrow(/needs pct and source/);
+    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, repo: 'https://evil.example/a' } } })).toThrow(/GitHub/);
+    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, repo: null } } })).toThrow(/unverified/);
+  });
+
+  it('rejects empty coin lists, non-https sources and unsafe process names', () => {
+    expect(() => parseCatalog({ ...base(), coins: [] })).toThrow(/no coins/);
+    expect(() => parseCatalog({ ...base(), coins: [coin({ pct: null, status: 'unverified', source: null }, 'a', 'javascript:alert(1)')] })).toThrow(/non-https/);
+    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, sources: ['file:///etc/passwd'] } } })).toThrow(/non-https/);
+    expect(() => parseCatalog({ ...base(), tools: { a: { ...tool, processNames: ['a.exe /f /im explorer.exe'] } } })).toThrow(/process name/);
   });
 });
 

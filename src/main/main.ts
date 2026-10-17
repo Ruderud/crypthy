@@ -6,7 +6,7 @@ import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog }
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { mockHardware, realHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
-import type { NvGpu } from './nvsmi';
+import { parsePciBus, type NvGpu } from './nvsmi';
 import {
   emptyLedger, miningNetKrwPerHour, netKrw, recordEarnings, recordEnergy, rentalNetKrwPerHour,
   reviewAlerts, summarize, type Ledger, type Payout, type PoolStats,
@@ -54,6 +54,10 @@ let lastNv: NvGpu[] = [];
 let lastStats: MinerStats | null = null;
 let processes: string[] = [];
 let running = false;
+/** tasklist 가 실패해 프로세스 목록을 모르는 상태 */
+let procsUnknown = false;
+/** 이번 세션에 nvidia-smi 로 한 번이라도 보인 GPU (빠진 GPU 를 채굴 중으로 오판하지 않기 위해) */
+const seenGpus = new Set<GpuId>();
 let lastPollAt = 0;
 let lastKillAt = 0;
 let killing = false;
@@ -97,13 +101,15 @@ function alertOnce(a: Alert, withinMs: number): void {
   if (!alerts.some((x) => x.code === a.code && x.gpu === a.gpu && a.ts - x.ts < withinMs)) pushAlert(a);
 }
 
-const deviceOf = (g: GpuConfig) => (lastStats ? matchSrbDevice(lastStats.devices, nvOf(g.id)?.bus ?? null) : undefined);
+// GPU id 가 곧 PCI bus id 이므로 nvidia-smi 가 실패해도 채굴기 API 장치와 매칭할 수 있다
+const deviceOf = (g: GpuConfig) => (lastStats ? matchSrbDevice(lastStats.devices, parsePciBus(g.id)) : undefined);
 
 function isMining(g: GpuConfig): boolean {
   if (!running) return false;
   const dev = deviceOf(g);
-  // 채굴기 API 에 장치 정보가 없으면 보수적으로 모든 GPU 가 채굴 중이라고 본다
-  return dev ? (dev.hashrate ?? 0) > 0 : !lastStats?.devices.length;
+  if (dev) return (dev.hashrate ?? 0) > 0;
+  // 채굴기 API 에 장치 정보가 없으면, 이번 세션에 보인 GPU 는 보수적으로 채굴 중이라고 본다
+  return !lastStats?.devices.length && seenGpus.has(g.id);
 }
 
 function gpuViews(): GpuView[] {
@@ -224,23 +230,37 @@ function buildState(): AppState {
 async function killKnownMiners(): Promise<string | null> {
   // tasklist 가 실패하면(null) 꺼졌다고 가정하지 않고 알려진 이름 전부에 kill 을 시도
   const before = await hw.runningMiners(knownMiners).catch(() => null);
-  if (before !== null && before.length === 0) return null;
+  if (before !== null && before.length === 0) {
+    // 프로세스 이름은 모르는데 통계 API 는 응답 → 정지할 수 없다 (거짓 성공 방지)
+    return (await minerApiAlive())
+      ? '채굴기 통계 API 는 응답하지만 실행 파일 이름을 몰라 정지할 수 없습니다 — 채굴기를 직접 종료해 주세요'
+      : null;
+  }
   const errors: string[] = [];
   for (const exe of before ?? knownMiners) {
     const err = await hw.kill(exe);
     if (err && before !== null) errors.push(`${exe}: ${err}`);
   }
   const deadline = Date.now() + KILL_CONFIRM_MS;
+  let listed = false;
   while (Date.now() < deadline) {
     await sleep(500);
     const left = await hw.runningMiners(knownMiners).catch(() => null);
-    if (left !== null && left.length === 0) return null;
+    listed ||= left !== null;
+    if (left !== null && left.length === 0 && !(await minerApiAlive())) return null;
   }
+  if (!listed && !(await minerApiAlive())) return '채굴기 정지를 시도했지만 프로세스 목록(tasklist)을 읽지 못해 확인하지 못했습니다 — 작업 관리자에서 확인해 주세요';
   return `채굴기 정지 실패${errors.length ? `: ${errors.join(' · ')}` : ''} — 관리자 권한으로 실행된 채굴기는 앱이 끌 수 없습니다. 작업 관리자에서 직접 종료해 주세요`;
 }
 
+function minerApiAlive(): Promise<boolean> {
+  if (settings.minerApi.adapter === 'none') return Promise.resolve(false);
+  return hw.minerStats(settings.minerApi.adapter, settings.minerApi.port).then(() => true, () => false);
+}
+
 async function enforceHolds(newTrips: { id: GpuId; reason: string }[], now: number): Promise<void> {
-  if (!running || Object.keys(runtime.holds).length === 0) return;
+  // 프로세스 목록을 모르면(tasklist 실패) 실행 중일 수 있다고 보고 정지를 시도한다
+  if ((!running && !procsUnknown) || Object.keys(runtime.holds).length === 0) return;
   const reasons = newTrips.length ? newTrips : Object.entries(runtime.holds).map(([id, reason]) => ({ id, reason }));
   const labels = reasons.map((r) => `${settings.gpus.find((g) => g.id === r.id)?.label ?? r.id}(${r.reason})`).join(', ');
   if (!settings.safetyKill) {
@@ -298,9 +318,12 @@ async function poll(): Promise<void> {
     settle(hw.runningMiners(knownMiners)),
   ]);
   lastNv = nv ?? [];
+  lastNv.forEach((n) => seenGpus.add(n.busId));
   lastStats = stats;
+  procsUnknown = procs === null;
+  // tasklist 가 한 번 실패하면 직전 목록을 유지한다 (실행 중이던 채굴기를 놓치지 않게)
   processes = procs ?? processes;
-  running = (procs?.length ?? 0) > 0 || stats !== null;
+  running = processes.length > 0 || stats !== null;
   discoverGpus();
 
   if (lastPollAt) {
@@ -568,7 +591,10 @@ function loadState(): void {
   catalog = loadCatalog(path.join(__dirname, '..', 'catalog.json'));
   knownMiners = knownProcessNames(catalog);
   links = allowedLinks(catalog);
-  settings = mergeSettings(DEFAULT_SETTINGS, readJson<Partial<Settings>>(file('settings.json'), {}));
+  const raw = readJson<Partial<Settings> & { apiPort?: unknown }>(file('settings.json'), {});
+  settings = mergeSettings(DEFAULT_SETTINGS, raw);
+  // 0.1.x 의 SRBMiner API 포트(apiPort)를 이어받는다
+  if (raw && !raw.minerApi && Number.isInteger(raw.apiPort)) settings.minerApi.port = raw.apiPort as number;
   if (!catalog.coins.some((c) => c.id === settings.coin)) settings.coin = catalog.coins[0].id;
   ledger = { ...emptyLedger(), ...readJson<Partial<Ledger>>(file('ledger.json'), {}) };
   // 0.1.x 의 안전 제외(excluded)는 보류(holds)로 이어받는다

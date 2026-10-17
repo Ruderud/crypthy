@@ -3,6 +3,8 @@
 //   CRYPTHY_MOCK_FANSTOP=<nvidia-smi index>  30초 뒤 해당 GPU 팬이 0% (안전 감시 확인용)
 //   CRYPTHY_MOCK_KILLFAIL=1                   taskkill 이 실패하는 상황 (권한 부족 재현)
 //   CRYPTHY_MOCK_IDLE=1                       채굴기가 실행되지 않은 상태로 시작
+//   CRYPTHY_MOCK_UNNAMED=1                    프로세스 이름을 모르는 채굴기 (API 로만 감지)
+//   CRYPTHY_MOCK_TASKLISTFAIL=1               tasklist 가 항상 실패
 import { execFile } from 'node:child_process';
 import { parseVendors, type Vendor } from './catalog';
 import { killMiner, runningMiners } from './miner';
@@ -85,9 +87,12 @@ export function mockHardware(): Hardware {
       };
     },
     async runningMiners(known) {
+      if (process.env.CRYPTHY_MOCK_TASKLISTFAIL === '1') throw new Error('mock: tasklist timeout');
+      if (process.env.CRYPTHY_MOCK_UNNAMED === '1') return [];
       return mining ? known.filter((k) => k === 'SRBMiner-MULTI.exe') : [];
     },
     async kill() {
+      if (process.env.CRYPTHY_MOCK_UNNAMED === '1') return 'mock: process not found';
       if (killFail && mining) return 'mock: Access is denied.';
       mining = false;
       startedAt = Date.now();

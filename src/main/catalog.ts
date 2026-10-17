@@ -52,7 +52,15 @@ export function parseCatalog(json: unknown): Catalog {
       if (t.devFee.status === 'verified' && (t.devFee.pct === null || !t.devFee.source)) throw new Error(`catalog: ${coin.id}/${t.tool} verified fee needs pct and source`);
     }
   }
+  if (c.coins.length === 0) throw new Error('catalog: no coins');
+  const https = (u: string | null) => u === null || /^https:\/\/[^\s"'<>]+$/.test(u);
+  for (const coin of c.coins) {
+    if (!coin.pools.every((p) => https(p.source)) || !coin.tools.every((t) => https(t.devFee.source))) throw new Error(`catalog: ${coin.id} has a non-https source`);
+  }
   for (const [id, t] of Object.entries(c.tools)) {
+    if (!t.sources.every(https)) throw new Error(`catalog: ${id} has a non-https source`);
+    // taskkill /im 에 넘기는 값이라 단순 실행 파일 이름만 허용
+    if (!t.processNames.every((n) => /^[\w.-]+\.exe$/i.test(n))) throw new Error(`catalog: ${id} has an invalid process name`);
     if (t.repo !== null && !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(t.repo)) throw new Error(`catalog: ${id} repo must be a GitHub repository URL`);
     if (t.repo === null && t.repoKind !== 'unverified') throw new Error(`catalog: ${id} without repo must be unverified`);
   }
