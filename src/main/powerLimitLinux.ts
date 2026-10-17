@@ -2,7 +2,7 @@
 // 이후에는 JSON(데이터)만 쓰고 `systemctl start` 로 적용한다. 부팅 시 자동 재적용.
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
+import { posix as path } from 'node:path';
 
 export const LINUX_UNIT = 'crypthy-power-limit.service';
 const UNIT_FILE = `/etc/systemd/system/${LINUX_UNIT}`;

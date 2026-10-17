@@ -2,7 +2,7 @@
 // Windows 는 Electron 의 setLoginItemSettings 를 쓴다.
 import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
+import { posix as path } from 'node:path';
 
 /** Desktop Entry Exec 값 규칙에 맞게 따옴표로 감싸고 " ` $ \ 를 이스케이프 */
 export function quoteExec(p: string): string {
