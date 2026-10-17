@@ -4,6 +4,16 @@
 
 NVIDIA GPU가 달린 Windows PC를 위한 **코인 채굴 허브 + PC 관리 + 채굴량·수익 확인** 트레이 앱입니다.
 
+![대시보드 (다크 테마, 모의 데이터)](docs/screenshots/dashboard-dark.png)
+
+<details><summary>라이트 테마</summary>
+
+![대시보드 (라이트 테마, 모의 데이터)](docs/screenshots/dashboard-light.png)
+
+</details>
+
+스크린샷은 모의 모드(`npm run start:mock`)에서 찍은 합성 데이터입니다. 앞으로의 계획은 [docs/ROADMAP.md](docs/ROADMAP.md)를 참고하세요.
+
 > **먼저 알아 둘 것**
 > - **채굴기를 설치·실행하지 않습니다.** 코인을 고르면 호환되는 채굴 툴과 공식 저장소 링크를 추천할 뿐이고, 채굴기는 사용자가 직접 설치하고 실행합니다. Crypthy는 실행 중인 채굴기와 GPU를 감시하고 수익을 보여 줍니다.
 > - **기본 지갑과 앱 수수료(dev fee)가 없습니다.** 지갑 주소는 풀 공개 통계 조회에만 쓰며, 공개 주소만 입력합니다.
@@ -48,6 +58,18 @@ NVIDIA GPU가 달린 Windows PC를 위한 **코인 채굴 허브 + PC 관리 + �
 - **트레이 상주**: Windows 로그인 시 실행할 수 있습니다(선택, 기본 꺼짐).
 - **로컬 상태 API**: 읽기 전용이며 이 PC에서만 접근할 수 있습니다.
 - **자동 업데이트**: GitHub Releases에서 새 버전을 받습니다.
+
+### 차트
+
+차트는 [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/)(Apache-2.0)로 그립니다.
+
+- **GPU별 시계열**: 해시레이트·온도·전력을 1분 평균으로 보여 줍니다. 로컬에 최근 3일치를 저장하며, GPU당 최대 4,320점·최대 16개 GPU까지 기록합니다.
+- **코인 시세**: CoinGecko 30일 시세(USD)입니다.
+- **일별 채굴량·순수익**: 일별 채굴량은 막대, 순수익(원)은 선으로 그립니다. 순수익은 그날 종가로 환산하고, 종가가 없으면 현재 시세를 씁니다. 전기료는 차감합니다.
+
+### 테마
+
+거래소 대시보드 느낌의 다크 테마가 기본입니다. 노란 강조색, 숫자 등폭 표시, 상승은 초록·하락은 빨강을 씁니다. 상단 버튼으로 다크 → 라이트 → 시스템 순서로 바꿀 수 있습니다. 특정 거래소의 로고·이름·아이콘은 쓰지 않습니다.
 
 ### 채굴량·수익
 
@@ -183,6 +205,7 @@ Remove-Item -Recurse C:\ProgramData\Crypthy
 | 설정 | `%APPDATA%\Crypthy\settings.json` |
 | 안전 보류 | `%APPDATA%\Crypthy\runtime.json` |
 | 일/월 장부 | `%APPDATA%\Crypthy\ledger.json` |
+| 차트 기록(최근 3일) | `%APPDATA%\Crypthy\history.json` |
 | 전력 제한 값 | `%APPDATA%\Crypthy\power-limits.json` |
 | 전력 제한 스크립트·로그 | `C:\ProgramData\Crypthy\` |
 
@@ -218,6 +241,15 @@ npm run dist:win    # Windows x64 NSIS + zip + latest.yml + SHA256SUMS (업로�
   2. 테스트를 실행합니다.
   3. 빌드합니다.
   4. GitHub Release에 설치 파일, `.blockmap`, `latest.yml`, zip, `SHA256SUMS.txt`를 올립니다.
+
+## 제3자 소프트웨어 고지
+
+- **TradingView Lightweight Charts™**: 5.2.1, Apache-2.0. Copyright (c) 2025 TradingView, Inc. https://www.tradingview.com/
+  - 라이선스 요구에 따라 차트 안의 TradingView 로고 링크(`attributionLogo`)를 유지합니다.
+  - 앱 하단에 출처를 표기합니다.
+  - 패키지의 `resources/app.asar/dist/renderer/vendor/`에 LICENSE와 NOTICE를 함께 배포합니다.
+  - 원문: [`resources/third-party/lightweight-charts-NOTICE.txt`](resources/third-party/lightweight-charts-NOTICE.txt)
+- 그 밖의 런타임 의존성: Electron(MIT), electron-updater(MIT)
 
 ## License
 
