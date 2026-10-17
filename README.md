@@ -2,7 +2,7 @@
 
 > 이름은 crypto + smithy(대장간)를 합친 말입니다.
 
-NVIDIA GPU가 달린 Windows PC를 위한 **코인 채굴 허브 + PC 관리 + 채굴량·수익 확인** 트레이 앱입니다.
+NVIDIA GPU가 달린 **Windows / Ubuntu(Linux)** PC를 위한 **코인 채굴 허브 + PC 관리 + 채굴량·수익 확인** 트레이 앱입니다.
 
 ![대시보드 (다크 테마, 모의 데이터)](docs/screenshots/dashboard-dark.png)
 
@@ -57,7 +57,7 @@ NVIDIA GPU가 달린 Windows PC를 위한 **코인 채굴 허브 + PC 관리 + �
 - **전력 제한**: GPU별로 W를 정합니다. 처음 한 번 UAC 승인으로 "가장 높은 권한" 예약 작업을 등록하면, 로그온할 때마다 다시 적용됩니다. 앱 본체는 비관리자 권한으로 실행됩니다.
 - **트레이 상주**: Windows 로그인 시 실행할 수 있습니다(선택, 기본 꺼짐).
 - **로컬 상태 API**: 읽기 전용이며 이 PC에서만 접근할 수 있습니다.
-- **자동 업데이트**: GitHub Releases에서 새 버전을 받습니다.
+- **자동 업데이트**: GitHub Releases에서 새 버전을 받습니다. 지원 대상은 Windows 설치형과 Linux AppImage이며, zip·deb는 수동으로 업데이트합니다.
 
 ### 차트
 
@@ -102,6 +102,28 @@ NVIDIA GPU가 달린 Windows PC를 위한 **코인 채굴 허브 + PC 관리 + �
 3. 서명되지 않은 앱이라 SmartScreen 경고가 뜰 수 있습니다. 해시를 확인했다면 **추가 정보 → 실행**을 누릅니다. 설치 화면에서 MIT 라이선스에 동의합니다.
 4. 설치는 사용자 단위라 관리자 권한이 필요 없습니다. 기본 경로는 `%LOCALAPPDATA%\Programs\Crypthy`입니다.
 
+### Ubuntu(Linux) 설치 (x64, NVIDIA 드라이버 + nvidia-smi 필요) — v0.3.0, 실기 미검증
+
+1. [Releases](https://github.com/Ruderud/crypthy/releases)에서 파일을 받습니다.
+   - `Crypthy-<버전>-linux-x86_64.AppImage`: 자동 업데이트를 지원합니다.
+   - `Crypthy-<버전>-linux-amd64.deb`: 자동 업데이트를 지원하지 않습니다.
+2. `SHA256SUMS.txt`와 해시를 비교합니다.
+   ```bash
+   sha256sum -c SHA256SUMS.txt --ignore-missing
+   ```
+3. 실행합니다.
+   - AppImage:
+     ```bash
+     chmod +x Crypthy-*.AppImage && ./Crypthy-*.AppImage
+     ```
+     Ubuntu 22.04 이상에서는 `libfuse2` 패키지가 필요할 수 있습니다.
+   - deb:
+     ```bash
+     sudo apt install ./Crypthy-*.deb
+     ```
+4. 트레이 아이콘은 Ubuntu 기본 AppIndicator로 표시합니다. 다른 데스크톱 환경에서는 AppIndicator 확장이 필요할 수 있습니다.
+5. 설정의 "로그인 시 앱 실행"을 켜면 `~/.config/autostart/crypthy.desktop`을 만듭니다.
+
 ### 처음 설정
 
 1. **코인 허브**에서 코인을 고르고, 추천 채굴 툴의 저장소 링크로 가서 채굴기를 **직접** 설치합니다. 출처·해시·dev fee는 각 저장소에서 다시 확인하세요. 보안 프로그램이 채굴기를 차단하면 예외를 둘지는 사용자가 판단합니다.
@@ -124,7 +146,13 @@ NVIDIA GPU가 달린 Windows PC를 위한 **코인 채굴 허브 + PC 관리 + �
 | 채굴 중인데 온도 값이 5회(약 10초) 연속 없음 | 같음 |
 | 온도 ≥ 80°C | 경고(77°C 아래로 내려가면 다시 감시) |
 
-- **정지 대상**: 카탈로그에서 실행 파일 이름이 확인된 채굴기(`SRBMiner-MULTI.exe`, `peakminer.exe`, `forge.exe`, `arc-miner.exe`)를 `taskkill`로 정지하고, tasklist로 실제로 꺼졌는지 확인합니다. 실행 파일 이름이 미확인인 툴(예: quantus-miner)은 정지할 수 없어 알림만 보냅니다.
+- **정지 대상**
+  - Windows: 카탈로그에서 실행 파일 이름이 확인된 채굴기(`SRBMiner-MULTI.exe`, `peakminer.exe`, `forge.exe`, `arc-miner.exe`)를 `taskkill`로 정지하고, tasklist로 실제로 꺼졌는지 확인합니다.
+  - Linux: 릴리스 아카이브에서 이름을 확인한 `SRBMiner-MULTI`, `peakminer`, `forge`를 `/proc`에서 찾습니다. SIGTERM을 보내고, 3초 뒤에도 살아 있으면 SIGKILL을 보냅니다. 같은 이름의 다른 도구(예: Foundry의 `forge`)를 건드리지 않도록, 명령줄에 풀·지갑·알고리즘 인자가 있는 프로세스만 대상으로 삼습니다.
+- **컨테이너는 절대 정지하지 않음(Linux)**: 다음 중 하나라도 해당하면 채굴기로 보지 않고, 정지하지도 않습니다. Vast.ai 고객 워크로드 같은 컨테이너를 보호하기 위해서입니다. 판별할 수 없으면 컨테이너로 봅니다.
+  - cgroup 경로에 docker / containerd / kubepods / podman / lxc 등이 있음
+  - 앱과 다른 PID 네임스페이스에 있거나, 네임스페이스를 읽을 수 없음
+  - 조상 프로세스에 containerd-shim / dockerd / runc / conmon 등이 있음 실행 파일 이름이 미확인인 툴(예: quantus-miner)은 정지할 수 없어 알림만 보냅니다.
 - **GPU 단위가 아님**: 정지는 채굴기 단위로 이뤄지므로 그 채굴기가 쓰던 GPU가 모두 멈춥니다. Crypthy는 채굴기 인자를 바꿔 다시 실행하지 않기 때문에 특정 GPU만 빼지 못합니다.
 - **재시작 없음**: 앱은 채굴기를 다시 시작하지 않습니다.
 - **보류 유지**: 보류 중에 채굴기가 다시 실행되면(작업 스케줄러·bat 등) 15초 간격으로 다시 정지합니다. 보류는 앱 재시작·재부팅 후에도 유지되고, 원인을 해결한 뒤 GPU 카드의 **보류 해제**를 누르면 풀립니다.
@@ -135,7 +163,32 @@ NVIDIA GPU가 달린 Windows PC를 위한 **코인 채굴 허브 + PC 관리 + �
 - **정지 실패**: 관리자 권한으로 실행된 채굴기는 비관리자 앱이 끌 수 없습니다. 이때는 critical 알림이 오니 작업 관리자에서 직접 종료하세요.
 - **한계**: nvidia-smi `fan.speed`는 드라이버가 지시한 목표 속도(%)이지 실제 RPM이 아닙니다. 팬이 물리적으로 막혀도 0%로 보이지 않을 수 있어서, 최종 안전장치는 온도 규칙입니다.
 
-## 전력 제한 (UAC 1회)
+## 전력 제한 — Linux (관리자 인증 1회)
+
+1. GPU 설정 표에 W를 입력합니다. 그다음 **전력 제한 서비스 설치 (관리자 인증 1회)** 를 누르고 `pkexec` 인증 창에서 승인합니다. 동봉된 `resources/linux/install-power-service.sh`가 root로 다음을 수행합니다.
+   - `/usr/local/lib/crypthy/apply_power_limits.py`를 root 소유, 0755 권한으로 복사합니다.
+   - systemd 서비스 `crypthy-power-limit.service`(oneshot)를 만듭니다. 부팅할 때 적용되며 `ProtectSystem=strict` 등 보호 옵션을 켭니다.
+   - polkit 규칙 `/etc/polkit-1/rules.d/50-crypthy-power-limit.rules`를 만듭니다. **이 사용자만** **이 서비스를 start**하는 것만 허용합니다.
+2. 이후 값을 바꾸면 **전력 제한 지금 적용**을 누릅니다. 앱은 `~/.config/Crypthy/power-limits.json`에 PCI bus id와 W만 쓰고, `systemctl start crypthy-power-limit.service`를 실행합니다.
+   - polkit JS 규칙을 지원하지 않는 구버전(예: Ubuntu 22.04의 polkit 0.105)에서는 적용할 때마다 `pkexec` 인증 창이 뜹니다.
+3. 결과는 `/var/lib/crypthy/power-limit.log`에서 확인합니다.
+
+보안 원칙은 Windows와 같습니다.
+- 실행 스크립트는 root 소유입니다. 사용자가 쓸 수 있는 JSON은 데이터로만 읽습니다.
+- 값은 PCI bus id 형식과 100~1000 사이 정수만 받고, 최대 16개까지 처리합니다.
+- 실행 파일은 고정 경로의 nvidia-smi만 쓰고, 셸을 거치지 않습니다.
+- JSON이 아닌 파일은 내용을 로그에 남기지 않습니다.
+
+해제:
+
+```bash
+sudo systemctl disable --now crypthy-power-limit.service
+sudo rm -f /etc/systemd/system/crypthy-power-limit.service /etc/polkit-1/rules.d/50-crypthy-power-limit.rules
+sudo rm -rf /usr/local/lib/crypthy /var/lib/crypthy
+sudo systemctl daemon-reload
+```
+
+## 전력 제한 — Windows (UAC 1회)
 
 1. **GPU 설정 · 전력 제한** 표에 GPU별 W를 입력합니다. nvidia-smi가 알려 주는 허용 범위 안이어야 하고, 빈칸으로 두면 그 GPU는 건드리지 않습니다.
 2. **전력 제한 예약 작업 등록 (UAC 1회)** 을 누르고 UAC를 승인합니다. 관리자 권한으로 실행되는 `resources\ps\register-power-task.ps1`이 다음을 수행합니다.
@@ -202,7 +255,7 @@ Remove-Item -Recurse C:\ProgramData\Crypthy
 
 | 파일 | 경로 |
 |---|---|
-| 설정 | `%APPDATA%\Crypthy\settings.json` |
+| 설정 | Windows `%APPDATA%\Crypthy\settings.json` · Linux `~/.config/Crypthy/settings.json` |
 | 안전 보류 | `%APPDATA%\Crypthy\runtime.json` |
 | 일/월 장부 | `%APPDATA%\Crypthy\ledger.json` |
 | 차트 기록(최근 3일) | `%APPDATA%\Crypthy\history.json` |
@@ -217,6 +270,7 @@ npm test            # 단위 테스트 (vitest)
 npm run typecheck
 npm run start:mock  # 모의 하드웨어로 UI 확인 (Mac/Linux 가능)
 npm run dist:win    # Windows x64 NSIS + zip + latest.yml + SHA256SUMS (업로드 안 함)
+npm run dist:linux  # Linux x64 AppImage + deb + latest-linux.yml (macOS 에서도 빌드됨)
 ```
 
 모의 모드 옵션:
@@ -235,12 +289,14 @@ npm run dist:win    # Windows x64 NSIS + zip + latest.yml + SHA256SUMS (업로�
 
 ### 릴리스 (GitHub Actions)
 
-- `CI`: push(main)와 PR마다 typecheck와 단위 테스트를 실행합니다.
+- `CI`: push(main)와 PR마다 ubuntu·windows 매트릭스로 typecheck와 단위 테스트를 실행합니다.
 - `Release`: `v*` 태그를 push하면 windows-latest에서 다음을 순서대로 실행합니다. 시크릿은 `GITHUB_TOKEN`만 씁니다.
   1. 태그와 `package.json` 버전이 같은지 확인합니다.
   2. 테스트를 실행합니다.
   3. 빌드합니다.
-  4. GitHub Release에 설치 파일, `.blockmap`, `latest.yml`, zip, `SHA256SUMS.txt`를 올립니다.
+  4. Windows 잡이 설치 파일, `.blockmap`, `latest.yml`, zip을 올립니다.
+  5. 이어서 Linux 잡이 AppImage, `latest-linux.yml`, deb를 올립니다.
+  6. 마지막 잡이 모든 바이너리에 대한 `SHA256SUMS.txt`를 올립니다.
 
 ## 제3자 소프트웨어 고지
 
