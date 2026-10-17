@@ -17,6 +17,7 @@ import {
 } from './powerLimit';
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
+import { setLinuxAutostart } from './autostart';
 import { fetchCoingecko, fetchKryptex, fetchMarketChart, fetchVastMedian } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
@@ -520,9 +521,10 @@ function applyPatch(p: Partial<Settings>): string | null {
   return null;
 }
 
-/** 설치형(NSIS) 패키지에서만 자동 업데이트. 실패해도 안전 감시와 무관 */
+/** 설치형(Windows NSIS) 과 Linux AppImage 에서만 자동 업데이트 (deb·zip 은 수동). 실패해도 안전 감시와 무관 */
 function startUpdater(): void {
-  if (MOCK || !app.isPackaged || process.platform !== 'win32') return;
+  const supported = process.platform === 'win32' || (IS_LINUX && !!process.env.APPIMAGE);
+  if (MOCK || !app.isPackaged || !supported) return;
   try {
     const { autoUpdater } = require('electron-updater') as typeof import('electron-updater');
     let lastStatus = '';
@@ -618,8 +620,14 @@ function registerIpc(): void {
 }
 
 function applyLoginItem(): void {
-  if (process.platform === 'win32' && app.isPackaged) {
-    app.setLoginItemSettings({ openAtLogin: settings.openAtLogin, args: ['--hidden'] });
+  if (!app.isPackaged || MOCK) return;
+  if (process.platform === 'win32') app.setLoginItemSettings({ openAtLogin: settings.openAtLogin, args: ['--hidden'] });
+  else if (IS_LINUX) {
+    try {
+      setLinuxAutostart(settings.openAtLogin);
+    } catch (e) {
+      pushAlert({ ts: Date.now(), level: 'warn', code: 'autostart_failed', message: `자동 실행 설정 실패: ${(e as Error).message}` });
+    }
   }
 }
 
