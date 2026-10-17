@@ -4,6 +4,10 @@
   "private": true,
   "author": "Ruderud",
   "description": "Windows tray app to run SRBMiner-MULTI on NVIDIA GPUs with fan/temperature safety watch, power limits and a read-only local status API",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ruderud/crypthy.git"
+  },
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/copy-static.mjs",
@@ -38,6 +42,14 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Ruderud",
+        "repo": "crypthy",
+        "releaseType": "release"
+      }
+    ],
     "win": {
       "target": [
         {
