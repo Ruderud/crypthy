@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, shell, Tray } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Alert, AppState, CompareRow, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
+import type { Alert, AppState, ChartsView, CompareRow, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
 import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog } from './catalog';
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { mockHardware, realHardware } from './hardware';
@@ -14,7 +14,8 @@ import {
 import {
   buildLimitsJson, isPowerTaskRegistered, readPowerLog, registerPowerTask, runPowerTask, validateWatts,
 } from './powerLimit';
-import { fetchCoingecko, fetchKryptex, fetchVastMedian } from './remote';
+import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
+import { fetchCoingecko, fetchKryptex, fetchMarketChart, fetchVastMedian } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
 import { startStatusServer } from './statusApi';
@@ -61,6 +62,8 @@ const seenGpus = new Set<GpuId>();
 let lastPollAt = 0;
 let lastKillAt = 0;
 let killing = false;
+let history: History = emptyHistory();
+let priceSeries: { t: number; usd: number }[] = [];
 let powerRegistered = false;
 let powerLog: string | null = null;
 const remote = {
@@ -186,6 +189,15 @@ function hubView(): HubView {
     recommendations: recommend(catalog, c.id, detected),
     poolSources: c.pools.map((p) => p.source),
     checkedAt: catalog.checkedAt,
+  };
+}
+
+function chartsView(): ChartsView {
+  return {
+    gpus: settings.gpus.filter((g) => history.series[g.id] || history.acc[g.id]).map((g) => ({ id: g.id, label: g.label, points: seriesOf(history, g.id) })),
+    price: priceSeries,
+    daily: dailySeries(ledger, dailyClose(priceSeries), remote.prlUsd, settings.profit),
+    symbol: coin().symbol,
   };
 }
 
@@ -326,6 +338,10 @@ async function poll(): Promise<void> {
   running = processes.length > 0 || stats !== null;
   discoverGpus();
 
+  for (const g of gpuViews()) {
+    if (g.present) history = addSample(history, g.id, { hash: g.hashrate, temp: g.tempC, power: g.powerW }, now);
+  }
+
   if (lastPollAt) {
     const watts = lastNv.reduce((s, g) => s + (g.powerW ?? 0), 0);
     ledger = recordEnergy(ledger, watts, Math.min(now - lastPollAt, 10_000), now);
@@ -371,6 +387,9 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
             ledger = recordEarnings(ledger, k.balance, k.payouts, now);
           }
         }).catch((e) => errors.push(`풀: ${(e as Error).message}`))
+      : null,
+    includeVast || priceSeries.length === 0
+      ? fetchMarketChart(c.coingeckoId).then((j) => { priceSeries = parseMarketChart(j); }).catch((e) => errors.push(`시세 차트: ${(e as Error).message}`))
       : null,
     ...(includeVast
       ? models.map((m) => fetchVastMedian(m).then((v) => { remote.vastUsd[m] = v; }).catch((e) => errors.push(`Vast ${m}: ${(e as Error).message}`)))
@@ -477,6 +496,7 @@ function applyPatch(p: Partial<Settings>): string | null {
     ledger = emptyLedger();
     remote.prlUsd = remote.balance = null;
     remote.payouts = [];
+    priceSeries = [];
   }
   saveSettings();
   applyLoginItem();
@@ -531,6 +551,7 @@ async function installUpdate(): Promise<string | null> {
 
 function registerIpc(): void {
   ipcMain.handle('state:get', () => buildState());
+  ipcMain.handle('charts:get', () => chartsView());
   ipcMain.handle('safety:clearHold', (_e, id: unknown) => clearHold(String(id)));
   ipcMain.handle('settings:save', (_e, patch: Partial<Settings>) => {
     const err = applyPatch(patch);
@@ -597,6 +618,7 @@ function loadState(): void {
   if (raw && !raw.minerApi && Number.isInteger(raw.apiPort)) settings.minerApi.port = raw.apiPort as number;
   if (!catalog.coins.some((c) => c.id === settings.coin)) settings.coin = catalog.coins[0].id;
   ledger = { ...emptyLedger(), ...readJson<Partial<Ledger>>(file('ledger.json'), {}) };
+  history = loadHistory(readJson<unknown>(file('history.json'), null));
   // 0.1.x 의 안전 제외(excluded)는 보류(holds)로 이어받는다
   const saved = readJson<{ holds?: Record<string, string>; excluded?: Record<string, string> }>(file('runtime.json'), {});
   runtime = { holds: saved.holds ?? saved.excluded ?? {} };
@@ -633,7 +655,10 @@ if (!app.requestSingleInstanceLock()) {
     let remoteTick = 0;
     void refreshRemote(true);
     setInterval(() => void refreshRemote(++remoteTick % (VAST_MS / REMOTE_MS) === 0), REMOTE_MS);
-    setInterval(() => writeJson(file('ledger.json'), ledger), 60_000);
+    setInterval(() => {
+      writeJson(file('ledger.json'), ledger);
+      writeJson(file('history.json'), historyToJson(history));
+    }, 60_000);
 
     if (!process.argv.includes('--hidden')) showWindow();
     startUpdater();
@@ -646,6 +671,7 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     try {
       writeJson(file('ledger.json'), ledger);
+      writeJson(file('history.json'), historyToJson(history));
     } catch {
       // 종료 중 저장 실패는 무시
     }

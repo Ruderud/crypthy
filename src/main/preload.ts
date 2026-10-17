@@ -14,6 +14,7 @@ const api: Api = {
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   openLink: (url) => ipcRenderer.invoke('hub:openLink', url),
+  getCharts: () => ipcRenderer.invoke('charts:get'),
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

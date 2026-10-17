@@ -162,6 +162,28 @@ export interface UpdateView {
   checkedAt: number | null;
 }
 
+/** 1분 평균 (null = 그 분에 값 없음) */
+export interface ChartPoint {
+  t: number;
+  hash: number | null;
+  temp: number | null;
+  power: number | null;
+}
+
+export interface DailyPoint {
+  day: string;
+  coin: number;
+  kwh: number;
+  netKrw: number | null;
+}
+
+export interface ChartsView {
+  gpus: { id: GpuId; label: string; points: ChartPoint[] }[];
+  price: { t: number; usd: number }[];
+  daily: DailyPoint[];
+  symbol: string;
+}
+
 export interface AppState {
   ts: number;
   mock: boolean;
@@ -191,4 +213,5 @@ export interface Api {
   checkUpdate(): Promise<void>;
   installUpdate(): Promise<string | null>;
   openLink(url: string): Promise<void>;
+  getCharts(): Promise<ChartsView>;
 }

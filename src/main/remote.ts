@@ -66,6 +66,11 @@ export function parseCoingecko(json: unknown, id: string): { usd: number; change
   return usd === null ? null : { usd, change24h: num(c.usd_24h_change) };
 }
 
+/** 최근 30일 시세 (차트용) */
+export async function fetchMarketChart(id: string): Promise<unknown> {
+  return getJson(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=30`);
+}
+
 export async function fetchCoingecko(id: string) {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=usd&include_24hr_change=true`;
   return parseCoingecko(await getJson(url), id);
