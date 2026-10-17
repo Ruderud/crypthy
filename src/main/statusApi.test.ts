@@ -17,6 +17,7 @@ const state: AppState = {
   power: { registered: false, lastLog: null },
   update: { status: 'disabled', version: null, progressPct: null, error: null, checkedAt: null },
   appVersion: '0.0.0',
+  platform: 'windows',
   coins: [],
   poolExamples: [],
   hub: { coin: 'pearl', algorithm: 'pearlhash', vendors: [], recommendations: [], poolSources: [], checkedAt: '2026-10-17' },

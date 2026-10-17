@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, shell, Tray } from 'electron';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { Alert, AppState, ChartsView, CompareRow, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
 import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog } from './catalog';
@@ -15,6 +16,7 @@ import {
   buildLimitsJson, isPowerTaskRegistered, readPowerLog, registerPowerTask, runPowerTask, validateWatts,
 } from './powerLimit';
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
+import { linuxPower } from './powerLimitLinux';
 import { fetchCoingecko, fetchKryptex, fetchMarketChart, fetchVastMedian } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
@@ -35,6 +37,11 @@ const UPDATE_INTERVAL_MS = 6 * 3600_000;
 
 const IS_LINUX = process.platform === 'linux';
 const hw = MOCK ? mockHardware() : IS_LINUX ? linuxHardware(() => knownMiners) : windowsHardware;
+/** 전력 제한 백엔드: Windows = UAC 1회 예약 작업, Linux = pkexec 1회 systemd 서비스 + polkit */
+const power = IS_LINUX
+  ? linuxPower
+  : { isRegistered: isPowerTaskRegistered, register: registerPowerTask, run: runPowerTask, readLog: readPowerLog };
+const powerUser = () => (IS_LINUX ? os.userInfo().username : `${process.env.USERDOMAIN}\\${process.env.USERNAME}`);
 const file = (name: string) => path.join(app.getPath('userData'), name);
 
 interface Runtime {
@@ -230,6 +237,7 @@ function buildState(): AppState {
     power: { registered: powerRegistered, lastLog: powerLog },
     update: updater?.view() ?? DISABLED_UPDATE,
     appVersion: app.getVersion(),
+    platform: IS_LINUX ? 'linux' : process.platform === 'win32' ? 'windows' : 'other',
     settings,
     coins: catalog.coins.map((c) => ({ id: c.id, name: c.name, symbol: c.symbol, algorithm: c.algorithm })),
     poolExamples: coin().pools.flatMap((p) => p.examples),
@@ -585,23 +593,23 @@ function registerIpc(): void {
     try {
       writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
       const resources = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'resources');
-      await registerPowerTask(resources, file('power-limits.json'), `${process.env.USERDOMAIN}\\${process.env.USERNAME}`);
-      powerRegistered = await isPowerTaskRegistered();
+      await power.register(resources, file('power-limits.json'), powerUser());
+      powerRegistered = await power.isRegistered();
       await sleep(4000);
-      powerLog = readPowerLog();
+      powerLog = power.readLog();
       return powerRegistered ? null : '등록 확인 실패';
     } catch (e) {
-      return `등록 실패(UAC 취소 포함): ${(e as Error).message}`;
+      return `등록 실패(${IS_LINUX ? '인증 취소 포함' : 'UAC 취소 포함'}): ${(e as Error).message}`;
     }
   });
   ipcMain.handle('power:apply', async () => {
     if (MOCK) return 'mock 모드에서는 전력 제한을 적용하지 않습니다';
     writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
-    if (!powerRegistered) return '먼저 "예약 작업 등록(UAC)"을 1회 실행해 주세요';
+    if (!powerRegistered) return '먼저 전력 제한 등록을 1회 실행해 주세요';
     try {
-      await runPowerTask();
+      await power.run();
       await sleep(4000);
-      powerLog = readPowerLog();
+      powerLog = power.readLog();
       return null;
     } catch (e) {
       return `적용 실패: ${(e as Error).message}`;
@@ -656,8 +664,8 @@ if (!app.requestSingleInstanceLock()) {
 
     startStatusServer(buildState, (e) => pushAlert({ ts: Date.now(), level: 'warn', code: 'status_api', message: `로컬 상태 API 시작 실패: ${e.message}` }));
     if (!MOCK) {
-      powerRegistered = await isPowerTaskRegistered();
-      powerLog = readPowerLog();
+      powerRegistered = await power.isRegistered();
+      powerLog = power.readLog();
     }
 
     void hw.gpuVendors().then((v) => { vendors = v; }).catch(() => undefined);

@@ -195,6 +195,7 @@ export interface AppState {
   power: { registered: boolean; lastLog: string | null };
   update: UpdateView;
   appVersion: string;
+  platform: 'windows' | 'linux' | 'other';
   settings: Settings;
   /** 카탈로그 코인 목록과 선택 코인의 공개 풀 예시 */
   coins: { id: string; name: string; symbol: string; algorithm: string }[];

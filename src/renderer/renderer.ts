@@ -184,9 +184,11 @@ function render(st: AppState) {
     })
     .join('')}<tr><td colspan="5" class="muted small">가정: 호스트 몫 ${esc(Math.round(pr.vastHostShare * 100))}%, 임대 중 ${esc(pr.rentalPowerW)}W, ${esc(pr.krwPerKwh)}원/kWh, ${esc(pr.krwPerUsd)}원/$</td></tr>`;
 
+  const linux = st.platform === 'linux';
+  $('powerRegister').textContent = linux ? '전력 제한 서비스 설치 (관리자 인증 1회)' : '전력 제한 예약 작업 등록 (UAC 1회)';
   $('powerTask').textContent = st.power.registered
-    ? '전력 제한 예약 작업 등록됨: 로그온 30초 뒤 자동 재적용'
-    : '전력 제한 예약 작업 미등록: 등록 시 Windows UAC 승인 창이 1회 뜹니다';
+    ? linux ? '전력 제한 서비스 설치됨: 부팅 시 자동 적용 (systemd crypthy-power-limit.service)' : '전력 제한 예약 작업 등록됨: 로그온 30초 뒤 자동 재적용'
+    : linux ? '전력 제한 서비스 미설치: 설치 시 관리자 인증(pkexec) 창이 1회 뜹니다' : '전력 제한 예약 작업 미등록: 등록 시 Windows UAC 승인 창이 1회 뜹니다';
   $('powerLog').textContent = st.power.lastLog ?? '';
 
   // 메인 쪽에서 설정이 바뀌면(GPU 발견, 기준가 기록 등) 입력 중이 아닐 때만 폼을 다시 채운다
