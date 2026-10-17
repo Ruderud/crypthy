@@ -15,6 +15,8 @@ const state: AppState = {
   alerts: Array.from({ length: 50 }, (_, i) => ({ ts: i, level: 'warn' as const, code: 'temp_warn', gpu: 'g', message: 'm' })),
   profit: {} as AppState['profit'],
   power: { registered: false, lastLog: null },
+  update: { status: 'disabled', version: null, progressPct: null, error: null, checkedAt: null },
+  appVersion: '0.0.0',
   settings: { ...DEFAULT_SETTINGS, wallet: 'prl1secretish.worker1' },
 };
 

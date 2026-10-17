@@ -110,6 +110,19 @@ function render(st: AppState) {
   $('updated').textContent = new Date(st.ts).toLocaleTimeString('ko-KR');
 
   renderSetup(st);
+  const u = st.update;
+  const updText: Record<typeof u.status, string> = {
+    disabled: `v${st.appVersion}`,
+    idle: `v${st.appVersion}`,
+    checking: `v${st.appVersion} · 업데이트 확인 중`,
+    downloading: `v${st.appVersion} · v${u.version ?? '?'} 내려받는 중 ${u.progressPct ?? 0}%`,
+    ready: `v${st.appVersion} → v${u.version} 준비됨`,
+    error: `v${st.appVersion} · 업데이트 확인 실패`,
+  };
+  $('updateInfo').textContent = updText[u.status];
+  $('updateInfo').title = u.error ?? '';
+  $('updateBtn').hidden = u.status !== 'ready';
+
   renderGpuPick(st);
 
   $('minerStats').innerHTML = [
@@ -283,6 +296,11 @@ $('powerApply').addEventListener('click', async () => {
 $('settingsForm').addEventListener('submit', (e) => {
   e.preventDefault();
   void act('settingsMsg', () => crypthy.saveSettings(readSettingsForm()), '저장됨');
+});
+
+$('updateBtn').addEventListener('click', async () => {
+  const err = await crypthy.installUpdate();
+  if (err) $('updateInfo').textContent = err;
 });
 
 crypthy.onState(render);

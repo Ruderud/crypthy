@@ -76,3 +76,4 @@ code { font-family: Consolas, "SF Mono", monospace; font-size: 12px; overflow-wr
 .seg label:has(input[type=checkbox]:checked) { background: var(--accent); color: #fff; }
 .card.wide { overflow-x: auto; }
 [hidden] { display: none !important; }
+.spacer { flex: 1; }

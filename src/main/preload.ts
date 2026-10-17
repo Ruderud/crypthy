@@ -18,6 +18,8 @@ const api: Api = {
   detectMapping: () => ipcRenderer.invoke('miner:detectMapping'),
   registerPowerTask: () => ipcRenderer.invoke('power:register'),
   applyPowerLimits: () => ipcRenderer.invoke('power:apply'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

@@ -18,6 +18,7 @@ import { fetchCoingecko, fetchKryptex, fetchVastMedian } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { learnSrbIds, matchSrbDevice, type SrbStatus } from './srbminer';
 import { startStatusServer } from './statusApi';
+import { createUpdateController, DISABLED_UPDATE } from './updater';
 
 const APP_NAME = 'Crypthy';
 const MOCK = process.env.CRYPTHY_MOCK === '1';
@@ -31,6 +32,8 @@ const ENFORCE_RETRY_MS = 15_000;
 const REVIEW_REPEAT_MS = 6 * 3600_000;
 const KILL_CONFIRM_MS = 4000;
 const DETECT_TIMEOUT_MS = 40_000;
+const UPDATE_FIRST_CHECK_MS = 60_000;
+const UPDATE_INTERVAL_MS = 6 * 3600_000;
 
 const hw = MOCK ? mockHardware() : realHardware;
 const file = (name: string) => path.join(app.getPath('userData'), name);
@@ -83,6 +86,7 @@ let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let trayMenuKey = '';
+let updater: ReturnType<typeof createUpdateController> | null = null;
 
 // ---------- 상태 ----------
 
@@ -218,6 +222,8 @@ function buildState(): AppState {
     alerts,
     profit: profitView(gpus),
     power: { registered: powerRegistered, lastLog: powerLog },
+    update: updater?.view() ?? DISABLED_UPDATE,
+    appVersion: app.getVersion(),
     settings,
   };
 }
@@ -658,6 +664,8 @@ function registerIpc(): void {
     }
   });
   ipcMain.handle('miner:detectMapping', () => detectMapping());
+  ipcMain.handle('update:check', () => updater?.check());
+  ipcMain.handle('update:install', () => installUpdate());
   ipcMain.handle('power:register', async () => {
     if (MOCK) return 'mock 모드에서는 예약 작업을 등록하지 않습니다';
     try {
@@ -685,6 +693,52 @@ function registerIpc(): void {
       return `적용 실패: ${(e as Error).message}`;
     }
   });
+}
+
+/** 설치형(NSIS) 패키지에서만 자동 업데이트. 실패해도 채굴·안전 감시와 무관 */
+function startUpdater(): void {
+  if (MOCK || !app.isPackaged || process.platform !== 'win32') return;
+  try {
+    const { autoUpdater } = require('electron-updater') as typeof import('electron-updater');
+    let lastStatus = '';
+    updater = createUpdateController(autoUpdater, {
+      initialDelayMs: UPDATE_FIRST_CHECK_MS,
+      intervalMs: UPDATE_INTERVAL_MS,
+      onChange: (v) => {
+        if (v.status === lastStatus) return;
+        lastStatus = v.status;
+        if (v.status === 'ready') {
+          pushAlert({ ts: Date.now(), level: 'info', code: 'update_ready', message: `업데이트 v${v.version} 준비됨 — 화면 상단 "업데이트 설치"를 누르면 앱이 다시 시작됩니다` }, true);
+        } else if (v.status === 'error') {
+          alertOnce({ ts: Date.now(), level: 'info', code: 'update_error', message: `업데이트 확인 실패: ${v.error}` }, 6 * 3600_000);
+        }
+        broadcast();
+      },
+    });
+  } catch (e) {
+    pushAlert({ ts: Date.now(), level: 'info', code: 'update_error', message: `자동 업데이트 초기화 실패: ${(e as Error).message}` }, false);
+  }
+}
+
+async function installUpdate(): Promise<string | null> {
+  if (!updater || updater.view().status !== 'ready') return '설치할 업데이트가 없습니다';
+  if (running) {
+    const r = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['지금 설치', '나중에'],
+      defaultId: 1,
+      cancelId: 1,
+      title: `${APP_NAME} 업데이트`,
+      message: '채굴 중입니다. 지금 업데이트를 설치할까요?',
+      detail: '채굴기는 앱과 별도 프로세스라 계속 돌지만, 앱이 다시 시작되는 동안(수십 초) 안전 감시가 멈춥니다.',
+    });
+    if (r.response !== 0) return '설치를 미뤘습니다';
+  }
+  saveRuntime();
+  writeJson(file('ledger.json'), ledger);
+  quitting = true;
+  updater.install();
+  return null;
 }
 
 function applyLoginItem(): void {
@@ -740,6 +794,7 @@ if (!app.requestSingleInstanceLock()) {
     setInterval(() => writeJson(file('ledger.json'), ledger), 60_000);
 
     if (!process.argv.includes('--hidden')) showWindow();
+    startUpdater();
   });
 
   app.on('window-all-closed', () => {

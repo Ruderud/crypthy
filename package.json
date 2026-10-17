@@ -66,7 +66,8 @@
         }
       ],
       "icon": "resources/icon.png",
-      "signExecutable": false
+      "signExecutable": false,
+      "verifyUpdateCodeSignature": false
     },
     "nsis": {
       "oneClick": false,
@@ -74,6 +75,9 @@
       "allowToChangeInstallationDirectory": true,
       "artifactName": "Crypthy-${version}-setup-${arch}.${ext}"
     }
+  },
+  "dependencies": {
+    "electron-updater": "6.8.10"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

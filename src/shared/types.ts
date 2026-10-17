@@ -142,6 +142,14 @@ export interface MinerRelease {
   url: string;
 }
 
+export interface UpdateView {
+  status: 'disabled' | 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
+  version: string | null;
+  progressPct: number | null;
+  error: string | null;
+  checkedAt: number | null;
+}
+
 export interface AppState {
   ts: number;
   mock: boolean;
@@ -151,6 +159,8 @@ export interface AppState {
   alerts: Alert[];
   profit: ProfitView;
   power: { registered: boolean; lastLog: string | null };
+  update: UpdateView;
+  appVersion: string;
   settings: Settings;
 }
 
@@ -174,4 +184,6 @@ export interface Api {
   detectMapping(): Promise<string | null>;
   registerPowerTask(): Promise<string | null>;
   applyPowerLimits(): Promise<string | null>;
+  checkUpdate(): Promise<void>;
+  installUpdate(): Promise<string | null>;
 }
