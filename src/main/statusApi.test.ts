@@ -19,6 +19,7 @@ const state: AppState = {
   appVersion: '0.0.0',
   coins: [],
   poolExamples: [],
+  hub: { coin: 'pearl', algorithm: 'pearlhash', vendors: [], recommendations: [], poolSources: [], checkedAt: '2026-10-17' },
   settings: { ...DEFAULT_SETTINGS, wallet: 'prl1secretish.worker1' },
 };
 

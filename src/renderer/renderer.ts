@@ -45,6 +45,39 @@ function renderSetup(st: AppState) {
   mark('stepApi', s.apiConnected, '연결됨', '응답 없음');
 }
 
+const VENDOR_LABEL: Record<string, string> = { nvidia: 'NVIDIA', amd: 'AMD', intel: 'Intel' };
+const REPO_KIND: Record<string, string> = { developer: '개발자 저장소', distribution: '배포처 저장소(개발자 미확인)', unverified: '미확인' };
+let hubKey = '';
+
+function feeText(r: AppState['hub']['recommendations'][number]) {
+  const f = r.devFee;
+  if (f.status === 'verified') return `${f.pct}%`;
+  if (f.status === 'conflict') return `<span class="warn">출처 불일치</span>`;
+  return '<span class="muted">미확인</span>';
+}
+
+function renderHub(st: AppState) {
+  const h = st.hub;
+  const key = JSON.stringify(h);
+  if (key === hubKey) return;
+  hubKey = key;
+  $('hubSub').textContent = `카탈로그 확인일 ${h.checkedAt}`;
+  $('hubInfo').textContent = `알고리즘 ${h.algorithm} · 이 PC 의 GPU: ${h.vendors.map((v) => VENDOR_LABEL[v]).join(', ') || '감지 안 됨(전체 표시)'}`;
+  const link = (url: string | null, label: string) => (url ? `<a href="#" data-link="${esc(url)}">${esc(label)}</a>` : '');
+  $('hubTable').innerHTML = `<tr><th>추천</th><th>채굴 툴</th><th>지원 GPU</th><th>dev fee</th><th>저장소</th><th>비고</th></tr>${h.recommendations
+    .map(
+      (r) => `<tr class="${r.compatible ? '' : 'muted'}">
+        <td>${r.compatible ? `#${r.rank}` : '호환 안 됨'}</td>
+        <td><b>${esc(r.name)}</b><div class="small muted">${esc(r.apiNote)}</div></td>
+        <td>${r.vendors.map((v) => esc(VENDOR_LABEL[v])).join(', ')}</td>
+        <td>${feeText(r)} ${r.devFee.source ? link(r.devFee.source, '출처') : ''}${r.devFee.note ? `<div class="small muted">${esc(r.devFee.note)}</div>` : ''}</td>
+        <td>${r.repo ? link(r.repo, r.repo.replace('https://github.com/', '')) : '<span class="muted">링크 없음(미확인)</span>'}<div class="small muted">${esc(REPO_KIND[r.repoKind])}${r.repoNote ? ` · ${esc(r.repoNote)}` : ''}</div></td>
+        <td class="small">${esc(r.note)}</td>
+      </tr>`,
+    )
+    .join('')}<tr><td colspan="6" class="small muted">풀 안내: ${h.poolSources.map((u) => link(u, u.replace(/^https:\/\//, ''))).join(' · ')}</td></tr>`;
+}
+
 function renderGpus(st: AppState) {
   $('gpus').innerHTML = st.gpus
     .filter((g) => g.present || g.hold)
@@ -104,6 +137,7 @@ function render(st: AppState) {
   $('updateInfo').title = u.error ?? '';
   $('updateBtn').hidden = u.status !== 'ready';
 
+  renderHub(st);
   renderSetup(st);
 
   $('minerStats').innerHTML = [
@@ -162,6 +196,9 @@ function render(st: AppState) {
 function fillForms(st: AppState) {
   const s = st.settings;
   filledSettings = JSON.stringify(s);
+  $<HTMLSelectElement>('hubCoin').innerHTML = st.coins
+    .map((c) => `<option value="${esc(c.id)}" ${c.id === s.coin ? 'selected' : ''}>${esc(c.name)} (${esc(c.symbol)})</option>`)
+    .join('');
   $<HTMLSelectElement>('coinSelect').innerHTML = st.coins
     .map((c) => `<option value="${esc(c.id)}" ${c.id === s.coin ? 'selected' : ''}>${esc(c.name)} (${esc(c.symbol)}) · ${esc(c.algorithm)}</option>`)
     .join('');
@@ -217,6 +254,17 @@ async function act(msgId: string, fn: () => Promise<string | null>, ok: string) 
   filledSettings = '';
   await refresh();
 }
+
+$('hubCoin').addEventListener('change', (e) => {
+  const coin = (e.target as HTMLSelectElement).value;
+  void act('hubMsg', () => crypthy.saveSettings({ coin }), '코인 변경됨');
+});
+$('hubTable').addEventListener('click', (e) => {
+  const url = (e.target as HTMLElement).closest<HTMLElement>('[data-link]')?.dataset.link;
+  if (!url) return;
+  e.preventDefault();
+  void crypthy.openLink(url);
+});
 
 $('gpus').addEventListener('click', async (e) => {
   const id = (e.target as HTMLElement).dataset.clear;

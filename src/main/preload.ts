@@ -13,6 +13,7 @@ const api: Api = {
   applyPowerLimits: () => ipcRenderer.invoke('power:apply'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  openLink: (url) => ipcRenderer.invoke('hub:openLink', url),
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

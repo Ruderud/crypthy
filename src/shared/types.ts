@@ -126,6 +126,34 @@ export interface SetupView {
   apiConnected: boolean;
 }
 
+export type Vendor = 'nvidia' | 'amd' | 'intel';
+export type FeeStatus = 'verified' | 'conflict' | 'unverified';
+
+export interface RecommendationView {
+  rank: number;
+  tool: string;
+  name: string;
+  /** 저장소 링크. 공식 저장소·배포처를 확인하지 못한 툴은 null */
+  repo: string | null;
+  repoKind: 'developer' | 'distribution' | 'unverified';
+  repoNote: string | null;
+  vendors: Vendor[];
+  compatible: boolean;
+  devFee: { pct: number | null; status: FeeStatus; source: string | null; note?: string };
+  note: string;
+  apiNote: string;
+}
+
+export interface HubView {
+  coin: string;
+  algorithm: string;
+  /** 이 PC 에서 감지한 GPU 벤더 */
+  vendors: Vendor[];
+  recommendations: RecommendationView[];
+  poolSources: string[];
+  checkedAt: string;
+}
+
 export interface UpdateView {
   status: 'disabled' | 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
   version: string | null;
@@ -149,6 +177,7 @@ export interface AppState {
   /** 카탈로그 코인 목록과 선택 코인의 공개 풀 예시 */
   coins: { id: string; name: string; symbol: string; algorithm: string }[];
   poolExamples: string[];
+  hub: HubView;
 }
 
 export interface Api {
@@ -161,4 +190,5 @@ export interface Api {
   applyPowerLimits(): Promise<string | null>;
   checkUpdate(): Promise<void>;
   installUpdate(): Promise<string | null>;
+  openLink(url: string): Promise<void>;
 }

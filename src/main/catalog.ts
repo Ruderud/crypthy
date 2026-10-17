@@ -1,9 +1,9 @@
 // 큐레이션 카탈로그(catalog/catalog.json): 코인 → 알고리즘 → 호환 채굴 툴 추천과 공식 저장소 링크.
 // Crypthy 는 채굴기를 내려받거나 실행하지 않는다.
 import fs from 'node:fs';
+import type { FeeStatus, RecommendationView, Vendor } from '../shared/types';
 
-export type Vendor = 'nvidia' | 'amd' | 'intel';
-export type FeeStatus = 'verified' | 'conflict' | 'unverified';
+export type { FeeStatus, Vendor };
 
 export interface CatalogTool {
   name: string;
@@ -40,15 +40,7 @@ export interface Catalog {
   coins: CatalogCoin[];
 }
 
-export interface Recommendation extends CoinTool {
-  rank: number;
-  name: string;
-  repo: string | null;
-  repoKind: CatalogTool['repoKind'];
-  repoNote: string | null;
-  apiNote: string;
-  compatible: boolean;
-}
+export type Recommendation = RecommendationView;
 
 /** 최소 구조 검증 (카탈로그는 저장소 안의 파일이라 형식 오류는 빌드·테스트에서 잡는다) */
 export function parseCatalog(json: unknown): Catalog {

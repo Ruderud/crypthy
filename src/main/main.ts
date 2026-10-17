@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, shell, Tray } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Alert, AppState, CompareRow, GpuConfig, GpuId, GpuView, ProfitView, Settings, SetupView } from '../shared/types';
-import { knownProcessNames, loadCatalog, type Catalog } from './catalog';
+import type { Alert, AppState, CompareRow, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
+import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog } from './catalog';
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { mockHardware, realHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
@@ -42,6 +42,9 @@ interface Runtime {
 
 let catalog: Catalog;
 let knownMiners: string[] = [];
+let links = new Set<string>();
+/** 이 PC 의 GPU 벤더 (시작 시 1회 감지, 실패하면 nvidia-smi 결과로 NVIDIA 만) */
+let vendors: Vendor[] = [];
 let settings: Settings;
 let ledger: Ledger;
 let runtime: Runtime;
@@ -167,6 +170,19 @@ function profitView(gpus: GpuView[]): ProfitView {
   };
 }
 
+function hubView(): HubView {
+  const c = coin();
+  const detected: Vendor[] = vendors.length ? vendors : lastNv.length ? ['nvidia'] : [];
+  return {
+    coin: c.id,
+    algorithm: c.algorithm,
+    vendors: detected,
+    recommendations: recommend(catalog, c.id, detected),
+    poolSources: c.pools.map((p) => p.source),
+    checkedAt: catalog.checkedAt,
+  };
+}
+
 function setupView(): SetupView {
   return { walletSet: !!settings.wallet, poolSet: !!settings.pool, apiConnected: lastStats !== null };
 }
@@ -198,6 +214,7 @@ function buildState(): AppState {
     settings,
     coins: catalog.coins.map((c) => ({ id: c.id, name: c.name, symbol: c.symbol, algorithm: c.algorithm })),
     poolExamples: coin().pools.flatMap((p) => p.examples),
+    hub: hubView(),
   };
 }
 
@@ -504,6 +521,10 @@ function registerIpc(): void {
     if (!parsed.wallet && !parsed.pool) return 'bat 에서 --wallet / --pool 값을 찾지 못했습니다';
     return applyPatch(parsed);
   });
+  // 카탈로그에 있는 저장소·출처 링크만 기본 브라우저로 연다
+  ipcMain.handle('hub:openLink', async (_e, url: unknown) => {
+    if (typeof url === 'string' && links.has(url)) await shell.openExternal(url);
+  });
   ipcMain.handle('update:check', () => updater?.check());
   ipcMain.handle('update:install', () => installUpdate());
   ipcMain.handle('power:register', async () => {
@@ -546,6 +567,7 @@ function applyLoginItem(): void {
 function loadState(): void {
   catalog = loadCatalog(path.join(__dirname, '..', 'catalog.json'));
   knownMiners = knownProcessNames(catalog);
+  links = allowedLinks(catalog);
   settings = mergeSettings(DEFAULT_SETTINGS, readJson<Partial<Settings>>(file('settings.json'), {}));
   if (!catalog.coins.some((c) => c.id === settings.coin)) settings.coin = catalog.coins[0].id;
   ledger = { ...emptyLedger(), ...readJson<Partial<Ledger>>(file('ledger.json'), {}) };
@@ -574,6 +596,7 @@ if (!app.requestSingleInstanceLock()) {
       powerLog = readPowerLog();
     }
 
+    void hw.gpuVendors().then((v) => { vendors = v; }).catch(() => undefined);
     await poll();
     let polling = false;
     setInterval(() => {
