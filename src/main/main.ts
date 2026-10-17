@@ -5,7 +5,6 @@ import type { Alert, AppState, CompareRow, GpuConfig, GpuId, GpuView, ProfitView
 import { DEFAULT_SETTINGS, mergeSettings, newGpu, readJson, shortName, writeJson } from './config';
 import { mockHardware, realHardware } from './hardware';
 import { COIN_PRESETS, gpuIdsFor, isKryptexPool, parseBatArgs, validateMinerSettings } from './miner';
-import { fetchLatestRelease, installRelease, type ReleaseInfo } from './minerSetup';
 import type { NvGpu } from './nvsmi';
 import {
   emptyLedger, miningNetKrwPerHour, netKrw, recordEarnings, recordEnergy, rentalNetKrwPerHour,
@@ -68,7 +67,6 @@ let pendingEnforce = false;
 let enforceFailed = false;
 let busy = false;
 let detecting = false;
-let release: ReleaseInfo | null = null;
 let powerRegistered = false;
 let powerLog: string | null = null;
 const remote = {
@@ -643,25 +641,6 @@ function registerIpc(): void {
     const patch: Partial<Settings> = { ...parsed };
     if (!settings.minerDir && fs.existsSync(path.join(dir, settings.minerExe))) patch.minerDir = dir;
     return applyPatch(patch);
-  });
-  ipcMain.handle('miner:checkRelease', async () => {
-    try {
-      release = await fetchLatestRelease();
-      const { md5Url: _m, ...value } = release;
-      return { error: null, value };
-    } catch (e) {
-      return { error: (e as Error).message };
-    }
-  });
-  ipcMain.handle('miner:download', async () => {
-    if (MOCK) return 'mock 모드에서는 내려받지 않습니다';
-    if (!release) return '먼저 최신 릴리스를 확인해 주세요';
-    try {
-      const dir = await installRelease(release, file('miners'), settings.minerExe);
-      return applyPatch({ minerDir: dir });
-    } catch (e) {
-      return `설치 실패: ${(e as Error).message}`;
-    }
   });
   ipcMain.handle('miner:detectMapping', () => detectMapping());
   ipcMain.handle('update:check', () => updater?.check());

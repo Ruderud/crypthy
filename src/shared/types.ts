@@ -134,14 +134,6 @@ export interface SetupView {
   consented: boolean;
 }
 
-export interface MinerRelease {
-  tag: string;
-  name: string;
-  size: number;
-  sha256: string;
-  url: string;
-}
-
 export interface UpdateView {
   status: 'disabled' | 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
   version: string | null;
@@ -164,11 +156,6 @@ export interface AppState {
   settings: Settings;
 }
 
-export interface Result<T = null> {
-  error: string | null;
-  value?: T;
-}
-
 export interface Api {
   getState(): Promise<AppState>;
   onState(cb: (s: AppState) => void): void;
@@ -179,8 +166,6 @@ export interface Api {
   consent(): Promise<string | null>;
   pickMinerDir(): Promise<string | null>;
   importBat(): Promise<string | null>;
-  checkMinerRelease(): Promise<Result<MinerRelease>>;
-  downloadMiner(): Promise<string | null>;
   detectMapping(): Promise<string | null>;
   registerPowerTask(): Promise<string | null>;
   applyPowerLimits(): Promise<string | null>;

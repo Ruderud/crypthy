@@ -250,24 +250,6 @@ $('gpus').addEventListener('click', async (e) => {
 });
 
 $('pickDir').addEventListener('click', () => act('minerMsg', () => crypthy.pickMinerDir(), '폴더 지정됨'));
-$('checkRelease').addEventListener('click', async () => {
-  msg('minerMsg', null, '확인 중…');
-  const r = await crypthy.checkMinerRelease();
-  if (r.error || !r.value) return msg('minerMsg', r.error ?? '확인 실패');
-  const v = r.value;
-  const box = $('releaseBox');
-  box.hidden = false;
-  box.innerHTML = `<div><b>${esc(v.tag)}</b> · ${esc(v.name)} · ${(v.size / 1024 / 1024).toFixed(1)} MB</div>
-    <div class="small">출처: <code>${esc(v.url)}</code></div>
-    <div class="small">SHA-256: <code>${esc(v.sha256)}</code></div>
-    <div class="row"><button id="downloadMiner" class="primary">내려받기·검증·설치</button></div>`;
-  msg('minerMsg', null, '릴리스 확인됨');
-  $('downloadMiner').addEventListener('click', () => {
-    if (!confirm(`${v.name} (${(v.size / 1024 / 1024).toFixed(1)} MB)를 공식 GitHub 릴리스에서 내려받아 해시 검증 후 앱 데이터 폴더에 설치합니다. 진행할까요?`)) return;
-    void act('minerMsg', () => crypthy.downloadMiner(), '설치 완료');
-  });
-});
-
 $('saveWallet').addEventListener('click', () =>
   act('walletMsg', () => crypthy.saveSettings({ wallet: $<HTMLInputElement>('wallet').value.trim(), pool: $<HTMLInputElement>('pool').value.trim() }), '저장됨'),
 );
