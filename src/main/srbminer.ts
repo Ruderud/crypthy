@@ -70,26 +70,7 @@ export async function fetchSrbStatus(port: number): Promise<SrbStatus> {
   return parseSrbStatus(await res.json());
 }
 
-/** nvidia-smi GPU와 SRBMiner 장치 매칭: PCI bus 우선, 장치에 bus 정보가 없을 때만 설정의 srbId */
-export function matchSrbDevice(devices: SrbDevice[], bus: number | null, srbId: number | null): SrbDevice | undefined {
-  if (bus !== null && devices.some((d) => d.bus !== null)) return devices.find((d) => d.bus === bus);
-  return srbId === null ? undefined : devices.find((d) => d.id === srbId);
-}
-
-/**
- * 채굴 중인 SRBMiner 장치의 PCI bus로 GPU별 SRBMiner id 를 학습한다.
- * 반환: 바뀐 항목 목록 (설정 반영·알림은 호출부에서)
- */
-export function learnSrbIds(
-  gpus: { id: string; srbId: number | null }[],
-  busOf: (gpuId: string) => number | null,
-  devices: SrbDevice[],
-): { id: string; from: number | null; to: number }[] {
-  const changes: { id: string; from: number | null; to: number }[] = [];
-  for (const g of gpus) {
-    const bus = busOf(g.id);
-    const dev = bus === null ? undefined : devices.find((d) => d.bus === bus);
-    if (dev && dev.id >= 0 && dev.id !== g.srbId) changes.push({ id: g.id, from: g.srbId, to: dev.id });
-  }
-  return changes;
+/** nvidia-smi GPU와 채굴기 장치 매칭: PCI bus 기준 (채굴기가 bus 를 알려 주지 않으면 매칭하지 않음) */
+export function matchSrbDevice(devices: SrbDevice[], bus: number | null): SrbDevice | undefined {
+  return bus === null ? undefined : devices.find((d) => d.bus === bus);
 }

@@ -6,17 +6,19 @@ import { buildStatus, startStatusServer, STATUS_PORT } from './statusApi';
 
 const state: AppState = {
   ts: 1, mock: true,
-  setup: { minerFound: true, walletSet: true, poolSet: true, gpusMapped: true, consented: true },
-  miner: { running: true, mode: 'all', gpuIds: [1, 2], pool: 'p:1', latencyMs: 3, uptimeS: 10, accepted: 5, rejected: 1, totalHashrate: 9, apiOk: true },
+  setup: { walletSet: true, poolSet: true, apiConnected: true },
+  miner: { running: true, mode: 'external', processes: ['SRBMiner-MULTI.exe'], pool: 'p:1', latencyMs: 3, uptimeS: 10, accepted: 5, rejected: 1, totalHashrate: 9, apiOk: true },
   gpus: Array.from({ length: 12 }, (_, i) => ({
-    id: `0000000${i}:01:00.0`, label: 'x', index: i, name: 'N'.repeat(500), srbId: i, tempC: 60, fanPct: 50, powerW: 500, powerLimitW: 600,
-    powerMinW: 400, powerMaxW: 600, utilPct: 100, hashrate: 1, selected: true, mining: true, excluded: null, present: true,
+    id: `0000000${i}:01:00.0`, label: 'x', index: i, name: 'N'.repeat(500), tempC: 60, fanPct: 50, powerW: 500, powerLimitW: 600,
+    powerMinW: 400, powerMaxW: 600, utilPct: 100, hashrate: 1, mining: true, hold: null, present: true,
   })),
   alerts: Array.from({ length: 50 }, (_, i) => ({ ts: i, level: 'warn' as const, code: 'temp_warn', gpu: 'g', message: 'm' })),
   profit: {} as AppState['profit'],
   power: { registered: false, lastLog: null },
   update: { status: 'disabled', version: null, progressPct: null, error: null, checkedAt: null },
   appVersion: '0.0.0',
+  coins: [],
+  poolExamples: [],
   settings: { ...DEFAULT_SETTINGS, wallet: 'prl1secretish.worker1' },
 };
 

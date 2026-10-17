@@ -2,9 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, T
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Alert, AppState, CompareRow, GpuConfig, GpuId, GpuView, ProfitView, Settings, SetupView } from '../shared/types';
-import { DEFAULT_SETTINGS, mergeSettings, newGpu, readJson, shortName, writeJson } from './config';
+import { knownProcessNames, loadCatalog, type Catalog } from './catalog';
+import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { mockHardware, realHardware } from './hardware';
-import { COIN_PRESETS, gpuIdsFor, isKryptexPool, parseBatArgs, validateMinerSettings } from './miner';
+import { MINER_APIS, type MinerStats } from './minerApi';
 import type { NvGpu } from './nvsmi';
 import {
   emptyLedger, miningNetKrwPerHour, netKrw, recordEarnings, recordEnergy, rentalNetKrwPerHour,
@@ -15,7 +16,7 @@ import {
 } from './powerLimit';
 import { fetchCoingecko, fetchKryptex, fetchVastMedian } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
-import { learnSrbIds, matchSrbDevice, type SrbStatus } from './srbminer';
+import { matchSrbDevice } from './srbminer';
 import { startStatusServer } from './statusApi';
 import { createUpdateController, DISABLED_UPDATE } from './updater';
 
@@ -25,12 +26,9 @@ const POLL_MS = 2000;
 const REMOTE_MS = 5 * 60_000;
 const VAST_MS = 30 * 60_000;
 const MAX_ALERTS = 50;
-const WATCHDOG_MISSES = 3;
-const MAX_RESTARTS_PER_HOUR = 5;
-const ENFORCE_RETRY_MS = 15_000;
-const REVIEW_REPEAT_MS = 6 * 3600_000;
+const KILL_RETRY_MS = 15_000;
 const KILL_CONFIRM_MS = 4000;
-const DETECT_TIMEOUT_MS = 40_000;
+const REVIEW_REPEAT_MS = 6 * 3600_000;
 const UPDATE_FIRST_CHECK_MS = 60_000;
 const UPDATE_INTERVAL_MS = 6 * 3600_000;
 
@@ -38,35 +36,24 @@ const hw = MOCK ? mockHardware() : realHardware;
 const file = (name: string) => path.join(app.getPath('userData'), name);
 
 interface Runtime {
-  wantRunning: boolean;
-  /** 앱이 마지막으로 채굴을 시작한 GPU 선택 */
-  selection: GpuId[];
-  /** 앱이 실행한 채굴기 PID. 실행 중인 PID 와 다르면 외부 실행으로 본다 */
-  ourPid: number | null;
-  currentIds: number[];
-  /** 안전 감시로 제외된 GPU → 사유. 사용자가 "재허용" 하기 전까지 유지 */
-  excluded: Record<GpuId, string>;
+  /** 안전 보류 GPU → 사유. 사용자가 해제하기 전까지 유지(앱 재시작·재부팅 후에도) */
+  holds: Record<GpuId, string>;
 }
 
+let catalog: Catalog;
+let knownMiners: string[] = [];
 let settings: Settings;
 let ledger: Ledger;
 let runtime: Runtime;
 let safetyState: SafetyState = {};
 let alerts: Alert[] = [];
 let lastNv: NvGpu[] = [];
-let lastSrb: SrbStatus | null = null;
-let pids: number[] = [];
+let lastStats: MinerStats | null = null;
+let processes: string[] = [];
 let running = false;
-let external = false;
 let lastPollAt = 0;
-let misses = 0;
-let restarts: number[] = [];
-let lastEnforceAt = 0;
-/** 새 제외·매핑 변경 후 재적용이 성공할 때까지 유지 */
-let pendingEnforce = false;
-let enforceFailed = false;
-let busy = false;
-let detecting = false;
+let lastKillAt = 0;
+let killing = false;
 let powerRegistered = false;
 let powerLog: string | null = null;
 const remote = {
@@ -83,16 +70,18 @@ const remote = {
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
-let trayMenuKey = '';
+let trayKey = '';
 let updater: ReturnType<typeof createUpdateController> | null = null;
 
 // ---------- 상태 ----------
 
-const excludedSet = () => new Set(Object.keys(runtime.excluded));
+const holdSet = () => new Set(Object.keys(runtime.holds));
 const saveRuntime = () => writeJson(file('runtime.json'), runtime);
 const saveSettings = () => writeJson(file('settings.json'), settings);
 const nvOf = (id: GpuId) => lastNv.find((n) => n.busId === id);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const coin = () => catalog.coins.find((c) => c.id === settings.coin) ?? catalog.coins[0];
+const kryptexPool = () => (isKryptexPool(settings.pool) ? coin().pools.find((p) => p.stats === 'kryptex') : undefined);
 
 function pushAlert(a: Alert, notify = a.level !== 'info' || a.code.startsWith('review')): void {
   alerts = [a, ...alerts].slice(0, MAX_ALERTS);
@@ -105,28 +94,24 @@ function alertOnce(a: Alert, withinMs: number): void {
   if (!alerts.some((x) => x.code === a.code && x.gpu === a.gpu && a.ts - x.ts < withinMs)) pushAlert(a);
 }
 
-function srbDeviceOf(g: GpuConfig) {
-  return lastSrb ? matchSrbDevice(lastSrb.devices, nvOf(g.id)?.bus ?? null, g.srbId) : undefined;
-}
+const deviceOf = (g: GpuConfig) => (lastStats ? matchSrbDevice(lastStats.devices, nvOf(g.id)?.bus ?? null) : undefined);
 
 function isMining(g: GpuConfig): boolean {
   if (!running) return false;
-  const dev = srbDeviceOf(g);
-  if (dev) return (dev.hashrate ?? 0) > 0;
-  // API 가 없으면 보수적으로: 외부 실행이거나 앱이 이 GPU 로 실행했으면 채굴 중으로 본다
-  return external || (g.srbId !== null && runtime.currentIds.includes(g.srbId));
+  const dev = deviceOf(g);
+  // 채굴기 API 에 장치 정보가 없으면 보수적으로 모든 GPU 가 채굴 중이라고 본다
+  return dev ? (dev.hashrate ?? 0) > 0 : !lastStats?.devices.length;
 }
 
 function gpuViews(): GpuView[] {
   return settings.gpus.map((g) => {
     const nv = nvOf(g.id);
-    const dev = srbDeviceOf(g);
+    const dev = deviceOf(g);
     return {
       id: g.id,
       label: g.label,
       index: nv?.index ?? null,
       name: nv?.name ?? dev?.model ?? g.label,
-      srbId: g.srbId,
       tempC: nv?.tempC ?? dev?.tempC ?? null,
       fanPct: nv?.fanPct ?? dev?.fanPct ?? null,
       powerW: nv?.powerW ?? dev?.powerW ?? null,
@@ -135,27 +120,11 @@ function gpuViews(): GpuView[] {
       powerMaxW: nv?.powerMaxW ?? null,
       utilPct: nv?.utilPct ?? null,
       hashrate: running ? (dev?.hashrate ?? null) : null,
-      selected: settings.selected.includes(g.id),
       mining: isMining(g),
-      excluded: runtime.excluded[g.id] ?? null,
+      hold: runtime.holds[g.id] ?? null,
       present: !!nv,
     };
   });
-}
-
-function minerExists(): boolean {
-  return MOCK ? !!settings.minerDir : !!settings.minerDir && fs.existsSync(path.win32.join(settings.minerDir, settings.minerExe));
-}
-
-function setupView(): SetupView {
-  const present = settings.gpus.filter((g) => nvOf(g.id));
-  return {
-    minerFound: minerExists(),
-    walletSet: !!settings.wallet,
-    poolSet: !!settings.pool,
-    gpusMapped: present.length > 0 && present.every((g) => g.srbId !== null),
-    consented: settings.consentAt !== null,
-  };
 }
 
 function compareRows(gpus: GpuView[]): CompareRow[] {
@@ -183,7 +152,8 @@ function profitView(gpus: GpuView[]): ProfitView {
   const sum = summarize(ledger, Date.now());
   const usd = remote.prlUsd;
   return {
-    supported: isKryptexPool(settings.pool) && !!COIN_PRESETS[settings.coin].kryptexTicker,
+    supported: !!kryptexPool(),
+    symbol: coin().symbol,
     prlUsd: usd,
     prlChange24hPct: remote.change24h,
     balancePrl: remote.balance,
@@ -197,24 +167,27 @@ function profitView(gpus: GpuView[]): ProfitView {
   };
 }
 
+function setupView(): SetupView {
+  return { walletSet: !!settings.wallet, poolSet: !!settings.pool, apiConnected: lastStats !== null };
+}
+
 function buildState(): AppState {
   const gpus = gpuViews();
-  const present = gpus.filter((g) => g.present).length;
   return {
     ts: Date.now(),
     mock: MOCK,
     setup: setupView(),
     miner: {
       running,
-      mode: !running ? null : external ? 'external' : runtime.currentIds.length >= present ? 'all' : 'partial',
-      gpuIds: running ? (lastSrb?.devices.map((d) => d.id) ?? runtime.currentIds) : [],
-      pool: running ? (lastSrb?.pool ?? null) : null,
-      latencyMs: running ? (lastSrb?.latencyMs ?? null) : null,
-      uptimeS: running ? (lastSrb?.uptimeS ?? null) : null,
-      accepted: running ? (lastSrb?.accepted ?? null) : null,
-      rejected: running ? (lastSrb?.rejected ?? null) : null,
-      totalHashrate: running ? (lastSrb?.totalHashrate ?? null) : null,
-      apiOk: lastSrb !== null,
+      mode: running ? 'external' : null,
+      processes,
+      pool: lastStats?.pool ?? null,
+      latencyMs: lastStats?.latencyMs ?? null,
+      uptimeS: lastStats?.uptimeS ?? null,
+      accepted: lastStats?.accepted ?? null,
+      rejected: lastStats?.rejected ?? null,
+      totalHashrate: lastStats?.totalHashrate ?? null,
+      apiOk: lastStats !== null,
     },
     gpus,
     alerts,
@@ -223,162 +196,59 @@ function buildState(): AppState {
     update: updater?.view() ?? DISABLED_UPDATE,
     appVersion: app.getVersion(),
     settings,
+    coins: catalog.coins.map((c) => ({ id: c.id, name: c.name, symbol: c.symbol, algorithm: c.algorithm })),
+    poolExamples: coin().pools.flatMap((p) => p.examples),
   };
 }
 
-// ---------- 채굴 제어 ----------
+// ---------- 안전 정지 (kill-only, 재시작 없음) ----------
 
-/** 실행 전 조건: 동의, 설정 형식, 실행 파일 */
-function launchBlocker(): string | null {
-  if (settings.consentAt === null) return '채굴 위험·비용 고지에 먼저 동의해 주세요';
-  if (!minerExists()) return `SRBMiner 실행 파일을 찾지 못했습니다 (${settings.minerDir || '폴더 미지정'})`;
-  return validateMinerSettings(settings);
-}
-
-/** 모든 채굴기 프로세스를 끄고 실제로 꺼졌는지 확인한다 */
-async function stopAll(): Promise<string | null> {
-  // tasklist 가 실패하면(null) 꺼졌다고 가정하지 않고 일단 kill 후 다시 확인한다
-  const before = await hw.minerPids(settings.minerExe).catch(() => null);
+/** 실행 중인 알려진 채굴기를 모두 정지하고 실제로 꺼졌는지 확인한다 */
+async function killKnownMiners(): Promise<string | null> {
+  // tasklist 가 실패하면(null) 꺼졌다고 가정하지 않고 알려진 이름 전부에 kill 을 시도
+  const before = await hw.runningMiners(knownMiners).catch(() => null);
   if (before !== null && before.length === 0) return null;
-  const killErr = await hw.kill(settings.minerExe);
+  const errors: string[] = [];
+  for (const exe of before ?? knownMiners) {
+    const err = await hw.kill(exe);
+    if (err && before !== null) errors.push(`${exe}: ${err}`);
+  }
   const deadline = Date.now() + KILL_CONFIRM_MS;
   while (Date.now() < deadline) {
     await sleep(500);
-    const left = await hw.minerPids(settings.minerExe).catch(() => null);
-    if (left !== null && left.length === 0) {
-      runtime.ourPid = null;
-      runtime.currentIds = [];
-      return null;
-    }
+    const left = await hw.runningMiners(knownMiners).catch(() => null);
+    if (left !== null && left.length === 0) return null;
   }
-  const msg = `채굴기 종료 실패${killErr ? `: ${killErr}` : ''} — 관리자 권한으로 실행된 채굴기는 앱이 끌 수 없습니다. 작업 관리자에서 직접 종료해 주세요`;
-  pushAlert({ ts: Date.now(), level: 'critical', code: 'kill_failed', message: msg });
-  return msg;
+  return `채굴기 정지 실패${errors.length ? `: ${errors.join(' · ')}` : ''} — 관리자 권한으로 실행된 채굴기는 앱이 끌 수 없습니다. 작업 관리자에서 직접 종료해 주세요`;
 }
 
-/**
- * 원하는 선택·제외 목록에 맞게 채굴기를 (재)실행하거나 정지한다.
- * failSafe: 안전 제외 때문에 호출됨 → 재실행이 불가능하면 정지라도 한다.
- */
-async function applyDesired(reason: string, failSafe = false): Promise<string | null> {
-  if (busy) return '다른 제어 작업이 진행 중입니다';
-  busy = true;
+async function enforceHolds(newTrips: { id: GpuId; reason: string }[], now: number): Promise<void> {
+  if (!running || Object.keys(runtime.holds).length === 0) return;
+  const reasons = newTrips.length ? newTrips : Object.entries(runtime.holds).map(([id, reason]) => ({ id, reason }));
+  const labels = reasons.map((r) => `${settings.gpus.find((g) => g.id === r.id)?.label ?? r.id}(${r.reason})`).join(', ');
+  if (!settings.safetyKill) {
+    alertOnce({ ts: now, level: 'critical', code: 'safety_hold_running', message: `위험 조건 ${labels} — 자동 정지가 꺼져 있습니다. 채굴기를 직접 멈춰 주세요` }, 60_000);
+    return;
+  }
+  if (killing || (newTrips.length === 0 && now - lastKillAt < KILL_RETRY_MS)) return;
+  killing = true;
+  lastKillAt = now;
   try {
-    const ids = gpuIdsFor(runtime.selection, settings.gpus, excludedSet());
-    if (!runtime.wantRunning || ids.length === 0) {
-      const err = await stopAll();
-      if (!err && runtime.wantRunning) {
-        pushAlert({ ts: Date.now(), level: 'critical', code: 'all_excluded', message: '채굴 정지: 선택한 GPU가 모두 안전 제외됨' });
-      }
-      return err;
-    }
-    const blocker = ids.includes(null) ? 'SRBMiner id 매핑이 없는 GPU가 있습니다 (설정 → GPU 매핑 감지)' : launchBlocker();
-    if (blocker) {
-      if (failSafe) {
-        const err = await stopAll();
-        pushAlert({ ts: Date.now(), level: 'critical', code: 'failsafe_stop', message: `재실행 불가(${blocker}) → 채굴 전체 정지${err ? ' 실패' : ''}` });
-      }
-      return blocker;
-    }
-    const stopErr = await stopAll();
-    if (stopErr) return stopErr;
-    const launchIds = ids as number[];
-    runtime.ourPid = hw.launch(settings, launchIds);
-    runtime.currentIds = launchIds;
-    misses = 0;
-    pushAlert({ ts: Date.now(), level: 'info', code: 'miner_launch', message: `채굴기 실행 (${reason}): --gpu-id ${launchIds.join(',')}` }, false);
-    return null;
-  } catch (e) {
-    return `채굴기 제어 실패: ${(e as Error).message}`;
+    const err = await killKnownMiners();
+    if (err) alertOnce({ ts: now, level: 'critical', code: 'kill_failed', message: err }, 60_000);
+    else if (newTrips.length) pushAlert({ ts: now, level: 'critical', code: 'miner_killed', message: `위험 조건 ${labels} → 채굴기를 정지했습니다. 앱은 채굴기를 다시 시작하지 않습니다` });
+    else alertOnce({ ts: now, level: 'critical', code: 'miner_killed_again', message: `안전 보류 중(${labels})인데 채굴기가 다시 실행되어 정지했습니다. 원인 해결 후 보류를 해제해 주세요` }, 60_000);
   } finally {
-    saveRuntime();
-    busy = false;
+    killing = false;
   }
 }
 
-async function startMining(selection: GpuId[]): Promise<string | null> {
-  const known = selection.filter((id) => settings.gpus.some((g) => g.id === id));
-  if (known.length === 0) return '채굴할 GPU를 선택해 주세요';
-  const blocker = launchBlocker();
-  if (blocker) return blocker;
-  settings.selected = known;
-  saveSettings();
-  runtime.selection = known;
-  runtime.wantRunning = true;
-  return applyDesired('사용자');
-}
-
-async function stopMining(): Promise<string | null> {
-  runtime.wantRunning = false;
-  const err = await applyDesired('정지');
-  if (!err) pushAlert({ ts: Date.now(), level: 'info', code: 'miner_stop', message: '채굴 정지 (사용자)' }, false);
-  return err;
-}
-
-async function clearExclusion(id: GpuId): Promise<void> {
-  delete runtime.excluded[id];
+function clearHold(id: GpuId): void {
+  delete runtime.holds[id];
   delete safetyState[id];
   saveRuntime();
   const label = settings.gpus.find((g) => g.id === id)?.label ?? id;
-  pushAlert({ ts: Date.now(), level: 'info', code: 'exclusion_cleared', gpu: id, message: `${label} 채굴 재허용 (사용자)` }, false);
-  if (runtime.wantRunning && !external) await applyDesired('재허용');
-}
-
-/** 모든 GPU 로 잠깐 실행해 SRBMiner API 의 PCI bus 로 id 를 학습한 뒤, 이전 상태로 돌린다 */
-async function detectMapping(): Promise<string | null> {
-  const blocker = launchBlocker();
-  if (blocker) return blocker;
-  if (busy || detecting) return '다른 제어 작업이 진행 중입니다';
-  // 감지는 --gpu-id 없이 모든 GPU 로 돌기 때문에, 안전 제외된 GPU 가 있으면 하지 않는다
-  if (Object.keys(runtime.excluded).length) return '안전 제외된 GPU가 있어 매핑 감지를 할 수 없습니다. SRBMiner id 를 직접 입력해 주세요';
-  detecting = true;
-  busy = true;
-  try {
-    const stopErr = await stopAll();
-    if (stopErr) return stopErr;
-    runtime.ourPid = hw.launch(settings, []);
-    runtime.currentIds = [];
-    const deadline = Date.now() + DETECT_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await sleep(2000);
-      // 감지 중에도 poll() 이 안전 감시를 계속한다. 새 제외가 생기면 즉시 중단
-      if (Object.keys(runtime.excluded).length) break;
-      const srb = await hw.minerStatus(settings.apiPort).catch(() => null);
-      if (srb && srb.devices.some((d) => d.bus !== null)) {
-        lastSrb = srb;
-        learnMapping();
-        break;
-      }
-    }
-    const err = await stopAll();
-    if (err) return err;
-    const s = setupView();
-    return s.gpusMapped ? null : 'SRBMiner API 에서 PCI bus 정보를 읽지 못했습니다. GPU별 SRBMiner id 를 직접 입력해 주세요';
-  } finally {
-    busy = false;
-    detecting = false;
-    saveRuntime();
-    // 감지 전에 채굴 중이었으면 원래 선택으로 다시 시작
-    if (runtime.wantRunning) await applyDesired('매핑 감지 후 복귀');
-  }
-}
-
-/** SRBMiner API 의 bus 정보로 id 매핑을 갱신. 제외된 GPU 매핑이 바뀌면 true */
-function learnMapping(): boolean {
-  if (!lastSrb) return false;
-  const changes = learnSrbIds(settings.gpus, (id) => nvOf(id)?.bus ?? null, lastSrb.devices);
-  let excludedChanged = false;
-  for (const c of changes) {
-    const g = settings.gpus.find((x) => x.id === c.id)!;
-    g.srbId = c.to;
-    if (runtime.excluded[g.id]) excludedChanged = true;
-    pushAlert(
-      { ts: Date.now(), level: c.from === null ? 'info' : 'warn', code: 'srb_mapping', gpu: g.id, message: `${g.label} SRBMiner id ${c.from ?? '없음'} → ${c.to} (PCI bus 기준 자동 매핑)` },
-      c.from !== null,
-    );
-  }
-  if (changes.length) saveSettings();
-  return excludedChanged;
+  pushAlert({ ts: Date.now(), level: 'info', code: 'hold_cleared', gpu: id, message: `${label} 안전 보류 해제 (사용자). 채굴기는 사용자가 직접 시작합니다` }, false);
 }
 
 // ---------- 폴링 ----------
@@ -403,20 +273,18 @@ function discoverGpus(): void {
 }
 
 async function poll(): Promise<void> {
-  // 매핑 감지 중(busy)에도 센서·안전 평가는 계속한다. 재적용·워치독은 !busy 조건으로 건너뛴다
   const now = Date.now();
-  const [nv, srb, ps] = await Promise.all([
+  const useApi = settings.minerApi.adapter !== 'none';
+  const [nv, stats, procs] = await Promise.all([
     settle(hw.queryGpus()),
-    settle(hw.minerStatus(settings.apiPort)),
-    settle(hw.minerPids(settings.minerExe)),
+    useApi ? settle(hw.minerStats(settings.minerApi.adapter, settings.minerApi.port)) : Promise.resolve(null),
+    settle(hw.runningMiners(knownMiners)),
   ]);
   lastNv = nv ?? [];
-  lastSrb = srb;
-  pids = ps ?? (srb ? pids : []);
-  running = pids.length > 0 || srb !== null;
-  external = running && (runtime.ourPid === null || !pids.includes(runtime.ourPid) || pids.length > 1);
+  lastStats = stats;
+  processes = procs ?? processes;
+  running = (procs?.length ?? 0) > 0 || stats !== null;
   discoverGpus();
-  if (learnMapping()) pendingEnforce = true;
 
   if (lastPollAt) {
     const watts = lastNv.reduce((s, g) => s + (g.powerW ?? 0), 0);
@@ -424,72 +292,38 @@ async function poll(): Promise<void> {
   }
   lastPollAt = now;
 
-  // 안전 감시: nvidia-smi 우선, 없으면 SRBMiner 값
-  const views = gpuViews();
+  // 안전 감시: nvidia-smi 우선, 없으면 채굴기 API 값
   const result = evaluateSafety(
-    views.map((g) => ({ id: g.id, label: g.label, powerW: g.powerW, fanPct: g.fanPct, tempC: g.tempC, mining: g.mining })),
-    safetyState, settings.safety, excludedSet(), now,
+    gpuViews().map((g) => ({ id: g.id, label: g.label, powerW: g.powerW, fanPct: g.fanPct, tempC: g.tempC, mining: g.mining })),
+    safetyState, settings.safety, holdSet(), now,
   );
   safetyState = result.state;
   result.alerts.forEach((a) => pushAlert(a));
-  for (const e of result.exclude) runtime.excluded[e.id] = e.reason;
-  if (result.exclude.length) {
-    saveRuntime();
-    pendingEnforce = true;
-  }
-
-  // 제외된 GPU 가 채굴 중일 수 있으면 다시 적용: 새 제외, 외부 실행(bat·작업 스케줄러·재부팅 후), 매핑 변경, 해시 감지
-  const hasExcluded = Object.keys(runtime.excluded).length > 0;
-  const leaking = views.some((g) => g.excluded && g.mining);
-  if (!running || !hasExcluded) pendingEnforce = false;
-  else if (!busy && ((pendingEnforce && !enforceFailed) || ((pendingEnforce || external || leaking) && now - lastEnforceAt > ENFORCE_RETRY_MS))) {
-    lastEnforceAt = now;
-    if (external || runtime.selection.length === 0) {
-      // 외부 채굴기는 인수한다: 선택 GPU(없으면 인식된 전체)에서 제외 GPU 만 빼고 재실행
-      runtime.selection = settings.selected.length ? settings.selected : settings.gpus.map((g) => g.id);
-    }
-    runtime.wantRunning = true;
-    const err = await applyDesired('안전 제외', true);
-    pendingEnforce = enforceFailed = !!err;
-    if (err) alertOnce({ ts: now, level: 'critical', code: 'exclude_failed', message: `안전 제외 적용 실패: ${err}` }, 60_000);
-  }
-
-  // 워치독: 앱이 원하는데 채굴기가 꺼져 있으면 재시작 (시간당 제한)
-  if (runtime.wantRunning && !running && !busy && runtime.currentIds.length) {
-    misses += 1;
-    restarts = restarts.filter((t) => now - t < 3600_000);
-    if (misses >= WATCHDOG_MISSES && restarts.length < MAX_RESTARTS_PER_HOUR) {
-      restarts.push(now);
-      pushAlert({ ts: now, level: 'warn', code: 'miner_restart', message: `채굴기가 꺼져 있어 재시작합니다 (${restarts.length}/${MAX_RESTARTS_PER_HOUR}회/시간)` });
-      const err = await applyDesired('워치독');
-      if (err) alertOnce({ ts: now, level: 'warn', code: 'restart_failed', message: `재시작 실패: ${err}` }, 600_000);
-    }
-  } else if (running) {
-    misses = 0;
-  }
+  for (const e of result.exclude) runtime.holds[e.id] = e.reason;
+  if (result.exclude.length) saveRuntime();
+  await enforceHolds(result.exclude, now);
 
   broadcast();
 }
 
 async function refreshRemote(includeVast: boolean): Promise<void> {
-  const preset = COIN_PRESETS[settings.coin];
+  const c = coin();
+  const kp = kryptexPool();
   const errors: string[] = [];
   const now = Date.now();
   const models = [...new Set(settings.gpus.filter((g) => g.rentalUsdManual <= 0 && nvOf(g.id)).map((g) => shortName(nvOf(g.id)!.name)))];
   await Promise.all([
-    preset.coingeckoId
-      ? fetchCoingecko(preset.coingeckoId).then((c) => {
-          if (!c) throw new Error('CoinGecko 응답 형식');
-          remote.prlUsd = c.usd;
-          remote.change24h = c.change24h;
-          if (settings.profit.baselinePrlUsd <= 0) {
-            settings.profit.baselinePrlUsd = c.usd;
-            saveSettings();
-          }
-        }).catch((e) => errors.push(`시세: ${(e as Error).message}`))
-      : null,
-    preset.kryptexTicker && settings.wallet && isKryptexPool(settings.pool)
-      ? fetchKryptex(preset.kryptexTicker, settings.wallet).then((k) => {
+    fetchCoingecko(c.coingeckoId).then((r) => {
+      if (!r) throw new Error('CoinGecko 응답 형식');
+      remote.prlUsd = r.usd;
+      remote.change24h = r.change24h;
+      if (settings.profit.baselinePrlUsd <= 0) {
+        settings.profit.baselinePrlUsd = r.usd;
+        saveSettings();
+      }
+    }).catch((e) => errors.push(`시세: ${(e as Error).message}`)),
+    kp && settings.wallet
+      ? fetchKryptex(kp.ticker, settings.wallet).then((k) => {
           remote.pool = k.pool ?? remote.pool;
           remote.payouts = k.payouts;
           if (k.balance !== null) {
@@ -549,25 +383,18 @@ function showWindow(): void {
 
 function updateTray(st: AppState): void {
   if (!tray) return;
-  const status = st.miner.running ? `채굴 중 (${st.miner.mode})` : '채굴 정지';
-  const temps = st.gpus.filter((g) => g.present).map((g) => `${g.label} ${g.tempC ?? '-'}°C${g.excluded ? ' 제외' : ''}`).join(' / ');
+  const status = st.miner.running ? `채굴기 실행 중 (${st.miner.processes.join(', ') || 'API'})` : '채굴기 없음';
+  const temps = st.gpus.filter((g) => g.present).map((g) => `${g.label} ${g.tempC ?? '-'}°C${g.hold ? ' 보류' : ''}`).join(' / ');
   tray.setToolTip(`${APP_NAME}\n${status}\n${temps}`.slice(0, 127));
-
-  const key = `${status}|${st.gpus.map((g) => `${g.id}:${g.label}:${g.excluded}`).join()}`;
-  if (key === trayMenuKey) return;
-  trayMenuKey = key;
-  const present = settings.gpus.filter((g) => nvOf(g.id));
+  if (status === trayKey) return;
+  trayKey = status;
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: status, enabled: false },
       { type: 'separator' },
       { label: '대시보드 열기', click: showWindow },
-      { label: '채굴 시작: 선택한 GPU', enabled: settings.selected.length > 0, click: () => void startMining(settings.selected) },
-      { label: '채굴 시작: 전체', click: () => void startMining(present.map((g) => g.id)) },
-      ...present.map((g) => ({ label: `채굴 시작: ${g.label}만`, click: () => void startMining([g.id]) })),
-      { label: '채굴 정지', click: () => void stopMining() },
       { type: 'separator' },
-      { label: '종료 (채굴은 계속)', click: () => { quitting = true; app.quit(); } },
+      { label: '종료', click: () => { quitting = true; app.quit(); } },
     ]),
   );
 }
@@ -576,15 +403,15 @@ function updateTray(st: AppState): void {
 
 function validatePatch(p: Partial<Settings>): string | null {
   const next = mergeSettings(settings, p);
-  if (next.wallet || next.pool) {
-    const err = validateMinerSettings({ ...next, minerDir: next.minerDir || 'x', wallet: next.wallet || 'placeholderwallet', pool: next.pool || 'host:1000' });
-    if (err) return err;
-  }
+  const acc = validateAccount(next);
+  if (acc) return acc;
+  if (!catalog.coins.some((c) => c.id === next.coin)) return '알 수 없는 코인입니다';
+  if (next.minerApi.adapter !== 'none' && !Object.hasOwn(MINER_APIS, next.minerApi.adapter)) return '지원하지 않는 채굴기 API 입니다';
+  if (!Number.isInteger(next.minerApi.port) || next.minerApi.port < 1024 || next.minerApi.port > 65535) return '채굴기 API 포트는 1024~65535 정수여야 합니다';
   for (const g of next.gpus) {
     const nv = nvOf(g.id);
     const err = validateWatts(g.powerLimitW, nv?.powerMinW ?? null, nv?.powerMaxW ?? null);
     if (err) return `${g.label}: ${err}`;
-    if (g.srbId !== null && !(Number.isInteger(g.srbId) && g.srbId >= 0 && g.srbId < 64)) return `${g.label}: SRBMiner id 는 0~63 정수여야 합니다`;
     if (!(g.rentalUsdManual >= 0 && g.reviewRentalUsd >= 0)) return `${g.label}: 대여가 값이 올바르지 않습니다`;
     if (!g.label.trim() || g.label.length > 40) return 'GPU 이름은 1~40자여야 합니다';
   }
@@ -602,79 +429,21 @@ function validatePatch(p: Partial<Settings>): string | null {
 function applyPatch(p: Partial<Settings>): string | null {
   const err = validatePatch(p);
   if (err) return err;
+  const coinChanged = p.coin !== undefined && p.coin !== settings.coin;
   settings = mergeSettings(settings, p);
+  if (coinChanged) {
+    // 코인이 바뀌면 시세 기준가·장부 기준점을 새로 잡는다
+    settings.profit.baselinePrlUsd = 0;
+    ledger = emptyLedger();
+    remote.prlUsd = remote.balance = null;
+    remote.payouts = [];
+  }
   saveSettings();
   applyLoginItem();
   return null;
 }
 
-function registerIpc(): void {
-  ipcMain.handle('state:get', () => buildState());
-  ipcMain.handle('miner:start', (_e, selection: unknown) => (Array.isArray(selection) ? startMining(selection.map(String)) : '선택이 올바르지 않습니다'));
-  ipcMain.handle('miner:stop', () => stopMining());
-  ipcMain.handle('safety:clear', (_e, id: unknown) => clearExclusion(String(id)));
-  ipcMain.handle('settings:save', (_e, patch: Partial<Settings>) => {
-    // 동의 시각·선택은 전용 경로로만 바꾼다
-    const { consentAt: _c, selected: _s, ...rest } = patch;
-    const err = applyPatch(rest);
-    if (!err) void refreshRemote(false);
-    return err;
-  });
-  ipcMain.handle('setup:consent', () => {
-    settings.consentAt = Date.now();
-    saveSettings();
-    return null;
-  });
-  ipcMain.handle('setup:pickMinerDir', async () => {
-    const r = await dialog.showOpenDialog({ title: 'SRBMiner-MULTI 폴더 선택', properties: ['openDirectory'] });
-    if (r.canceled || !r.filePaths[0]) return '취소됨';
-    const dir = r.filePaths[0];
-    if (!MOCK && !fs.existsSync(path.join(dir, settings.minerExe))) return `${settings.minerExe} 가 없는 폴더입니다`;
-    return applyPatch({ minerDir: dir });
-  });
-  ipcMain.handle('setup:importBat', async () => {
-    const r = await dialog.showOpenDialog({ title: '기존 SRBMiner 실행 bat 선택', properties: ['openFile'], filters: [{ name: 'Batch', extensions: ['bat', 'cmd'] }] });
-    if (r.canceled || !r.filePaths[0]) return '취소됨';
-    const parsed = parseBatArgs(fs.readFileSync(r.filePaths[0], 'utf8').slice(0, 64_000));
-    if (!parsed.wallet && !parsed.pool) return 'bat 에서 --wallet / --pool 값을 찾지 못했습니다';
-    const dir = path.dirname(r.filePaths[0]);
-    const patch: Partial<Settings> = { ...parsed };
-    if (!settings.minerDir && fs.existsSync(path.join(dir, settings.minerExe))) patch.minerDir = dir;
-    return applyPatch(patch);
-  });
-  ipcMain.handle('miner:detectMapping', () => detectMapping());
-  ipcMain.handle('update:check', () => updater?.check());
-  ipcMain.handle('update:install', () => installUpdate());
-  ipcMain.handle('power:register', async () => {
-    if (MOCK) return 'mock 모드에서는 예약 작업을 등록하지 않습니다';
-    try {
-      writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
-      const resources = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'resources');
-      await registerPowerTask(resources, file('power-limits.json'), `${process.env.USERDOMAIN}\\${process.env.USERNAME}`);
-      powerRegistered = await isPowerTaskRegistered();
-      await sleep(4000);
-      powerLog = readPowerLog();
-      return powerRegistered ? null : '등록 확인 실패';
-    } catch (e) {
-      return `등록 실패(UAC 취소 포함): ${(e as Error).message}`;
-    }
-  });
-  ipcMain.handle('power:apply', async () => {
-    if (MOCK) return 'mock 모드에서는 전력 제한을 적용하지 않습니다';
-    writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
-    if (!powerRegistered) return '먼저 "예약 작업 등록(UAC)"을 1회 실행해 주세요';
-    try {
-      await runPowerTask();
-      await sleep(4000);
-      powerLog = readPowerLog();
-      return null;
-    } catch (e) {
-      return `적용 실패: ${(e as Error).message}`;
-    }
-  });
-}
-
-/** 설치형(NSIS) 패키지에서만 자동 업데이트. 실패해도 채굴·안전 감시와 무관 */
+/** 설치형(NSIS) 패키지에서만 자동 업데이트. 실패해도 안전 감시와 무관 */
 function startUpdater(): void {
   if (MOCK || !app.isPackaged || process.platform !== 'win32') return;
   try {
@@ -708,7 +477,7 @@ async function installUpdate(): Promise<string | null> {
       defaultId: 1,
       cancelId: 1,
       title: `${APP_NAME} 업데이트`,
-      message: '채굴 중입니다. 지금 업데이트를 설치할까요?',
+      message: '채굴기가 실행 중입니다. 지금 업데이트를 설치할까요?',
       detail: '채굴기는 앱과 별도 프로세스라 계속 돌지만, 앱이 다시 시작되는 동안(수십 초) 안전 감시가 멈춥니다.',
     });
     if (r.response !== 0) return '설치를 미뤘습니다';
@@ -720,6 +489,52 @@ async function installUpdate(): Promise<string | null> {
   return null;
 }
 
+function registerIpc(): void {
+  ipcMain.handle('state:get', () => buildState());
+  ipcMain.handle('safety:clearHold', (_e, id: unknown) => clearHold(String(id)));
+  ipcMain.handle('settings:save', (_e, patch: Partial<Settings>) => {
+    const err = applyPatch(patch);
+    if (!err) void refreshRemote(false);
+    return err;
+  });
+  ipcMain.handle('setup:importBat', async () => {
+    const r = await dialog.showOpenDialog({ title: '기존 채굴기 실행 bat 선택', properties: ['openFile'], filters: [{ name: 'Batch', extensions: ['bat', 'cmd'] }] });
+    if (r.canceled || !r.filePaths[0]) return '취소됨';
+    const parsed = parseBatArgs(fs.readFileSync(r.filePaths[0], 'utf8').slice(0, 64_000));
+    if (!parsed.wallet && !parsed.pool) return 'bat 에서 --wallet / --pool 값을 찾지 못했습니다';
+    return applyPatch(parsed);
+  });
+  ipcMain.handle('update:check', () => updater?.check());
+  ipcMain.handle('update:install', () => installUpdate());
+  ipcMain.handle('power:register', async () => {
+    if (MOCK) return 'mock 모드에서는 예약 작업을 등록하지 않습니다';
+    try {
+      writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
+      const resources = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'resources');
+      await registerPowerTask(resources, file('power-limits.json'), `${process.env.USERDOMAIN}\\${process.env.USERNAME}`);
+      powerRegistered = await isPowerTaskRegistered();
+      await sleep(4000);
+      powerLog = readPowerLog();
+      return powerRegistered ? null : '등록 확인 실패';
+    } catch (e) {
+      return `등록 실패(UAC 취소 포함): ${(e as Error).message}`;
+    }
+  });
+  ipcMain.handle('power:apply', async () => {
+    if (MOCK) return 'mock 모드에서는 전력 제한을 적용하지 않습니다';
+    writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
+    if (!powerRegistered) return '먼저 "예약 작업 등록(UAC)"을 1회 실행해 주세요';
+    try {
+      await runPowerTask();
+      await sleep(4000);
+      powerLog = readPowerLog();
+      return null;
+    } catch (e) {
+      return `적용 실패: ${(e as Error).message}`;
+    }
+  });
+}
+
 function applyLoginItem(): void {
   if (process.platform === 'win32' && app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: settings.openAtLogin, args: ['--hidden'] });
@@ -729,9 +544,14 @@ function applyLoginItem(): void {
 // ---------- 시작 ----------
 
 function loadState(): void {
+  catalog = loadCatalog(path.join(__dirname, '..', 'catalog.json'));
+  knownMiners = knownProcessNames(catalog);
   settings = mergeSettings(DEFAULT_SETTINGS, readJson<Partial<Settings>>(file('settings.json'), {}));
+  if (!catalog.coins.some((c) => c.id === settings.coin)) settings.coin = catalog.coins[0].id;
   ledger = { ...emptyLedger(), ...readJson<Partial<Ledger>>(file('ledger.json'), {}) };
-  runtime = { wantRunning: false, selection: [], ourPid: null, currentIds: [], excluded: {}, ...readJson<Partial<Runtime>>(file('runtime.json'), {}) };
+  // 0.1.x 의 안전 제외(excluded)는 보류(holds)로 이어받는다
+  const saved = readJson<{ holds?: Record<string, string>; excluded?: Record<string, string> }>(file('runtime.json'), {});
+  runtime = { holds: saved.holds ?? saved.excluded ?? {} };
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -755,12 +575,6 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     await poll();
-    if (!running && runtime.wantRunning) runtime.wantRunning = false; // 앱 밖에서 정지된 상태를 존중
-    if (!running && settings.autoStartMining && settings.selected.length && !launchBlocker()) {
-      const err = await startMining(settings.selected);
-      if (err) pushAlert({ ts: Date.now(), level: 'warn', code: 'autostart_failed', message: `자동 시작 실패: ${err}` });
-    }
-
     let polling = false;
     setInterval(() => {
       if (polling) return;

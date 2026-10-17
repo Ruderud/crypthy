@@ -55,7 +55,7 @@ export function evaluateSafety(
     const out = (code: string, reason: string) => {
       if (excluded.has(s.id) || exclude.some((e) => e.id === s.id)) return;
       exclude.push({ id: s.id, reason });
-      alerts.push({ ts: now, level: 'critical', code, gpu: s.id, message: `${s.label} 채굴 제외: ${reason}` });
+      alerts.push({ ts: now, level: 'critical', code, gpu: s.id, message: `${s.label} 위험 감지: ${reason}` });
     };
 
     // 팬 정지

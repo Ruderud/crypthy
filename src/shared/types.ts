@@ -2,13 +2,10 @@
 
 /** GPU 식별자 = nvidia-smi PCI bus id (예: "00000000:01:00.0"). index와 달리 재부팅해도 바뀌지 않는다 */
 export type GpuId = string;
-export type CoinId = 'pearl' | 'quantus';
 
 export interface GpuConfig {
   id: GpuId;
   label: string;
-  /** SRBMiner --gpu-id 값. nvidia-smi index와 다를 수 있다. 채굴 중 API의 PCI bus로 자동 학습 */
-  srbId: number | null;
   /** 전력 제한 목표값(W). null이면 건드리지 않음 */
   powerLimitW: number | null;
   /** 대여 표시가 수동값($/h). 0이면 Vast 공개 검색 중앙값 */
@@ -18,20 +15,16 @@ export interface GpuConfig {
 }
 
 export interface Settings {
-  /** SRBMiner-MULTI 설치 폴더 (첫 실행 때 지정하거나 공식 릴리스를 내려받음) */
-  minerDir: string;
-  minerExe: string;
-  apiPort: number;
-  coin: CoinId;
-  /** 공개 지갑 주소 + 워커명 (예: prl1....worker). 시드·비밀번호 아님. 기본값 없음 */
+  /** 카탈로그 코인 id */
+  coin: string;
+  /** 공개 지갑 주소 + 워커명 (풀 공개 통계 조회용). 시드·비밀번호 아님. 기본값 없음 */
   wallet: string;
+  /** 사용 중인 풀 host:port (풀 통계 API 선택용) */
   pool: string;
-  /** 채굴할 GPU */
-  selected: GpuId[];
-  /** 채굴 위험·비용 고지에 동의한 시각. null이면 채굴을 시작하지 않는다 */
-  consentAt: number | null;
-  /** 앱 시작 시 채굴기가 꺼져 있으면 자동 시작 (동의 후에만) */
-  autoStartMining: boolean;
+  /** 실행 중인 채굴기의 로컬 통계 API */
+  minerApi: { adapter: string; port: number };
+  /** 위험 조건에서 실행 중인 알려진 채굴기 프로세스를 정지(재시작은 안 함) */
+  safetyKill: boolean;
   /** Windows 로그인 시 앱 자동 실행 */
   openAtLogin: boolean;
   gpus: GpuConfig[];
@@ -52,7 +45,7 @@ export interface ProfitConfig {
   vastHostShare: number;
   rentalPowerW: number;
   reviewPrlDropPct: number;
-  /** PRL 시세 기준값($). 0이면 첫 조회값으로 채움 */
+  /** 코인 시세 기준값($). 0이면 첫 조회값으로 채움 */
   baselinePrlUsd: number;
 }
 
@@ -61,7 +54,6 @@ export interface GpuView {
   label: string;
   index: number | null;
   name: string;
-  srbId: number | null;
   tempC: number | null;
   fanPct: number | null;
   powerW: number | null;
@@ -70,9 +62,9 @@ export interface GpuView {
   powerMaxW: number | null;
   utilPct: number | null;
   hashrate: number | null;
-  selected: boolean;
   mining: boolean;
-  excluded: string | null;
+  /** 안전 보류 사유. 보류 중에는 채굴기가 다시 돌면 다시 정지한다(설정에서 끌 수 있음) */
+  hold: string | null;
   present: boolean;
 }
 
@@ -84,13 +76,14 @@ export interface Alert {
   message: string;
 }
 
-/** 'all' = 인식된 GPU 전부, 'partial' = 일부, 'external' = 앱 밖(bat 등)에서 실행됨 */
-export type MinerMode = 'all' | 'partial' | 'external';
+/** Crypthy 는 채굴기를 실행하지 않으므로 실행 중인 채굴기는 항상 'external' */
+export type MinerMode = 'external';
 
 export interface MinerView {
   running: boolean;
   mode: MinerMode | null;
-  gpuIds: number[];
+  /** 실행 중인 알려진 채굴기 실행 파일 이름 */
+  processes: string[];
   pool: string | null;
   latencyMs: number | null;
   uptimeS: number | null;
@@ -111,6 +104,7 @@ export interface CompareRow {
 
 export interface ProfitView {
   supported: boolean;
+  symbol: string;
   prlUsd: number | null;
   prlChange24hPct: number | null;
   balancePrl: number | null;
@@ -127,11 +121,9 @@ export interface ProfitView {
 }
 
 export interface SetupView {
-  minerFound: boolean;
   walletSet: boolean;
   poolSet: boolean;
-  gpusMapped: boolean;
-  consented: boolean;
+  apiConnected: boolean;
 }
 
 export interface UpdateView {
@@ -154,19 +146,17 @@ export interface AppState {
   update: UpdateView;
   appVersion: string;
   settings: Settings;
+  /** 카탈로그 코인 목록과 선택 코인의 공개 풀 예시 */
+  coins: { id: string; name: string; symbol: string; algorithm: string }[];
+  poolExamples: string[];
 }
 
 export interface Api {
   getState(): Promise<AppState>;
   onState(cb: (s: AppState) => void): void;
-  start(selection: GpuId[]): Promise<string | null>;
-  stop(): Promise<string | null>;
-  clearExclusion(id: GpuId): Promise<void>;
+  clearHold(id: GpuId): Promise<void>;
   saveSettings(patch: Partial<Settings>): Promise<string | null>;
-  consent(): Promise<string | null>;
-  pickMinerDir(): Promise<string | null>;
   importBat(): Promise<string | null>;
-  detectMapping(): Promise<string | null>;
   registerPowerTask(): Promise<string | null>;
   applyPowerLimits(): Promise<string | null>;
   checkUpdate(): Promise<void>;
