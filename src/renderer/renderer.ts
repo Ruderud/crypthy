@@ -79,6 +79,50 @@ function renderHub(st: AppState) {
     .join('')}<tr><td colspan="6" class="small muted">풀 안내: ${h.poolSources.map((u) => link(u, u.replace(/^https:\/\//, ''))).join(' · ')}</td></tr>`;
 }
 
+function renderUpdate(st: AppState) {
+  const u = st.update;
+  const status: Record<typeof u.status, string> = {
+    disabled: `v${st.appVersion}`,
+    idle: `v${st.appVersion} · 최신`,
+    checking: `v${st.appVersion} · 확인 중…`,
+    available: `v${st.appVersion} · 새 버전 v${u.version}`,
+    downloading: `v${st.appVersion} · v${u.version} 받는 중 ${u.progressPct ?? 0}%`,
+    ready: `v${st.appVersion} · v${u.version} 설치 준비됨`,
+    error: `v${st.appVersion} · 확인 실패`,
+  };
+  $('updateInfo').textContent = status[u.status];
+  $('updateInfo').title = u.error ?? (u.checkedAt ? `마지막 확인 ${new Date(u.checkedAt).toLocaleString('ko-KR')} · ${u.intervalMin}분마다 확인` : '');
+  const btn = $<HTMLButtonElement>('checkUpdateBtn');
+  btn.disabled = u.status === 'disabled' || u.status === 'checking' || u.status === 'downloading';
+  btn.title = u.status === 'disabled' ? '이 빌드는 자동 업데이트를 지원하지 않습니다 (설치형 Windows · Linux AppImage 만 지원)' : '지금 업데이트 확인';
+
+  // 안내 배너: 새 버전 발견(받기/나중에) → 받는 중 → 받아 둠(재시작해 설치/나중에)
+  const show = u.prompt !== null || u.status === 'downloading';
+  $('updateBanner').hidden = !show;
+  if (!show) return;
+  const notes = $('updateNotes');
+  notes.hidden = !u.notes;
+  notes.textContent = u.notes ?? '';
+  const primary = $<HTMLButtonElement>('updatePrimary');
+  const later = $<HTMLButtonElement>('updateLater');
+  if (u.status === 'downloading') {
+    $('updateTitle').textContent = `v${u.version} 내려받는 중… ${u.progressPct ?? 0}%`;
+    $('updateDetail').textContent = '다 받으면 재시작해 설치할지 다시 묻습니다.';
+    primary.hidden = later.hidden = true;
+  } else if (u.prompt === 'ready') {
+    $('updateTitle').textContent = `v${u.version} 설치 준비됨`;
+    $('updateDetail').textContent =
+      '재시작하면 몇 초 뒤 새 버전으로 다시 열립니다. Crypthy 는 채굴기를 관리하지 않으므로 재시작해도 채굴은 계속됩니다 (재시작하는 동안 안전 감시만 잠시 멈춥니다).';
+    primary.textContent = '지금 재시작해 설치';
+    primary.hidden = later.hidden = false;
+  } else {
+    $('updateTitle').textContent = `새 버전 v${u.version} 이 있습니다 (현재 v${st.appVersion})`;
+    $('updateDetail').textContent = '받기를 누르면 백그라운드로 내려받습니다. 설치는 다 받은 뒤 다시 묻습니다.';
+    primary.textContent = '받기';
+    primary.hidden = later.hidden = false;
+  }
+}
+
 function renderGpus(st: AppState) {
   $('gpus').innerHTML = st.gpus
     .filter((g) => g.present || g.hold)
@@ -125,19 +169,7 @@ function render(st: AppState) {
   badge.className = `badge ${m.running ? 'ok' : ''}`;
   $('updated').textContent = new Date(st.ts).toLocaleTimeString('ko-KR');
 
-  const u = st.update;
-  const updText: Record<typeof u.status, string> = {
-    disabled: `v${st.appVersion}`,
-    idle: `v${st.appVersion}`,
-    checking: `v${st.appVersion} · 업데이트 확인 중`,
-    available: `v${st.appVersion} · 새 버전 v${u.version} 있음`,
-    downloading: `v${st.appVersion} · v${u.version ?? '?'} 내려받는 중 ${u.progressPct ?? 0}%`,
-    ready: `v${st.appVersion} → v${u.version} 준비됨`,
-    error: `v${st.appVersion} · 업데이트 확인 실패`,
-  };
-  $('updateInfo').textContent = updText[u.status];
-  $('updateInfo').title = u.error ?? '';
-  $('updateBtn').hidden = u.status !== 'ready';
+  renderUpdate(st);
 
   renderHub(st);
   renderSetup(st);
@@ -300,10 +332,17 @@ $('settingsForm').addEventListener('submit', (e) => {
   void act('settingsMsg', () => crypthy.saveSettings(readSettingsForm()), '저장됨');
 });
 
-$('updateBtn').addEventListener('click', async () => {
-  const err = await crypthy.installUpdate();
-  if (err) $('updateInfo').textContent = err;
+$('checkUpdateBtn').addEventListener('click', () => void crypthy.checkUpdate().then(refresh));
+$('updatePrimary').addEventListener('click', async () => {
+  if (state?.update.prompt === 'ready') {
+    const err = await crypthy.installUpdate();
+    if (err) $('updateDetail').textContent = err;
+  } else {
+    await crypthy.downloadUpdate();
+  }
+  await refresh();
 });
+$('updateLater').addEventListener('click', () => void crypthy.dismissUpdate().then(refresh));
 
 // 테마: 화면별 편의 설정이라 localStorage 에만 둔다 (dark → light → system)
 const THEMES = ['dark', 'light', 'system'] as const;

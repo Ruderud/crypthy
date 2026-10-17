@@ -123,6 +123,14 @@ code { font: 11px var(--mono); overflow-wrap: anywhere; }
 footer { padding: 0 16px 20px; }
 footer a { color: inherit; }
 
+/* 업데이트 안내 배너 */
+.update-banner { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; margin: 8px 12px 0; padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border: 1px solid var(--accent); border-radius: 4px; }
+.update-text { min-width: 0; display: grid; gap: 4px; }
+.update-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.update-notes { margin: 2px 0 0; white-space: pre-wrap; font: 12px/1.45 var(--font); color: var(--text); max-height: 120px; overflow: auto; }
+button:disabled { opacity: 0.5; cursor: default; }
+
 @media (max-width: 900px) {
   main, .chart-row { grid-template-columns: 1fr; }
 }

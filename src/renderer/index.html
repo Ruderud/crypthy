@@ -14,9 +14,21 @@
     <span id="updated" class="muted"></span>
     <span class="spacer"></span>
     <span id="updateInfo" class="muted small"></span>
-    <button id="updateBtn" class="primary" hidden>업데이트 설치</button>
+    <button id="checkUpdateBtn" title="지금 업데이트 확인">업데이트 확인</button>
     <button id="themeBtn" title="테마 전환">다크</button>
   </header>
+
+  <section class="update-banner" id="updateBanner" hidden>
+    <div class="update-text">
+      <b id="updateTitle"></b>
+      <div class="muted small" id="updateDetail"></div>
+      <pre class="update-notes" id="updateNotes" hidden></pre>
+    </div>
+    <div class="update-actions">
+      <button class="primary" id="updatePrimary"></button>
+      <button id="updateLater">나중에</button>
+    </div>
+  </section>
 
   <main>
     <section class="card wide">
@@ -108,6 +120,7 @@
         <label>채굴기 API 포트 <input name="minerApi.port" type="number" /></label>
         <label class="check"><input name="safetyKill" type="checkbox" /> 위험 조건에서 실행 중인 채굴기 자동 정지 (재시작 안 함)</label>
         <label class="check"><input name="openAtLogin" type="checkbox" /> 로그인 시 앱 실행</label>
+        <label>업데이트 확인 주기(분, 30~1440) <input name="updateIntervalMin" type="number" min="30" max="1440" step="30" /></label>
         <label>팬 정지 판정 전력(W) <input name="safety.fanStopPowerW" type="number" /></label>
         <label>팬 정지 판정 시간(초) <input name="safety.fanStopSeconds" type="number" /></label>
         <label>온도 경고(°C) <input name="safety.tempWarnC" type="number" /></label>
