@@ -1,8 +1,10 @@
 name: Release
 
-# v* 태그를 push 하면 Windows x64 설치 파일을 빌드해 GitHub Release 에 올린다.
-# 업로드: NSIS 설치 파일, blockmap, latest.yml(자동 업데이트용), zip, SHA256SUMS.txt
-# 코드 서명은 하지 않는다 (README 참고).
+# v* 태그를 push 하면 Windows x64 / Linux x64 산출물을 빌드해 GitHub Release 에 올린다.
+#   Windows: NSIS 설치 파일, blockmap, latest.yml(자동 업데이트), zip
+#   Linux:   AppImage, latest-linux.yml(자동 업데이트), deb
+#   공통:    모든 산출물의 SHA256SUMS.txt
+# 코드 서명은 하지 않는다 (README 참고). 시크릿은 GITHUB_TOKEN 만 사용.
 on:
   push:
     tags: ['v*']
@@ -10,19 +12,19 @@ on:
 permissions:
   contents: write
 
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
-  release:
+  windows:
     runs-on: windows-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
           cache: npm
-
       - name: Check tag matches package.json version
         shell: bash
         run: |
@@ -31,17 +33,37 @@ jobs:
             echo "tag ${GITHUB_REF_NAME} != package.json v${version}" >&2
             exit 1
           fi
-
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-
-      - name: Build and publish to GitHub Release
+      - name: Build and publish (Windows)
         run: npx electron-builder --win --x64 --publish always
 
-      - name: Upload SHA256SUMS
-        shell: bash
+  # 같은 Release 에 순서대로 올려 릴리스가 두 번 만들어지는 경쟁을 피한다
+  linux:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Build and publish (Linux)
+        run: npx electron-builder --linux --x64 --publish always
+
+  checksums:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: SHA256SUMS for all release binaries
         run: |
-          node scripts/checksums.mjs
-          gh release upload "${GITHUB_REF_NAME}" release/SHA256SUMS.txt --clobber
+          mkdir dl && cd dl
+          gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" -p '*.exe' -p '*.zip' -p '*.AppImage' -p '*.deb'
+          sha256sum * | sort -k2 > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+          gh release upload "${GITHUB_REF_NAME}" ../SHA256SUMS.txt -R "${GITHUB_REPOSITORY}" --clobber
