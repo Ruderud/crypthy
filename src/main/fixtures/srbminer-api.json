@@ -1,0 +1,19 @@
+{
+  "rig_name": "rig01",
+  "miner_version": "3.7.6",
+  "mining_time": 5321,
+  "total_gpu_workers": 2,
+  "algorithms": [
+    {
+      "id": 0,
+      "name": "pearlhash",
+      "pool": { "pool": "prl-hk.kryptex.network:8048", "worker": "worker1", "uptime": 5300, "latency": 38, "difficulty": 1.2e15 },
+      "shares": { "total": 412, "accepted": 410, "rejected": 2, "rejected_rate": 0.48 },
+      "hashrate": { "now": 580000000000000, "gpu": { "gpu1": 354000000000000, "gpu2": 226000000000000, "total": 580000000000000 } }
+    }
+  ],
+  "gpu_devices": [
+    { "id": 1, "bus_id": 1, "device": "GPU1", "model": "NVIDIA GeForce RTX 5090", "temperature": 63, "fan_speed_percent": 72, "asic_power": 588, "core_clock": 2610 },
+    { "id": 2, "bus_id": 16, "device": "GPU2", "model": "NVIDIA GeForce RTX 5080", "temperature": 68, "fan_speed_percent": 65, "asic_power": 279, "core_clock": 2700 }
+  ]
+}
