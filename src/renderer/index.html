@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+  <title>Crypthy</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Crypthy</h1>
+    <span id="mock" class="badge warn" hidden>MOCK</span>
+    <span id="minerBadge" class="badge">-</span>
+    <span id="updated" class="muted"></span>
+  </header>
+
+  <main>
+    <section class="card wide setup" id="setupCard" hidden>
+      <h2>처음 설정 <span class="muted small">모든 항목이 끝나야 채굴을 시작할 수 있습니다</span></h2>
+      <ol class="steps">
+        <li id="stepMiner">
+          <b>SRBMiner-MULTI</b> <span class="state"></span>
+          <div class="row">
+            <code id="minerDirView">-</code>
+            <button id="pickDir">설치된 폴더 지정</button>
+            <button id="checkRelease">공식 릴리스 확인</button>
+          </div>
+          <div id="releaseBox" class="note" hidden></div>
+          <p class="muted small">이 앱은 채굴기를 포함하지 않습니다. 공식 GitHub(doktor83/SRBMiner-Multi) 릴리스를 내려받아 SHA-256·MD5를 검증합니다. Windows 보안이 채굴기를 차단하면 예외 설정은 사용자가 직접 판단해서 하세요(앱은 보안 설정을 바꾸지 않습니다).</p>
+          <span id="minerMsg" class="msg"></span>
+        </li>
+        <li id="stepWallet">
+          <b>지갑·풀</b> <span class="state"></span>
+          <div class="grid">
+            <label>공개 지갑 주소.워커 <input id="wallet" placeholder="prl1...(공개 주소).worker1" spellcheck="false" /></label>
+            <label>풀 (host:port, TLS) <input id="pool" list="poolExamples" placeholder="prl.kryptex.network:8048" spellcheck="false" /></label>
+          </div>
+          <datalist id="poolExamples"></datalist>
+          <div class="row"><button id="saveWallet" class="primary">저장</button><button id="importBat">기존 bat에서 가져오기</button><span id="walletMsg" class="msg"></span></div>
+          <p class="muted small">공개 주소만 입력합니다. 시드 문구·비밀번호·토큰은 절대 넣지 마세요. 기본 지갑은 없으며 앱 수수료(dev fee)도 없습니다.</p>
+        </li>
+        <li id="stepMap">
+          <b>GPU 매핑</b> <span class="state"></span>
+          <p class="muted small">SRBMiner의 GPU id는 nvidia-smi 번호와 다를 수 있습니다(예: 내장 GPU가 0번). "매핑 감지"는 모든 GPU로 SRBMiner를 10~40초 실행한 뒤 PCI bus로 짝을 맞추고 정지합니다. 아래 GPU 설정 표에서 직접 입력해도 됩니다.</p>
+          <div class="row"><button id="detectMap">매핑 감지</button><span id="mapMsg" class="msg"></span></div>
+        </li>
+        <li id="stepConsent">
+          <b>위험·비용 고지 동의</b> <span class="state"></span>
+          <ul class="small">
+            <li>채굴은 전기 요금이 들고, GPU 발열·팬·커넥터 수명에 부담을 줍니다. 수익은 코인 시세·난이도에 따라 손실이 될 수 있습니다.</li>
+            <li>채굴 수익은 입력한 지갑으로만 지급됩니다. 앱은 수수료를 떼지 않고 외부로 데이터를 보내지 않습니다(공개 시세·풀 조회 제외).</li>
+            <li>안전 감시는 보조 수단입니다. 하드웨어 상태는 사용자가 직접 확인해야 합니다.</li>
+          </ul>
+          <label class="check"><input type="checkbox" id="consentBox" /> 위 내용을 이해했고 내 책임으로 채굴합니다</label>
+          <div class="row"><button id="consentBtn" class="primary">동의</button><span id="consentMsg" class="msg"></span></div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="card wide">
+      <h2>채굴 제어</h2>
+      <div class="row">
+        <label>코인 <select id="coin"></select></label>
+        <span id="gpuPick" class="seg"></span>
+        <button id="startBtn" class="primary">선택한 GPU로 시작</button>
+        <button id="stopBtn">정지</button>
+        <span id="ctrlMsg" class="msg"></span>
+      </div>
+      <dl class="stats" id="minerStats"></dl>
+    </section>
+
+    <section class="gpus" id="gpus"></section>
+
+    <section class="card">
+      <h2>알림</h2>
+      <ul id="alerts" class="alerts"></ul>
+    </section>
+
+    <section class="card">
+      <h2>수익 <span class="muted small">Kryptex 풀 · CoinGecko · 실측 GPU 전력</span></h2>
+      <dl class="stats" id="profit"></dl>
+      <p id="profitErr" class="msg err"></p>
+    </section>
+
+    <section class="card wide">
+      <h2>GPU별 채굴 vs 대여 <span class="muted small">정보 표시만 — 대여가는 수동값 또는 Vast.ai 공개 오퍼 중앙값</span></h2>
+      <table class="table" id="compare"></table>
+    </section>
+
+    <section class="card wide">
+      <h2>GPU 설정 · 전력 제한</h2>
+      <table class="table" id="gpuTable"></table>
+      <div class="row">
+        <button id="saveGpus" class="primary">GPU 설정 저장</button>
+        <button id="powerRegister">전력 제한 예약 작업 등록 (UAC 1회)</button>
+        <button id="powerApply">전력 제한 지금 적용</button>
+        <span id="gpuMsg" class="msg"></span>
+      </div>
+      <p class="muted small" id="powerTask"></p>
+      <pre id="powerLog" class="log"></pre>
+    </section>
+
+    <section class="card wide">
+      <h2>설정</h2>
+      <form id="settingsForm" class="grid">
+        <label>SRBMiner API 포트 <input name="apiPort" type="number" /></label>
+        <label class="check"><input name="autoStartMining" type="checkbox" /> 앱 시작 시 선택한 GPU로 채굴 자동 시작</label>
+        <label class="check"><input name="openAtLogin" type="checkbox" /> Windows 로그인 시 앱 실행</label>
+        <label>팬 정지 판정 전력(W) <input name="safety.fanStopPowerW" type="number" /></label>
+        <label>팬 정지 판정 시간(초) <input name="safety.fanStopSeconds" type="number" /></label>
+        <label>온도 경고(°C) <input name="safety.tempWarnC" type="number" /></label>
+        <label>온도 정지(°C) <input name="safety.tempStopC" type="number" /></label>
+        <label>전기 단가(원/kWh) <input name="profit.krwPerKwh" type="number" /></label>
+        <label>환율(원/$) <input name="profit.krwPerUsd" type="number" /></label>
+        <label>대여 호스트 몫(0~1) <input name="profit.vastHostShare" type="number" step="0.01" /></label>
+        <label>임대 중 GPU 전력(W) <input name="profit.rentalPowerW" type="number" /></label>
+        <label>재검토: PRL 하락(%) <input name="profit.reviewPrlDropPct" type="number" /></label>
+        <label>PRL 기준가($, 0=다음 조회값) <input name="profit.baselinePrlUsd" type="number" step="0.01" /></label>
+        <div class="row"><button type="submit" class="primary">설정 저장</button><span id="settingsMsg" class="msg"></span></div>
+      </form>
+      <p class="muted small">로컬 상태 API: http://127.0.0.1:47321/v1/status (읽기 전용, 이 PC에서만 접근)</p>
+    </section>
+  </main>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>

@@ -4,9 +4,14 @@
   "private": true,
   "author": "Ruderud",
   "description": "Windows tray app to run SRBMiner-MULTI on NVIDIA GPUs with fan/temperature safety watch, power limits and a read-only local status API",
+  "main": "dist/main/main.js",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/copy-static.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run",
+    "start": "npm run build && electron .",
+    "start:mock": "npm run build && CRYPTHY_MOCK=1 electron .",
+    "icons": "node scripts/make-icons.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",
