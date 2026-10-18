@@ -11,8 +11,8 @@ import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, r
 import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
 import {
-  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, isUsableProcessName, parseTaskXml, spawnOptions, startBlocker, validateControl,
-  type Platform,
+  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, isUsableProcessName, parseTaskStatus, parseTaskXml, spawnOptions, startBlocker,
+  unwrapConhost, validateControl, type Platform,
 } from './minerControl';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
@@ -397,6 +397,7 @@ export function buildState(): AppState {
     hub: hubView(),
     pnl: pnlView(),
     sharedLedger: sharedStatus,
+    minerTask: taskStatus,
   };
 }
 
@@ -485,14 +486,31 @@ const minerControl = createMinerControl({
         ),
   spawnDetached: (cmd, cwd, hide) =>
     new Promise<void>((resolve, reject) => {
-      if (mockHw) return resolve(mockHw.start());
+      if (mockHw) {
+        // 모의 모드: "채굴 창 보기" 확인용 출력
+        const out = openMinerLog();
+        if (out !== null) {
+          fs.writeSync(out, `\x1b[32mSRBMiner-MULTI (mock)\x1b[0m\nGPU0 RTX 5090  354.0 TH/s  63C\nGPU1 RTX 5080  226.0 TH/s  68C\naccepted 1/1\n`);
+          fs.closeSync(out);
+        }
+        return resolve(mockHw.start());
+      }
       // 셸 없이, 앱과 분리해 실행 (앱을 꺼도 채굴기는 계속). 실제로 떴는지(spawn) 실패했는지(error) 기다린다
-      const child = spawn(cmd.file, cmd.args, spawnOptions(cwd, hide));
+      // 채굴기 출력은 logs/miner.log 로 (창을 띄우지 않고 앱에서 원할 때 본다)
+      const out = openMinerLog();
+      const child = spawn(cmd.file, cmd.args, spawnOptions(cwd, hide, out ?? 'ignore'));
+      const done = () => {
+        if (out !== null) fs.closeSync(out);
+      };
       child.once('spawn', () => {
+        done();
         child.unref();
         resolve();
       });
-      child.once('error', (e) => reject(e));
+      child.once('error', (e) => {
+        done();
+        reject(e);
+      });
     }),
   killMiners: () => killKnownMiners(),
 });
@@ -617,6 +635,85 @@ export async function stopMining(confirm: Confirm): Promise<string | null> {
   }
 }
 
+// ---------- 채굴기 출력 (logs/miner.log) ----------
+
+const MINER_LOG_MAX = 2 * 1024 * 1024;
+const minerLogFile = () => file(path.join('logs', 'miner.log'));
+
+/** 직접 실행하는 채굴기의 출력 파일을 연다 (2MB 를 넘으면 miner.old.log 로 한 번 회전). 실패하면 null */
+function openMinerLog(): number | null {
+  try {
+    const f = minerLogFile();
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    if (fs.existsSync(f) && fs.statSync(f).size > MINER_LOG_MAX) fs.renameSync(f, f.replace(/\.log$/, '.old.log'));
+    const fd = fs.openSync(f, 'a');
+    fs.writeSync(fd, `\n--- ${new Date().toISOString()} Crypthy started the miner ---\n`);
+    return fd;
+  } catch (e) {
+    env.log.warn(`miner log: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** "채굴 창 보기": 채굴기 출력의 끝부분 (색 코드 제거). 직접 실행 방식만 */
+export function minerLogTail(maxLines = 200): { text: string; path: string; at: number | null; available: boolean } {
+  const f = minerLogFile();
+  const available = settings.minerControl.mode === 'direct';
+  try {
+    const st = fs.statSync(f);
+    const len = Math.min(st.size, 64 * 1024);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(f, 'r');
+    try {
+      fs.readSync(fd, buf, 0, len, st.size - len);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const lines = buf.toString('utf8').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r(?!\n)/g, '\n').split(/\r?\n/);
+    return { text: lines.slice(len < st.size ? 1 : 0).slice(-maxLines).join('\n'), path: f, at: st.mtimeMs, available };
+  } catch {
+    return { text: '', path: f, at: null, available };
+  }
+}
+
+// ---------- 예약 작업 (Windows) ----------
+
+/** 설정한 예약 작업의 상태 (실행 파일 방식으로 바꾼 뒤 그 작업이 아직 켜져 있으면 채굴기가 두 개 뜰 수 있어 안내) */
+let taskStatus: { name: string; status: string | null; at: number } | null = null;
+
+function schtasks(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) =>
+    execFile('schtasks.exe', args, { timeout: 10_000, windowsHide: true, encoding: 'buffer' }, (err, out, stderr) =>
+      err ? reject(new Error(decodeConsole(stderr).trim() || err.message)) : resolve(decodeConsole(out)),
+    ),
+  );
+}
+
+export async function refreshTaskStatus(): Promise<void> {
+  const name = settings.minerControl.taskName;
+  if (PLATFORM !== 'windows' || MOCK || !name || validateControl({ ...settings.minerControl, mode: 'task' }, 'windows')) {
+    taskStatus = null;
+    return;
+  }
+  const out = await schtasks(['/Query', '/TN', name, '/FO', 'CSV', '/NH']).catch(() => null);
+  taskStatus = { name, status: out === null ? null : parseTaskStatus(out), at: Date.now() };
+}
+
+/** 예약 작업 끄기 (사용자가 확인한 뒤). 다시 켜려면 schtasks /Change /TN <작업> /ENABLE */
+export async function disableMinerTask(): Promise<string | null> {
+  const name = settings.minerControl.taskName;
+  if (PLATFORM !== 'windows' || MOCK) return 'Windows 에서만 쓸 수 있습니다';
+  if (validateControl({ ...settings.minerControl, mode: 'task' }, 'windows')) return '예약 작업 이름이 없습니다';
+  try {
+    await schtasks(['/Change', '/TN', name, '/DISABLE']);
+  } catch (e) {
+    return `작업을 끄지 못했습니다 (${(e as Error).message}). 관리자 권한으로 만든 작업이면 관리자 명령 프롬프트에서: schtasks /Change /TN ${name} /DISABLE`;
+  }
+  await refreshTaskStatus();
+  env.onChange();
+  return null;
+}
+
 /** Windows 예약 작업의 실행 파일·인자를 읽어 설정에 채운다 (작업 이름은 설정에서) */
 export async function importMinerTask(): Promise<string | null> {
   if (PLATFORM !== 'windows' || MOCK) return 'Windows 에서만 가져올 수 있습니다';
@@ -628,12 +725,17 @@ export async function importMinerTask(): Promise<string | null> {
     ),
   ).catch((e: Error) => e);
   if (xml instanceof Error) return `예약 작업을 읽지 못했습니다: ${xml.message}`;
-  const parsed = parseTaskXml(xml);
-  if (!parsed) return '예약 작업에서 실행 파일 동작을 찾지 못했습니다';
+  const raw = parseTaskXml(xml);
+  if (!raw) return '예약 작업에서 실행 파일 동작을 찾지 못했습니다';
+  // conhost.exe --headless "<채굴기>" … 로 감싼 작업이면 실제 채굴기를 꺼낸다
+  const parsed = unwrapConhost(raw.exe, raw.args);
   if (!isUsableProcessName(path.win32.basename(parsed.exe))) {
     return `예약 작업이 ${path.win32.basename(parsed.exe)} 로 실행됩니다. 채굴기 이름을 알 수 없어 가져오지 않았습니다 — 실행 파일 칸에 채굴기 exe 경로를 직접 입력하세요 (작업 켜기·끄기는 그대로 쓸 수 있습니다)`;
   }
-  return applyPatch({ minerControl: { ...c, exe: parsed.exe, args: parsed.args } });
+  // 작업 스케줄러가 띄우면 콘솔 창을 숨길 수 없으므로 실행 파일 방식으로 바꾼다 (작업 이름은 남겨 두어 끄기 안내에 쓴다)
+  const err = applyPatch({ minerControl: { ...c, mode: 'direct', exe: parsed.exe, args: parsed.args, hideWindow: true } });
+  if (!err) await refreshTaskStatus();
+  return err;
 }
 
 // ---------- 폴링 ----------
@@ -1156,6 +1258,7 @@ export async function initCore(e: CoreEnv): Promise<void> {
   env = e;
   loadState();
   instanceId = ensureInstanceId(env.dataDir, PLATFORM);
+  void refreshTaskStatus();
   sync = { poolGen: 0, settingsGen: 0, ...readJson<Partial<SyncState>>(syncFile(), {}) };
   syncShared();
   if (!MOCK) {

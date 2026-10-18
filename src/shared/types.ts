@@ -339,6 +339,8 @@ export interface AppState {
   remote?: RemoteView | null;
   /** 공유 장부 상태 (켜져 있을 때) */
   sharedLedger: SharedLedgerView | null;
+  /** 설정한 Windows 예약 작업의 상태 (status 는 schtasks 표기 그대로, 예: Ready·Running·Disabled / 준비·실행 중·사용 안 함) */
+  minerTask: { name: string; status: string | null; at: number } | null;
   setup: SetupView;
   miner: MinerView;
   gpus: GpuView[];
@@ -382,4 +384,8 @@ export interface Api {
   startMining(): Promise<string | null>;
   stopMining(): Promise<string | null>;
   importMinerTask(): Promise<string | null>;
+  disableMinerTask(): Promise<string | null>;
+  minerLog(): Promise<{ text: string; path: string; at: number | null; available: boolean }>;
+  /** 찾아보기: kind 'exe' 는 실행 파일, 'folder' 는 폴더. 취소하면 null */
+  pickPath(kind: 'exe' | 'folder', current: string): Promise<string | null>;
 }

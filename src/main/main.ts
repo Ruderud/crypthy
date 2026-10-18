@@ -426,6 +426,37 @@ function registerIpc(): void {
   ipcMain.handle('miner:start', routed(() => core.startMining(dialogConfirm), '/v1/miner/start', () => ({})));
   ipcMain.handle('miner:stop', routed(() => core.stopMining(dialogConfirm), '/v1/miner/stop', () => ({})));
   ipcMain.handle('miner:importTask', () => (remote ? LOCAL_ONLY : core.importMinerTask()));
+  // 예약 작업 끄기: 실행 파일 방식으로 바꾼 뒤 그 작업이 채굴기를 하나 더 띄우지 않게 (사용자 확인 후)
+  ipcMain.handle('miner:disableTask', async () => {
+    if (remote) return LOCAL_ONLY;
+    const name = core.currentSettings().minerControl.taskName;
+    const r = await ask({
+      type: 'question',
+      title: APP_NAME,
+      message: `예약 작업 "${name}" 을(를) 끌까요?`,
+      detail: '로그온할 때 이 작업이 채굴기를 콘솔 창과 함께 따로 띄우지 않게 됩니다. 작업은 지우지 않고 "사용 안 함"으로만 바꾸며, 작업 스케줄러에서 다시 켤 수 있습니다.',
+      buttons: ['작업 끄기', '취소'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    return r.response === 0 ? core.disableMinerTask() : '취소됨';
+  });
+  ipcMain.handle('miner:log', () => (remote ? { text: '', path: '', at: null, available: false } : core.minerLogTail()));
+  // 찾아보기: 채굴기 실행 파일·공유 장부 폴더
+  ipcMain.handle('dialog:pickPath', async (_e, kind: unknown, current: unknown) => {
+    if (remote) return null;
+    const folder = kind === 'folder';
+    const opts: Electron.OpenDialogOptions = {
+      title: folder ? '폴더 선택' : '채굴기 실행 파일 선택',
+      defaultPath: typeof current === 'string' && current ? current : undefined,
+      properties: folder ? ['openDirectory', 'createDirectory'] : ['openFile'],
+      filters: folder ? undefined : process.platform === 'win32' ? [{ name: '실행 파일', extensions: ['exe'] }] : undefined,
+    };
+    const w = parentWin();
+    const r = w ? await dialog.showOpenDialog(w, opts) : await dialog.showOpenDialog(opts);
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  });
   ipcMain.handle(
     'settings:save',
     routed(async (patch) => {

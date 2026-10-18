@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MinerControlConfig } from '../shared/types';
 import {
-  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, parseArgs, parseTaskXml, spawnOptions, startBlocker, startCommand, stopCommand,
-  validateControl, type Command,
+  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, parseArgs, parseTaskStatus, parseTaskXml, quoteArg, spawnOptions, startBlocker,
+  startCommand, stopCommand, unwrapConhost, validateControl, type Command,
 } from './minerControl';
 
 const cfg = (p: Partial<MinerControlConfig>): MinerControlConfig => ({ mode: 'none', taskName: '', unit: '', exe: '', args: '', confirmStop: true, hideWindow: true, ...p });
@@ -77,7 +77,9 @@ describe('quiet start and automatic start', () => {
   it('direct start hides the console window unless turned off', () => {
     expect(startCommand(cfg({ mode: 'direct', exe: SRB }))?.hide).toBe(true);
     expect(startCommand(cfg({ mode: 'direct', exe: SRB, hideWindow: false }))?.hide).toBe(false);
-    expect(spawnOptions('C:\\Mining', true)).toEqual({ cwd: 'C:\\Mining', detached: true, stdio: 'ignore', shell: false, windowsHide: true });
+    expect(spawnOptions('C:\\Mining', true)).toEqual({ cwd: 'C:\\Mining', detached: true, stdio: ['ignore', 'ignore', 'ignore'], shell: false, windowsHide: true });
+    // 출력은 로그 파일로 (창 없이, "채굴 창 보기"에서만)
+    expect(spawnOptions(undefined, true, 7).stdio).toEqual(['ignore', 7, 7]);
   });
 
   it('starts automatically only when enabled, consented, no recent danger stop and nothing blocks it', () => {
@@ -89,6 +91,32 @@ describe('quiet start and automatic start', () => {
     // 예약 작업이 먼저 띄운 채굴기 → 두 번째를 띄우지 않음 / 안전 보류
     expect(autoStartDecision({ ...ok, blocker: '채굴기가 이미 실행 중입니다' })).toEqual({ start: false, reason: '채굴기가 이미 실행 중입니다' });
     expect(autoStartDecision({ ...ok, blocker: '안전 보류 중: RTX 5090(팬 정지)' }).start).toBe(false);
+  });
+});
+
+describe('switching a scheduled task to the executable method', () => {
+  it('unwraps a conhost --headless wrapper to the real miner and its arguments', () => {
+    expect(unwrapConhost('C:\\Windows\\System32\\conhost.exe', `--headless "${SRB}" --algorithm pearlhash --pool "prl.kryptex.network:8048"`)).toEqual({
+      exe: SRB,
+      args: '--algorithm pearlhash --pool prl.kryptex.network:8048',
+    });
+    expect(unwrapConhost('conhost.exe', '--headless --width 120 "C:\\My Miners\\srb.exe" --log "C:\\a b\\x.txt"')).toEqual({
+      exe: 'C:\\My Miners\\srb.exe',
+      args: '--log "C:\\a b\\x.txt"',
+    });
+    expect(unwrapConhost(SRB, '--a')).toEqual({ exe: SRB, args: '--a' });
+    expect(unwrapConhost('conhost.exe', '--headless')).toEqual({ exe: 'conhost.exe', args: '--headless' });
+  });
+
+  it('quoted arguments split back to the same list', () => {
+    const list = ['--log', 'C:\\a b\\x.txt', 'say "hi"', ''];
+    expect(parseArgs(list.map(quoteArg).join(' '))).toEqual(list);
+  });
+
+  it('reads the task status from schtasks CSV (any language)', () => {
+    expect(parseTaskStatus('"\\PearlMiner","N/A","Running"\r\n')).toBe('Running');
+    expect(parseTaskStatus('"\\PearlMiner","해당 없음","사용 안 함"')).toBe('사용 안 함');
+    expect(parseTaskStatus('')).toBeNull();
   });
 });
 

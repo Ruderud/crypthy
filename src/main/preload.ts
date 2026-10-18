@@ -30,6 +30,9 @@ const api: Api = {
   startMining: () => ipcRenderer.invoke('miner:start'),
   stopMining: () => ipcRenderer.invoke('miner:stop'),
   importMinerTask: () => ipcRenderer.invoke('miner:importTask'),
+  disableMinerTask: () => ipcRenderer.invoke('miner:disableTask'),
+  minerLog: () => ipcRenderer.invoke('miner:log'),
+  pickPath: (kind, current) => ipcRenderer.invoke('dialog:pickPath', kind, current),
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

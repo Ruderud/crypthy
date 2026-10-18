@@ -130,6 +130,31 @@ export function parseTaskXml(xml: string): { exe: string; args: string } | null 
   return { exe: xmlText(cmd.trim()).replace(/^"(.*)"$/, '$1'), args: xmlText(args.trim()) };
 }
 
+/** parseArgs 로 다시 나눌 수 있게 인자 하나를 따옴표로 감싼다 (공백·따옴표가 있을 때만) */
+export const quoteArg = (a: string) => (a === '' || /[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);
+
+/**
+ * 예약 작업이 `conhost.exe --headless "<채굴기>" <인자>` 처럼 창을 숨기는 래퍼로 실행하면 실제 채굴기와 인자로 푼다.
+ * 그 밖의 실행 파일은 그대로 돌려준다.
+ */
+export function unwrapConhost(exe: string, args: string): { exe: string; args: string } {
+  if (!/^conhost(\.exe)?$/i.test(path.win32.basename(exe))) return { exe, args };
+  const tokens = parseArgs(args);
+  let i = 0;
+  // conhost 옵션: --headless, --width N, --height N, --signal H, --server H
+  while (i < tokens.length && tokens[i].startsWith('--')) i += ['--width', '--height', '--signal', '--server'].includes(tokens[i]) ? 2 : 1;
+  if (i >= tokens.length) return { exe, args };
+  return { exe: tokens[i], args: tokens.slice(i + 1).map(quoteArg).join(' ') };
+}
+
+/** `schtasks /Query /TN <작업> /FO CSV /NH` → 상태(Ready·Running·Disabled 등, 언어에 따라 다름). 못 읽으면 null */
+export function parseTaskStatus(csv: string): string | null {
+  const line = csv.split(/\r?\n/).find((l) => l.trim());
+  if (!line) return null;
+  const cols = [...line.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  return cols.length >= 3 ? cols[2] : null;
+}
+
 /** schtasks 출력: BOM 이 있으면 UTF-16LE */
 export function decodeConsole(buf: Buffer): string {
   if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
@@ -152,8 +177,9 @@ export function startBlocker(o: { config: MinerControlConfig; platform: Platform
  * 직접 실행 옵션: 셸 없이, 앱과 분리해(앱을 꺼도 채굴은 계속).
  * hide 면 Windows 에서 콘솔 창 없이 (Node 의 windowsHide → CREATE_NO_WINDOW + SW_HIDE)
  */
-export function spawnOptions(cwd: string | undefined, hide: boolean) {
-  return { cwd, detached: true, stdio: 'ignore' as const, shell: false, windowsHide: hide };
+export function spawnOptions(cwd: string | undefined, hide: boolean, out: number | 'ignore' = 'ignore') {
+  // 출력은 파일로 (앱의 "채굴 창 보기"에서 원할 때만 본다). 입력은 없음
+  return { cwd, detached: true, stdio: ['ignore', out, out] as ['ignore', number | 'ignore', number | 'ignore'], shell: false, windowsHide: hide };
 }
 
 /**
