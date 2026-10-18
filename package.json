@@ -22,7 +22,8 @@
     "start:mock": "npm run build && CRYPTHY_MOCK=1 electron .",
     "icons": "node scripts/make-icons.mjs",
     "dist:win": "npm run build && electron-builder --win --x64 --publish never && node scripts/checksums.mjs",
-    "dist:linux": "npm run build && electron-builder --linux --x64 --publish never && node scripts/checksums.mjs"
+    "dist:linux": "npm run build && electron-builder --linux --x64 --publish never && node scripts/checksums.mjs",
+    "pack:headless": "node scripts/pack-headless.mjs"
   },
   "build": {
     "appId": "io.github.ruderud.crypthy",

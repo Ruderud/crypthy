@@ -2,7 +2,7 @@ name: Release
 
 # v* 태그를 push 하면 Windows x64 / Linux x64 산출물을 빌드해 GitHub Release 에 올린다.
 #   Windows: NSIS 설치 파일, blockmap, latest.yml(자동 업데이트), zip
-#   Linux:   AppImage, latest-linux.yml(자동 업데이트), deb
+#   Linux:   AppImage, latest-linux.yml(자동 업데이트), deb, 헤드리스 tar.gz
 #   공통:    모든 산출물의 SHA256SUMS.txt
 # 코드 서명은 하지 않는다 (README 참고). 시크릿은 GITHUB_TOKEN 만 사용.
 on:
@@ -55,6 +55,11 @@ jobs:
       - run: npm run build
       - name: Build and publish (Linux)
         run: npx electron-builder --linux --x64 --publish always
+      # 화면 없는 Linux(Ubuntu Server)용 헤드리스 묶음 (Node 18+, 설치 스크립트·systemd 유닛 포함)
+      - name: Headless tarball
+        run: |
+          npm run pack:headless
+          gh release upload "${GITHUB_REF_NAME}" release/crypthy-headless-*.tar.gz -R "${GITHUB_REPOSITORY}" --clobber
 
   checksums:
     needs: [windows, linux]
@@ -82,7 +87,7 @@ jobs:
       - name: SHA256SUMS for all release binaries
         run: |
           mkdir dl && cd dl
-          gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" -p '*.exe' -p '*.zip' -p '*.AppImage' -p '*.deb'
+          gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" -p '*.exe' -p '*.zip' -p '*.AppImage' -p '*.deb' -p '*.tar.gz'
           sha256sum * | sort -k2 > ../SHA256SUMS.txt
           cat ../SHA256SUMS.txt
           gh release upload "${GITHUB_REF_NAME}" ../SHA256SUMS.txt -R "${GITHUB_REPOSITORY}" --clobber

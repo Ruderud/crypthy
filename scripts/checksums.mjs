@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
-const files = readdirSync('release').filter((f) => /\.(exe|zip|AppImage|deb)$/i.test(f)).sort();
+const files = readdirSync('release').filter((f) => /\.(exe|zip|AppImage|deb|tar\.gz)$/i.test(f)).sort();
 const lines = files.map((f) => `${createHash('sha256').update(readFileSync(`release/${f}`)).digest('hex')}  ${f}`);
 writeFileSync('release/SHA256SUMS.txt', lines.join('\n') + '\n');
 console.log(lines.join('\n'));
