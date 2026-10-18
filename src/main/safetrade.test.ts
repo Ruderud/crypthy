@@ -32,7 +32,7 @@ describe('SafeTrade API (official docs + example client)', () => {
   });
 
   it('places only limit sells, rounded down to the market precision', async () => {
-    const { calls, f } = fakeFetch(() => ({ status: 201, body: { id: 7, market: 'prlusdt', side: 'sell', type: 'limit', state: 'wait', price: '1.96', origin_amount: '25.5', filled_amount: '0' } }));
+    const { calls, f } = fakeFetch(() => ({ status: 201, body: { id: 7, market: 'prlusdt', side: 'sell', type: 'limit', state: 'wait', price: '1.96', origin_amount: '25.5678', filled_amount: '0' } }));
     const o = await createSafeTrade(KEY, f).sellLimit(PRL, 25.56789, 1.9699);
     expect(calls[0].body).toEqual({ market: 'prlusdt', side: 'sell', amount: '25.5678', price: '1.96', type: 'limit' });
     expect(o).toMatchObject({ id: 7, state: 'wait', price: 1.96 });
@@ -43,6 +43,14 @@ describe('SafeTrade API (official docs + example client)', () => {
     const { calls, f } = fakeFetch((c) => (c.url.endsWith('/cancel') ? { body: { status: 1 } } : { status: 201, body: { id: 9, side: 'sell', type: 'market', price: '0', origin_amount: '10' } }));
     await expect(createSafeTrade(KEY, f).sellLimit(PRL, 10, 1.96)).rejects.toThrow(/예상과 다릅니다/);
     expect(calls.map((c) => `${c.method} ${c.url.replace(/^.*\/api\/v2/, '')}`)).toEqual(['POST /trade/market/orders', 'POST /trade/market/orders/9/cancel']);
+  });
+
+  it('also cancels when the market or the amount in the answer differ', async () => {
+    for (const body of [{ market: 'btcusdt', origin_amount: '10' }, { market: 'prlusdt', origin_amount: '100' }]) {
+      const { calls, f } = fakeFetch((c) => (c.url.endsWith('/cancel') ? { body: { status: 1 } } : { status: 201, body: { id: 3, side: 'sell', type: 'limit', price: '1.96', ...body } }));
+      await expect(createSafeTrade(KEY, f).sellLimit(PRL, 10, 1.96)).rejects.toThrow(/예상과 다릅니다/);
+      expect(calls.at(-1)!.url).toMatch(/orders\/3\/cancel$/);
+    }
   });
 
   it('never puts the key or secret in an error message', async () => {

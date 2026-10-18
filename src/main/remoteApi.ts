@@ -90,11 +90,20 @@ export function sanitizeState(st: AppState): AppState {
  */
 export const REMOTE_SETTING_KEYS = new Set<keyof Settings>(['coin', 'wallet', 'pool', 'minerApi', 'updateIntervalMin', 'gpus', 'profit', 'autoSell', 'cashout']);
 
+export const REMOTE_AUTOSELL_KEYS = ['enabled', 'dryRun', 'time'] as const;
+
 /** 원격에서 온 설정 변경: 허용한 항목만, 가려진 지갑(… 포함)은 바꾸지 않는다 */
 export function sanitizePatch(patch: unknown): Partial<Settings> {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return {};
   const p = Object.fromEntries(Object.entries(patch).filter(([k]) => REMOTE_SETTING_KEYS.has(k as keyof Settings))) as Partial<Settings>;
   if (typeof p.wallet === 'string' && p.wallet.includes('…')) delete p.wallet;
+  // 자동 매도: 원격에서는 켜기·모의 실행·시각만. 하한가·한도·마켓은 키가 있는 호스트에서만 바꾼다
+  if (p.autoSell !== undefined) {
+    const a = p.autoSell && typeof p.autoSell === 'object' && !Array.isArray(p.autoSell) ? (p.autoSell as unknown as Record<string, unknown>) : {};
+    const kept = Object.fromEntries(REMOTE_AUTOSELL_KEYS.filter((k) => k in a).map((k) => [k, a[k]]));
+    if (Object.keys(kept).length) p.autoSell = kept as unknown as Settings['autoSell'];
+    else delete p.autoSell;
+  }
   return p;
 }
 

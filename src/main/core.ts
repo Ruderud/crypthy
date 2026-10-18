@@ -726,14 +726,18 @@ interface AutoSellState {
   lastDryDay: string | null;
   /** 걸어 둔 주문 (앱이 중간에 꺼지면 다음 시작 때 취소·기록) */
   open: { id: number; price: number; amount: number; day: string } | null;
+  /** 실행 중 지금까지 끝난 주문 (앱이 꺼지면 다음 시작 때 이걸로 기록을 마무리) */
+  progress: SellResult | null;
   balance: { prl: number; usdt: number; at: number } | null;
   /** 주 1회 출금 권장 알림을 보낸 주 (YYYY-MM-DD, 그 주 일요일) */
   withdrawHintDay: string | null;
 }
 
 const autoSellFile = () => file('autosell-state.json');
-let autoSell: AutoSellState = { history: [], lastRealDay: null, lastDryDay: null, open: null, balance: null, withdrawHintDay: null };
+let autoSell: AutoSellState = { history: [], lastRealDay: null, lastDryDay: null, open: null, progress: null, balance: null, withdrawHintDay: null };
 let autoSellBusy = false;
+/** 실행 중에 자동 매도를 끄면 다음 주문 전에 멈춘다 */
+let autoSellStop = false;
 const saveAutoSell = () => writeJson(autoSellFile(), autoSell);
 
 /** 오늘 실행 시각 (지났으면 내일) */
@@ -779,8 +783,10 @@ function recordSale(r: SellResult): void {
 
 function noteResult(r: SellResult): void {
   autoSell.history = [r, ...autoSell.history].slice(0, 30);
-  if (r.dryRun) autoSell.lastDryDay = r.day;
-  else autoSell.lastRealDay = r.day;
+  if (!r.dryRun) autoSell.progress = null;
+  // 지난 실행을 나중에 마무리한 기록이 오늘 날짜를 되돌리지 않게
+  if (r.dryRun) autoSell.lastDryDay = r.day > (autoSell.lastDryDay ?? '') ? r.day : autoSell.lastDryDay;
+  else autoSell.lastRealDay = r.day > (autoSell.lastRealDay ?? '') ? r.day : autoSell.lastRealDay;
   saveAutoSell();
   recordSale(r);
   const level: Alert['level'] = r.status === 'error' || r.status === 'skipped' ? 'warn' : 'info';
@@ -810,21 +816,37 @@ async function refreshExchangeBalance(key: ExchangeKey): Promise<void> {
   saveAutoSell();
 }
 
-/** 지난 실행에서 걸어 둔 채 남은 주문: 취소하고 체결분은 기록 (앱이 매도 중에 꺼졌을 때) */
-async function recoverOpenOrder(key: ExchangeKey): Promise<void> {
+/**
+ * 앱이 매도 중에 꺼졌을 때: 남은 주문은 취소하고, 그때까지 끝난 주문과 그 주문의 체결분을 장부에 기록한다.
+ * (오늘 실행한 것으로 이미 저장돼 있어 같은 날 다시 팔지는 않는다)
+ */
+async function recoverInterrupted(key: ExchangeKey): Promise<void> {
   const o = autoSell.open;
-  if (!o) return;
-  const c = sellClient(key);
-  try {
-    await c.cancel(o.id).catch(() => undefined);
-    const st = await c.order(o.id);
-    autoSell.open = null;
-    saveAutoSell();
-    if (st.filledAmount > 0) {
-      noteResult({ day: o.day, at: Date.now(), dryRun: false, status: 'partial', reason: '앱이 매도 중에 꺼져 남은 주문을 취소했습니다', floorUsd: null, refUsd: null, plan: { price: o.price, amount: o.amount }, orders: [{ id: o.id, price: o.price, amount: o.amount, filled: st.filledAmount, avgPrice: st.avgPrice }], soldPrl: st.filledAmount, proceedsUsdt: st.filledAmount * st.avgPrice, feeUsdt: 0 });
+  const p = autoSell.progress;
+  if (!o && !p) return;
+  const orders = [...(p?.orders ?? [])];
+  if (o) {
+    const c = sellClient(key);
+    try {
+      await c.cancel(o.id).catch(() => undefined);
+      const st = await c.order(o.id);
+      if (st.filledAmount > 0) orders.push({ id: o.id, price: o.price, amount: o.amount, filled: st.filledAmount, avgPrice: st.avgPrice });
+    } catch (e) {
+      // 거래소에 닿지 않으면 다음 시작 때 다시
+      env.log.warn(`autosell: cannot recover open order ${o.id}: ${(e as Error).message}`);
+      return;
     }
-  } catch (e) {
-    env.log.warn(`autosell: cannot recover open order ${o.id}: ${(e as Error).message}`);
+  }
+  autoSell.open = null;
+  autoSell.progress = null;
+  saveAutoSell();
+  const sold = orders.reduce((s, x) => s + x.filled, 0);
+  if (sold > 0) {
+    noteResult({
+      day: p?.day ?? o!.day, at: Date.now(), dryRun: false, status: 'partial', reason: '앱이 매도 중에 꺼져 남은 주문을 취소했습니다 (수수료는 거래소에서 확인)',
+      floorUsd: p?.floorUsd ?? null, refUsd: p?.refUsd ?? null, plan: p?.plan ?? (o ? { price: o.price, amount: o.amount } : null),
+      orders, soldPrl: sold, proceedsUsdt: orders.reduce((s, x) => s + x.filled * x.avgPrice, 0), feeUsdt: 0,
+    });
   }
 }
 
@@ -841,6 +863,7 @@ export async function runAutoSellOnce(o: { dryRun: boolean; manual: boolean; con
   if (!key) return 'SafeTrade API 키가 없습니다 (이 PC 의 자동 매도 카드에서 입력)';
   const day = dateKey(Date.now());
   if (!o.dryRun) {
+    if (!(cfg.floorUsd > 0)) return '실제 매도에는 최저가($)를 0보다 크게 정해야 합니다';
     if (autoSell.lastRealDay === day) return '오늘은 이미 자동 매도를 실행했습니다';
     if (o.manual && o.confirm && !(await o.confirm('sell', `SafeTrade 에서 지금 실제로 매도합니다 (지정가, 하한가 아래로는 팔지 않음, 하루 최대 ${cfg.dailyMaxPrl} PRL, 1회 최대 ${cfg.orderMaxUsd} USDT).`))) return '취소됨';
     // 확인을 기다리는 동안 예약 실행이 먼저 돌았을 수 있다
@@ -849,7 +872,13 @@ export async function runAutoSellOnce(o: { dryRun: boolean; manual: boolean; con
     const dir = sharedDir();
     if (dir) {
       if (!sharedStatus?.ok) return '공유 장부 폴더가 보이지 않아 다른 기기의 실행 여부를 확인할 수 없습니다 — 오늘은 팔지 않습니다';
-      const claim = claimAutoSellDay(sharedRoot(dir), day, instanceId);
+      // 기기마다 시간대가 다를 수 있어(듀얼부팅 KST/UTC) 공유 폴더의 날짜는 UTC 로
+      let claim: ReturnType<typeof claimAutoSellDay>;
+      try {
+        claim = claimAutoSellDay(sharedRoot(dir), new Date().toISOString().slice(0, 10), instanceId);
+      } catch (e) {
+        return `공유 장부 폴더에 오늘 실행 기록을 남길 수 없습니다 (${(e as Error).message}) — 오늘은 팔지 않습니다`;
+      }
       if (!claim.ok) {
         autoSell.lastRealDay = day;
         saveAutoSell();
@@ -858,13 +887,29 @@ export async function runAutoSellOnce(o: { dryRun: boolean; manual: boolean; con
     }
   }
   autoSellBusy = true;
+  autoSellStop = false;
+  if (!o.dryRun) {
+    // 첫 주문 전에 오늘 실행한 것으로 저장 (중간에 꺼져도 같은 날 다시 팔지 않게)
+    autoSell.lastRealDay = day;
+    saveAutoSell();
+  }
   env.onChange();
   try {
-    await recoverOpenOrder(key);
+    await recoverInterrupted(key);
     await refreshExchangeBalance(key);
     const r = await runAutoSell(cfg, {
       client: sellClient(key),
-      sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
+      // 자동 매도를 끄면 기다리던 중에도 바로 깨어나 주문을 정리한다
+      sleep: async (ms) => {
+        const end = Date.now() + ms;
+        while (Date.now() < end && !autoSellStop) await new Promise((res) => setTimeout(res, Math.min(5000, end - Date.now())));
+      },
+      shouldStop: () => autoSellStop,
+      onProgress: (p) => {
+        if (o.dryRun) return;
+        autoSell.progress = p;
+        saveAutoSell();
+      },
       now: Date.now,
       refPriceUsd: () => (remote.prlUsd !== null && remote.priceAt !== null && Date.now() - remote.priceAt < 3 * 3600_000 ? remote.prlUsd : null),
       soldTodayPrl: todaySoldPrl(),
@@ -889,7 +934,7 @@ async function maybeAutoSell(): Promise<void> {
   if (!c.enabled || autoSellBusy) return;
   const next = nextAutoSellAt();
   if (next === null || Date.now() < next) return;
-  const err = await runAutoSellOnce({ dryRun: c.dryRun, manual: false });
+  const err = await runAutoSellOnce({ dryRun: c.dryRun, manual: false }).catch((e: Error) => `자동 매도 오류: ${e.message}`);
   if (err) {
     // 같은 이유로 매분 다시 시도하지 않게 오늘은 실행한 것으로 둔다
     if (c.dryRun) autoSell.lastDryDay = dateKey(Date.now());
@@ -1254,7 +1299,7 @@ function validatePatch(p: Partial<Settings>): string | null {
   const asErr = validateAutoSell(next.autoSell);
   if (asErr) return `자동 매도: ${asErr}`;
   const co = next.cashout;
-  if (![co.prlDepositMin, co.prlConfirmations, co.withdrawFeeUsdt, co.withdrawMinUsdt, co.withdrawSuggestUsdt].every((v) => Number.isFinite(v) && v >= 0) || typeof co.withdrawNetwork !== 'string' || co.withdrawNetwork.length > 20 || !/^\d{4}-\d{2}-\d{2}$/.test(co.measuredAt)) {
+  if (![co.prlDepositMin, co.prlConfirmations, co.withdrawFeeUsdt, co.withdrawMinUsdt, co.withdrawSuggestUsdt].every((v) => Number.isFinite(v) && v >= 0) || typeof co.withdrawNetwork !== 'string' || co.withdrawNetwork.length > 20 || typeof co.measuredAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(co.measuredAt)) {
     return '현금화 경로 값이 올바르지 않습니다';
   }
   if (typeof next.sharedLedgerDir !== 'string' || (next.sharedLedgerDir && !path.isAbsolute(next.sharedLedgerDir)) || /[\0\r\n]/.test(next.sharedLedgerDir)) {
@@ -1338,17 +1383,28 @@ export function saveSettingsPatch(patch: Partial<Settings>): string | null {
 export const REAL_SELL_TEXT =
   '자동 매도를 실제 매도로 전환합니다. 매일 정한 시각에 SafeTrade 에서 지정가로 PRL 을 팝니다 (하한가 아래로는 팔지 않음). 먼저 모의 실행 결과를 확인했는지 다시 보세요.';
 
-/** 이 변경이 실제 자동 매도를 새로 켜는가 (켜짐 + 모의 실행 끔) */
-export function turnsOnRealSell(patch: Partial<Settings>): boolean {
-  if (!patch.autoSell) return false;
+/**
+ * 확인이 필요한 자동 매도 변경: 실제 매도를 새로 켜거나, 실제 매도 중에 보호 장치를 느슨하게 (하한가·한도 등)
+ */
+export function sellChangeNeedsConfirm(patch: Partial<Settings>): string | null {
+  if (!patch.autoSell) return null;
   const cur = settings.autoSell;
   const next = { ...cur, ...patch.autoSell };
-  return next.enabled && !next.dryRun && !(cur.enabled && !cur.dryRun);
+  if (!(next.enabled && !next.dryRun)) return null;
+  if (!(cur.enabled && !cur.dryRun)) return REAL_SELL_TEXT;
+  const looser =
+    next.floorUsd < cur.floorUsd || next.maxDropPct > cur.maxDropPct || next.maxSpreadPct > cur.maxSpreadPct || next.minBidDepthUsd < cur.minBidDepthUsd ||
+    next.dailyMaxPrl > cur.dailyMaxPrl || next.orderMaxUsd > cur.orderMaxUsd || next.reservePrl < cur.reservePrl ||
+    next.repriceStepPct > cur.repriceStepPct || next.maxReprices > cur.maxReprices || next.market !== cur.market;
+  return looser ? '실제 자동 매도의 하한가·한도 같은 보호 설정을 느슨하게 바꿉니다. 맞는지 확인해 주세요.' : null;
 }
 
-/** 설정 저장 — 실제 자동 매도를 켜는 변경은 먼저 확인을 받는다 (화면·원격 모두) */
+/** 설정 저장 — 실제 자동 매도를 켜거나 보호 설정을 느슨하게 하는 변경은 먼저 확인을 받는다 (화면·원격 모두) */
 export async function saveSettingsConfirmed(patch: Partial<Settings>, confirm: Confirm): Promise<string | null> {
-  if (turnsOnRealSell(patch) && !(await confirm('sell', REAL_SELL_TEXT))) return '취소됨';
+  const why = sellChangeNeedsConfirm(patch);
+  if (why && !(await confirm('sell', why))) return '취소됨';
+  // 실행 중에 자동 매도를 끄면 다음 주문 전에 멈춘다
+  if (patch.autoSell?.enabled === false && autoSellBusy) autoSellStop = true;
   return saveSettingsPatch(patch);
 }
 
@@ -1648,6 +1704,20 @@ export async function initCore(e: CoreEnv): Promise<void> {
   }, SHARED_SYNC_MS));
   if (settings.autoStartMining) timers.push(setTimeout(() => void autoStartMining(), AUTO_START_DELAY_MS));
   timers.push(setInterval(() => void maybeAutoSell(), 60_000));
+  // 지난번에 매도 중에 꺼졌으면 남은 주문을 정리하고 판 양을 기록 (자동 매도를 꺼 두었어도)
+  if (autoSell.open || autoSell.progress) {
+    timers.push(
+      setTimeout(() => {
+        const key = env.exchangeKey?.() ?? null;
+        if (!key || autoSellBusy) return;
+        autoSellBusy = true;
+        void recoverInterrupted(key).finally(() => {
+          autoSellBusy = false;
+          env.onChange();
+        });
+      }, 10_000),
+    );
+  }
 }
 
 /** 장부·기록 저장. final 이면 남은 전력 구간도 바로 기록 (종료·업데이트 설치 전) */

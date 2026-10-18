@@ -168,7 +168,12 @@ export function createSafeTrade(key: ExchangeKey | null, fetchImpl: typeof fetch
       const px = fixed(floorTo(price, m.pricePrecision), m.pricePrecision);
       if (!(Number(amt) >= m.minAmount)) throw new ExchangeError(`주문 수량 ${amt} 가 최소 ${m.minAmount} 보다 작습니다`, null);
       const o = parseOrder(await call('POST', '/trade/market/orders', { market: m.id, side: 'sell', amount: amt, price: px, type: 'limit' }));
-      const ok = o.side === 'sell' && (o.type === '' || o.type === 'limit') && Math.abs(o.price - Number(px)) < 10 ** -(m.pricePrecision + 1);
+      const ok =
+        o.side === 'sell' &&
+        (o.type === '' || o.type === 'limit') &&
+        (o.market === '' || o.market === m.id) &&
+        Math.abs(o.price - Number(px)) < 10 ** -(m.pricePrecision + 1) &&
+        (!Number.isFinite(o.originAmount) || Math.abs(o.originAmount - Number(amt)) < 10 ** -(m.amountPrecision + 1));
       if (!ok) {
         if (Number.isFinite(o.id)) await call('POST', `/trade/market/orders/${o.id}/cancel`).catch(() => undefined);
         throw new ExchangeError(`주문 응답이 예상과 다릅니다 (type ${o.type || '?'}, price ${o.price}) — 취소했습니다`, null);

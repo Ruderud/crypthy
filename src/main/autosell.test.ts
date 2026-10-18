@@ -155,9 +155,37 @@ describe('auto sell: orders', () => {
   });
 });
 
+describe('auto sell: safety stops', () => {
+  it('never sells another asset even if the exchange returns a different market', async () => {
+    const ex = exchange({});
+    ex.client.market = async () => ({ ...PRL, id: 'btcusdt' });
+    const r = await runAutoSell(cfg(), deps(ex.client));
+    expect(r.status).toBe('skipped');
+    expect(ex.log).toEqual([]);
+  });
+
+  it('stops before the next order when auto-sell is switched off, and reports progress per order', async () => {
+    const ex = exchange({ prl: 60 });
+    const progress: number[] = [];
+    let n = 0;
+    const r = await runAutoSell(cfg({ orderMaxUsd: 20 }), { ...deps(ex.client), shouldStop: () => ++n > 2, onProgress: (p) => progress.push(p.soldPrl) });
+    expect(ex.log.filter((l) => l.startsWith('sell'))).toHaveLength(2);
+    expect(progress.length).toBe(2);
+    expect(progress[1]).toBeCloseTo(r.soldPrl, 6);
+    expect(r.reason).toMatch(/꺼서 멈췄/);
+  });
+});
+
 describe('auto sell: settings and once-per-day across machines', () => {
   it('validates the settings', () => {
     expect(validateAutoSell(DEFAULT_AUTOSELL)).toBeNull();
+    // PRL 마켓만, 타입·상한, 실제 매도에는 최저가 필수
+    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, market: 'btcusdt' })).toMatch(/prlusdt/);
+    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, time: ['10:00'] as unknown as string })).not.toBeNull();
+    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, dailyMaxPrl: '50' as unknown as number })).not.toBeNull();
+    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, orderMaxUsd: 1e9 })).not.toBeNull();
+    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, enabled: true, dryRun: false })).toMatch(/최저가/);
+    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, enabled: true, dryRun: false, floorUsd: 1.5 })).toBeNull();
     expect(validateAutoSell({ ...DEFAULT_AUTOSELL, time: '25:00' })).not.toBeNull();
     expect(validateAutoSell({ ...DEFAULT_AUTOSELL, maxDropPct: 0 })).not.toBeNull();
     expect(validateAutoSell({ ...DEFAULT_AUTOSELL, orderMaxUsd: 0 })).not.toBeNull();

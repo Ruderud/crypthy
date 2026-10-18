@@ -167,6 +167,14 @@ describe('remote API: writing', () => {
     expect(log).toEqual(['settings {"autoSell":{"dryRun":true}}']);
   });
 
+  it('remote screens can only switch auto-sell on/off, dry-run and time — not the floor, limits or market', async () => {
+    const log: string[] = [];
+    const { call } = await serve(WRITE, log);
+    await call('POST', '/v1/settings', { token: WRITE, body: { patch: { autoSell: { enabled: true, market: 'btcusdt', floorUsd: 0, maxDropPct: 50, dailyMaxPrl: 1e9 } } } });
+    await call('POST', '/v1/settings', { token: WRITE, body: { patch: { autoSell: { floorUsd: 0 } } } });
+    expect(log).toEqual(['settings {"autoSell":{"enabled":true}}', 'settings {}']);
+  });
+
   it('a masked wallet sent back from a remote screen does not overwrite the real one', async () => {
     const log: string[] = [];
     const { call } = await serve(WRITE, log);

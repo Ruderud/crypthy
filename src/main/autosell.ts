@@ -30,17 +30,25 @@ export const DEFAULT_AUTOSELL: AutoSellConfig = {
   maxReprices: 8,
 };
 
+/** 자동 매도는 PRL 의 이 마켓에서만 (다른 자산을 파는 일이 없게) */
+export const AUTOSELL_MARKETS = ['prlusdt', 'prlusdc'] as const;
+
 export function validateAutoSell(c: AutoSellConfig): string | null {
+  if (typeof c.enabled !== 'boolean' || typeof c.dryRun !== 'boolean' || typeof c.time !== 'string' || typeof c.market !== 'string') return '자동 매도 값 형식이 올바르지 않습니다';
+  const nums = [c.reservePrl, c.floorUsd, c.maxDropPct, c.maxSpreadPct, c.minBidDepthUsd, c.dailyMaxPrl, c.orderMaxUsd, c.repriceMinutes, c.repriceStepPct, c.maxReprices];
+  if (!nums.every((v) => typeof v === 'number' && Number.isFinite(v))) return '자동 매도 숫자 값이 올바르지 않습니다';
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(c.time)) return '실행 시각은 HH:MM 이어야 합니다';
-  if (!/^[a-z0-9]{4,20}$/.test(c.market)) return '마켓 이름이 올바르지 않습니다 (예: prlusdt)';
+  if (!(AUTOSELL_MARKETS as readonly string[]).includes(c.market)) return `자동 매도는 ${AUTOSELL_MARKETS.join(', ')} 마켓만 지원합니다`;
   const nonneg = [c.reservePrl, c.floorUsd, c.minBidDepthUsd];
-  if (!nonneg.every((v) => Number.isFinite(v) && v >= 0)) return '자동 매도 값은 0 이상이어야 합니다';
+  if (!nonneg.every((v) => v >= 0)) return '자동 매도 값은 0 이상이어야 합니다';
+  if (c.enabled && !c.dryRun && !(c.floorUsd > 0)) return '실제 매도에는 최저가($)를 0보다 크게 정해야 합니다';
+  if (!(c.dailyMaxPrl <= 100_000 && c.orderMaxUsd <= 10_000)) return '하루 최대 매도량(10만 PRL)·1회 주문 한도(1만 USDT)를 넘었습니다';
   if (!(c.maxDropPct > 0 && c.maxDropPct <= 50)) return '최대 하락률은 0~50% 이어야 합니다';
   if (!(c.maxSpreadPct > 0 && c.maxSpreadPct <= 20)) return '스프레드 상한은 0~20% 이어야 합니다';
   if (!(c.dailyMaxPrl > 0 && c.orderMaxUsd > 0)) return '하루 최대 매도량과 1회 주문 한도는 0보다 커야 합니다';
   if (!(c.repriceMinutes >= 1 && c.repriceMinutes <= 240)) return '재가격 간격은 1~240분이어야 합니다';
   if (!(c.repriceStepPct > 0 && c.repriceStepPct <= 5)) return '한 번에 내리는 비율은 0~5% 이어야 합니다';
-  if (!(Number.isInteger(c.maxReprices) && c.maxReprices >= 0 && c.maxReprices <= 50)) return '최대 재가격 횟수는 0~50 정수여야 합니다';
+  if (!(Number.isInteger(c.maxReprices) && c.maxReprices >= 0 && c.maxReprices <= 20)) return '최대 재가격 횟수는 0~20 정수여야 합니다';
   return null;
 }
 
@@ -67,6 +75,10 @@ export interface SellDeps {
   day: string;
   /** 주문을 걸었을 때·닫았을 때 (앱이 중간에 꺼져도 다음 시작 때 취소·기록하려고 저장) */
   onOpen?(o: Order | null): void;
+  /** 주문 하나가 끝날 때마다 지금까지의 결과 (앱이 꺼져도 판 양이 장부에서 빠지지 않게 저장) */
+  onProgress?(r: SellResult): void;
+  /** 사용자가 자동 매도를 끄면 true — 다음 주문을 내지 않고 멈춘다 */
+  shouldStop?(): boolean;
 }
 
 const pct = (a: number, b: number) => ((a - b) / ((a + b) / 2)) * 100;
@@ -102,6 +114,7 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
   let open: Order | null = null;
   try {
     const m = await d.client.market(cfg.market);
+    if (m.id !== cfg.market || !m.id.startsWith('prl')) return skip(`PRL 마켓이 아닙니다 (${m.id})`);
     if (m.state !== 'enabled') return skip(`마켓 ${cfg.market} 상태: ${m.state}`);
     const [bal, tk] = await Promise.all([d.client.balances(), d.client.ticker(cfg.market)]);
     const refs = [tk.avgPrice, d.refPriceUsd() ?? Number.NaN].filter((v) => Number.isFinite(v) && v > 0);
@@ -109,14 +122,18 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
     r.refUsd = Math.max(...refs);
     const floor = floorPrice(cfg, r.refUsd, m.pricePrecision);
     r.floorUsd = floor;
-    const base = m.id.replace(/usdt$|usdc$|btc$/, '');
-    const avail = bal[base]?.available ?? 0;
+    const avail = bal.prl?.available ?? 0;
     let remaining = floorTo(Math.min(avail - cfg.reservePrl, cfg.dailyMaxPrl - d.soldTodayPrl), m.amountPrecision);
     if (remaining < m.minAmount) return { ...r, status: 'nothing', reason: `팔 수 있는 PRL ${Math.max(0, remaining)} (가용 ${avail}, 남길 양 ${cfg.reservePrl}, 오늘 ${d.soldTodayPrl}/${cfg.dailyMaxPrl}) < 최소 ${m.minAmount}` };
 
     let reprices = 0;
     let lastPrice: number | null = null;
+    let stopped = false;
     while (remaining >= m.minAmount) {
+      if (d.shouldStop?.()) {
+        stopped = true;
+        break;
+      }
       const book = checkBook(await d.client.depth(cfg.market), cfg);
       if ('skip' in book) return skip(book.skip);
       let price = quotePrice(book.ask, floor, m.pricePrecision);
@@ -152,6 +169,7 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
       d.onOpen?.(null);
       r.orders.push({ id: o.id, price, amount, filled: o.filledAmount, avgPrice: o.avgPrice });
       r.soldPrl += o.filledAmount;
+      d.onProgress?.({ ...r, orders: [...r.orders], proceedsUsdt: r.orders.reduce((s, x) => s + x.filled * x.avgPrice, 0) });
       remaining = floorTo(remaining - o.filledAmount, m.amountPrecision);
       if (o.filledAmount < amount - 1e-9) {
         reprices++;
@@ -169,7 +187,8 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
       } else r.proceedsUsdt += ord.filled * ord.avgPrice;
     }
     r.status = r.soldPrl <= 0 ? 'nothing' : remaining >= m.minAmount ? 'partial' : 'sold';
-    if (r.status !== 'sold') r.reason = r.soldPrl > 0 ? `일부만 체결 (${r.soldPrl} PRL), 남은 ${remaining} PRL 은 하한가·재가격 한도로 중단` : `하한가 ${floor} 이상에서 체결되지 않았습니다`;
+    if (stopped) r.reason = '자동 매도를 꺼서 멈췄습니다';
+    else if (r.status !== 'sold') r.reason = r.soldPrl > 0 ? `일부만 체결 (${r.soldPrl} PRL), 남은 ${remaining} PRL 은 하한가·재가격 한도로 중단` : `하한가 ${floor} 이상에서 체결되지 않았습니다`;
     return r;
   } catch (e) {
     // 걸어 둔 주문이 있으면 취소하고, 그때까지 체결된 양은 기록한다 (장부에 빠지지 않게)

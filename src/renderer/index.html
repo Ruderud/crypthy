@@ -150,7 +150,7 @@
         <label class="check"><input name="dryRun" type="checkbox" /> 모의 실행 (주문 없이 계획만 · 처음에는 켜 두세요)</label>
         <label>실행 시각 (이 PC 시간) <input name="time" type="time" /></label>
         <label>남겨 둘 PRL <input name="reservePrl" type="number" min="0" step="0.0001" /></label>
-        <label>최저가 ($, 0 = 기준가만) <input name="floorUsd" type="number" min="0" step="0.01" /></label>
+        <label>최저가 ($, 실제 매도에는 필수) <input name="floorUsd" type="number" min="0" step="0.01" /></label>
         <label>기준가 대비 최대 하락(%) <input name="maxDropPct" type="number" min="0.1" max="50" step="0.1" /></label>
         <label>최대 스프레드(%) — 넘으면 그날 안 팜 <input name="maxSpreadPct" type="number" min="0.1" max="20" step="0.1" /></label>
         <label>최소 매수 호가 깊이($) <input name="minBidDepthUsd" type="number" min="0" step="10" /></label>
@@ -158,7 +158,7 @@
         <label>주문 1건 최대($) <input name="orderMaxUsd" type="number" min="1" step="1" /></label>
         <label>안 팔리면 몇 분 뒤 값 내림 <input name="repriceMinutes" type="number" min="1" max="240" step="1" /></label>
         <label>한 번에 내리는 폭(%) <input name="repriceStepPct" type="number" min="0.1" max="5" step="0.1" /></label>
-        <label>값 내림 최대 횟수 <input name="maxReprices" type="number" min="0" max="20" step="1" /></label>
+        <label>값 내림 최대 횟수 (0~20) <input name="maxReprices" type="number" min="0" max="20" step="1" /></label>
         <div class="row"><button type="submit" class="primary">자동 매도 설정 저장</button><span id="asSaveMsg" class="msg"></span></div>
       </form>
       <p class="muted small">하한가 = max(최저가, 기준가 × (1 − 최대 하락%)). 기준가는 SafeTrade 24시간 평균가와 CoinGecko 시세 중 높은 값입니다. 가장 낮은 매도 호가보다 한 틱 아래에 지정가로 걸고, 안 팔리면 정한 시간마다 조금씩 내리되 하한가 아래로는 내리지 않습니다. 호가가 비정상(스프레드가 넓음, 매수 깊이가 얕음, API 오류)이면 그날은 팔지 않고 알립니다. 판 기록은 PnL 에 "실현 매도"로 남습니다.</p>

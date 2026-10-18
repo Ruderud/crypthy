@@ -215,6 +215,15 @@ function renderAutoSell(st: AppState) {
   $('keyForm').querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = !!st.remote;
   if (st.remote) $('keyHelp').textContent = '원격 호스트에 연결 중입니다. 호스트의 키는 그 호스트에서 install.sh --safetrade-key 로 넣습니다 (키는 원격 API 로 오가지 않습니다).';
   for (const f of ['autoSellForm', 'cashoutForm']) for (const el of Array.from($<HTMLFormElement>(f).elements) as HTMLInputElement[]) el.disabled = !canWrite;
+  // 원격 화면에서는 켜기·모의 실행·시각만 바꾼다 (하한가·한도는 키가 있는 호스트에서)
+  if (st.remote) {
+    for (const el of Array.from($<HTMLFormElement>('autoSellForm').elements) as HTMLInputElement[]) {
+      if (el.name && !['enabled', 'dryRun', 'time'].includes(el.name)) {
+        el.disabled = true;
+        el.title = '하한가·한도는 원격 호스트에서만 바꿀 수 있습니다';
+      }
+    }
+  }
 
   const co = st.settings.cashout;
   $('cashoutSub').textContent = `측정일 ${co.measuredAt} · 수수료·최소 수량은 바뀔 수 있으니 거래소에서 다시 확인하세요`;
