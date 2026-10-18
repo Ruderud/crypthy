@@ -36,7 +36,12 @@ describe('event log', () => {
   });
 
   it('never throws when the file cannot be written', () => {
-    expect(appendEvent('/nonexistent-root-dir/x/events.jsonl', { t: 1, type: 'pool', coin: 'p', total: 1 })).toBe(false);
+    // 일반 파일을 디렉터리처럼 쓰면 모든 OS 에서 쓰기에 실패한다
+    const dir = tmp();
+    const notADir = path.join(dir, 'file');
+    fs.writeFileSync(notADir, 'x');
+    expect(appendEvent(path.join(notADir, 'pnl', 'events.jsonl'), { t: 1, type: 'pool', coin: 'p', total: 1 })).toBe(false);
+    fs.rmSync(dir, { recursive: true });
   });
 });
 
