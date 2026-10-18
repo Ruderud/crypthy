@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { MinerControlConfig } from '../shared/types';
 import {
-  controlProcessName, createMinerControl, decodeConsole, parseArgs, parseTaskXml, startBlocker, startCommand, stopCommand, validateControl,
-  type Command,
+  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, parseArgs, parseTaskXml, spawnOptions, startBlocker, startCommand, stopCommand,
+  validateControl, type Command,
 } from './minerControl';
 
-const cfg = (p: Partial<MinerControlConfig>): MinerControlConfig => ({ mode: 'none', taskName: '', unit: '', exe: '', args: '', confirmStop: true, ...p });
+const cfg = (p: Partial<MinerControlConfig>): MinerControlConfig => ({ mode: 'none', taskName: '', unit: '', exe: '', args: '', confirmStop: true, hideWindow: true, ...p });
 const SRB = 'C:\\Mining\\SRBMiner\\SRBMiner-MULTI.exe';
 
 describe('argument parsing (no shell)', () => {
@@ -52,7 +52,7 @@ describe('start / stop commands', () => {
   it('direct: absolute .exe on Windows, args as an array, cwd = the miner folder, stop by process', () => {
     const c = cfg({ mode: 'direct', exe: SRB, args: '--algorithm pearlhash --api-enable' });
     expect(validateControl(c, 'windows')).toBeNull();
-    expect(startCommand(c)).toEqual({ kind: 'spawn', cmd: { file: SRB, args: ['--algorithm', 'pearlhash', '--api-enable'] }, cwd: 'C:\\Mining\\SRBMiner' });
+    expect(startCommand(c)).toEqual({ kind: 'spawn', cmd: { file: SRB, args: ['--algorithm', 'pearlhash', '--api-enable'] }, cwd: 'C:\\Mining\\SRBMiner', hide: true });
     expect(stopCommand(c)).toBeNull();
     expect(controlProcessName(c, 'windows')).toBe('SRBMiner-MULTI.exe');
     expect(validateControl(cfg({ mode: 'direct', exe: 'SRBMiner-MULTI.exe' }), 'windows')).not.toBeNull();
@@ -70,6 +70,25 @@ describe('process names', () => {
       expect(validateControl(c, 'windows')).toMatch(/셸·인터프리터/);
     }
     expect(controlProcessName(cfg({ mode: 'task', taskName: 'PearlMiner', exe: SRB }), 'windows')).toBe('SRBMiner-MULTI.exe');
+  });
+});
+
+describe('quiet start and automatic start', () => {
+  it('direct start hides the console window unless turned off', () => {
+    expect(startCommand(cfg({ mode: 'direct', exe: SRB }))?.hide).toBe(true);
+    expect(startCommand(cfg({ mode: 'direct', exe: SRB, hideWindow: false }))?.hide).toBe(false);
+    expect(spawnOptions('C:\\Mining', true)).toEqual({ cwd: 'C:\\Mining', detached: true, stdio: 'ignore', shell: false, windowsHide: true });
+  });
+
+  it('starts automatically only when enabled, consented, no recent danger stop and nothing blocks it', () => {
+    const ok = { enabled: true, consented: true, recentDanger: false, blocker: null };
+    expect(autoStartDecision(ok)).toEqual({ start: true, reason: null });
+    expect(autoStartDecision({ ...ok, enabled: false })).toEqual({ start: false, reason: null });
+    expect(autoStartDecision({ ...ok, consented: false }).reason).toMatch(/동의/);
+    expect(autoStartDecision({ ...ok, recentDanger: true }).reason).toMatch(/위험/);
+    // 예약 작업이 먼저 띄운 채굴기 → 두 번째를 띄우지 않음 / 안전 보류
+    expect(autoStartDecision({ ...ok, blocker: '채굴기가 이미 실행 중입니다' })).toEqual({ start: false, reason: '채굴기가 이미 실행 중입니다' });
+    expect(autoStartDecision({ ...ok, blocker: '안전 보류 중: RTX 5090(팬 정지)' }).start).toBe(false);
   });
 });
 
@@ -112,7 +131,7 @@ describe('controller', () => {
         calls.push(`exec ${c.file} ${c.args.join(' ')}`);
         if (execFail) throw new Error('ERROR: The task is not running.');
       },
-      spawnDetached: async (c: Command, cwd?: string) => void calls.push(`spawn ${c.file} ${c.args.join(' ')} @${cwd}`),
+      spawnDetached: async (c: Command, cwd: string | undefined, hide: boolean) => void calls.push(`spawn ${c.file} ${c.args.join(' ')} @${cwd}${hide ? ' hide' : ''}`),
       killMiners: async () => {
         calls.push('kill');
         return killErr;
@@ -141,6 +160,6 @@ describe('controller', () => {
   it('direct start spawns detached without a shell', async () => {
     const { calls, ctl } = fake();
     expect(await ctl.start(cfg({ mode: 'direct', exe: SRB, args: '--a "b c"' }))).toBeNull();
-    expect(calls).toEqual([`spawn ${SRB} --a b c @C:\\Mining\\SRBMiner`]);
+    expect(calls).toEqual([`spawn ${SRB} --a b c @C:\\Mining\\SRBMiner hide`]);
   });
 });

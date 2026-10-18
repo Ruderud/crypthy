@@ -142,7 +142,7 @@ describe('remote API: writing', () => {
     const { call } = await serve(WRITE, log);
     await call('POST', '/v1/settings', {
       token: WRITE,
-      body: { patch: { minerControl: { mode: 'direct', exe: '/usr/bin/perl', args: '-e evil' }, safetyKill: false, safety: { tempStopC: 95 }, openAtLogin: true, gpus: [] } },
+      body: { patch: { minerControl: { mode: 'direct', exe: '/usr/bin/perl', args: '-e evil' }, safetyKill: false, safety: { tempStopC: 95 }, openAtLogin: true, autoStartMining: true, sharedLedgerDir: '/tmp', gpus: [] } },
     });
     expect(log).toEqual(['settings {"gpus":[]}']);
   });

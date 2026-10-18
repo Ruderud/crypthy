@@ -90,14 +90,14 @@ export function validateControl(c: MinerControlConfig, platform: Platform): stri
 }
 
 /** 켜기 명령. direct 는 spawn(분리 실행) 대상, 나머지는 끝날 때까지 기다리는 명령 */
-export function startCommand(c: MinerControlConfig): { kind: 'exec' | 'spawn'; cmd: Command; cwd?: string } | null {
+export function startCommand(c: MinerControlConfig): { kind: 'exec' | 'spawn'; cmd: Command; cwd?: string; hide?: boolean } | null {
   switch (c.mode) {
     case 'task':
       return { kind: 'exec', cmd: { file: 'schtasks.exe', args: ['/Run', '/TN', c.taskName] } };
     case 'systemd':
       return { kind: 'exec', cmd: { file: 'systemctl', args: ['--user', 'start', '--', c.unit] } };
     case 'direct':
-      return { kind: 'spawn', cmd: { file: c.exe, args: parseArgs(c.args) }, cwd: pathOf(c.exe).dirname(c.exe) };
+      return { kind: 'spawn', cmd: { file: c.exe, args: parseArgs(c.args) }, cwd: pathOf(c.exe).dirname(c.exe), hide: c.hideWindow !== false };
     default:
       return null;
   }
@@ -148,11 +148,31 @@ export function startBlocker(o: { config: MinerControlConfig; platform: Platform
   return null;
 }
 
+/**
+ * 직접 실행 옵션: 셸 없이, 앱과 분리해(앱을 꺼도 채굴은 계속).
+ * hide 면 Windows 에서 콘솔 창 없이 (Node 의 windowsHide → CREATE_NO_WINDOW + SW_HIDE)
+ */
+export function spawnOptions(cwd: string | undefined, hide: boolean) {
+  return { cwd, detached: true, stdio: 'ignore' as const, shell: false, windowsHide: hide };
+}
+
+/**
+ * Crypthy 시작 시 채굴 자동 시작을 할지. 안전 원칙은 버튼과 같고, 묻는 대신 하지 않는다:
+ * 동의 전, 안전 보류 중, 최근 위험 정지, 이미 실행 중(예: 예약 작업이 먼저 띄움)·그 밖에 켤 수 없는 이유가 있으면 건너뛴다.
+ */
+export function autoStartDecision(o: { enabled: boolean; consented: boolean; recentDanger: boolean; blocker: string | null }): { start: boolean; reason: string | null } {
+  if (!o.enabled) return { start: false, reason: null };
+  if (!o.consented) return { start: false, reason: '채굴 위험·비용 고지에 아직 동의하지 않았습니다 — 한 번 직접 켜서 동의해 주세요' };
+  if (o.recentDanger) return { start: false, reason: '최근 위험 조건으로 채굴기를 정지했습니다 — 원인을 확인한 뒤 직접 켜 주세요' };
+  if (o.blocker) return { start: false, reason: o.blocker };
+  return { start: true, reason: null };
+}
+
 export interface ControlDeps {
   /** 끝날 때까지 기다리는 명령 (셸 없이) */
   exec(cmd: Command): Promise<void>;
   /** 앱과 분리해 실행 (셸 없이). 프로세스가 실제로 뜨면 끝나고, 실행 실패면 예외 */
-  spawnDetached(cmd: Command, cwd: string | undefined): Promise<void>;
+  spawnDetached(cmd: Command, cwd: string | undefined, hide: boolean): Promise<void>;
   /** 알려진 채굴기 프로세스 정지·확인. 실패 사유 또는 null */
   killMiners(): Promise<string | null>;
 }
@@ -164,7 +184,7 @@ export function createMinerControl(deps: ControlDeps) {
       const s = startCommand(c);
       if (!s) return '켜기 방식이 설정되지 않았습니다';
       try {
-        if (s.kind === 'spawn') await deps.spawnDetached(s.cmd, s.cwd);
+        if (s.kind === 'spawn') await deps.spawnDetached(s.cmd, s.cwd, s.hide ?? true);
         else await deps.exec(s.cmd);
         return null;
       } catch (e) {

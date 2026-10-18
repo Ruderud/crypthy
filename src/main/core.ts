@@ -10,7 +10,10 @@ import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog }
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
-import { controlProcessName, createMinerControl, decodeConsole, isUsableProcessName, parseTaskXml, startBlocker, validateControl, type Platform } from './minerControl';
+import {
+  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, isUsableProcessName, parseTaskXml, spawnOptions, startBlocker, validateControl,
+  type Platform,
+} from './minerControl';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
   emptyLedger, migrateLedger, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
@@ -480,11 +483,11 @@ const minerControl = createMinerControl({
       : new Promise((resolve, reject) =>
           execFile(cmd.file, cmd.args, { timeout: 15_000, windowsHide: true }, (err, _out, stderr) => (err ? reject(new Error((stderr || err.message).trim())) : resolve())),
         ),
-  spawnDetached: (cmd, cwd) =>
+  spawnDetached: (cmd, cwd, hide) =>
     new Promise<void>((resolve, reject) => {
       if (mockHw) return resolve(mockHw.start());
       // 셸 없이, 앱과 분리해 실행 (앱을 꺼도 채굴기는 계속). 실제로 떴는지(spawn) 실패했는지(error) 기다린다
-      const child = spawn(cmd.file, cmd.args, { cwd, detached: true, stdio: 'ignore', shell: false, windowsHide: false });
+      const child = spawn(cmd.file, cmd.args, spawnOptions(cwd, hide));
       child.once('spawn', () => {
         child.unref();
         resolve();
@@ -550,6 +553,35 @@ export async function startMining(confirm: Confirm): Promise<string | null> {
   pushAlert({ ts: Date.now(), level: 'info', code: 'miner_started', message: '채굴 켜기 (사용자)' }, false);
   env.onChange();
   return null;
+}
+
+/** 위험·비용 고지에 동의했는지 */
+export const isConsented = () => runtime.minerConsentAt !== null;
+
+/** 시작 직후 채굴 자동 시작까지 기다리는 시간 (로그온 시 예약 작업 등 다른 경로가 먼저 띄운 채굴기를 감지하려고) */
+export const AUTO_START_DELAY_MS = 30_000;
+
+/**
+ * Crypthy 시작 시 채굴 자동 시작 (설정을 켰을 때 한 번만). 버튼과 같은 조건을 쓰되 확인이 필요하면 묻지 않고 건너뛴다.
+ * 위험 정지 뒤 자동으로 다시 켜지 않는다는 원칙은 그대로: 보류·최근 위험 정지가 있으면 하지 않는다.
+ */
+export async function autoStartMining(): Promise<void> {
+  const d = autoStartDecision({ enabled: settings.autoStartMining, consented: isConsented(), recentDanger: recentDangerStop() !== null, blocker: controlBlocker() });
+  let reason = d.reason;
+  if (d.start) {
+    // 확인이 필요한 경우(동의·위험 정지)는 위에서 걸렀다. 그 사이 상태가 바뀌어 확인이 필요해지면 켜지 않는다
+    const err = await startMining(async () => false);
+    if (!err) {
+      env.log.info('auto start: mining started');
+      pushAlert({ ts: Date.now(), level: 'info', code: 'auto_start', message: 'Crypthy 시작 시 채굴 자동 시작' }, false);
+      return;
+    }
+    reason = err === '취소됨' ? '확인이 필요한 상태입니다' : err;
+  }
+  if (!reason) return;
+  env.log.info(`auto start skipped: ${reason}`);
+  pushAlert({ ts: Date.now(), level: 'info', code: 'auto_start_skipped', message: `채굴 자동 시작 안 함: ${reason}` }, false);
+  env.onChange();
 }
 
 /** 위험·비용 고지 동의를 기록한다 (대화상자·헤드리스 --accept-risk) */
@@ -1146,6 +1178,7 @@ export async function initCore(e: CoreEnv): Promise<void> {
     syncShared();
     env.onChange();
   }, SHARED_SYNC_MS));
+  if (settings.autoStartMining) timers.push(setTimeout(() => void autoStartMining(), AUTO_START_DELAY_MS));
 }
 
 /** 장부·기록 저장. final 이면 남은 전력 구간도 바로 기록 (종료·업데이트 설치 전) */

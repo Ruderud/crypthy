@@ -31,6 +31,10 @@ export interface Settings {
   sharedLedgerDir: string;
   /** 로그인 시 앱 자동 실행 */
   openAtLogin: boolean;
+  /** 로그인 시 창을 띄운다 (false 면 트레이에만) */
+  loginShowWindow: boolean;
+  /** Crypthy 가 시작될 때 채굴 자동 시작 (동의·안전 보류·최근 위험 정지·이미 실행 중이면 하지 않음). 기기별 */
+  autoStartMining: boolean;
   /** 업데이트 확인 주기(분). 30~1440, 기본 60 */
   updateIntervalMin: number;
   gpus: GpuConfig[];
@@ -49,6 +53,8 @@ export interface MinerControlConfig {
   args: string;
   /** 끄기 전에 한 번 확인 */
   confirmStop: boolean;
+  /** 직접 실행할 때 콘솔 창 숨기기 (Windows) */
+  hideWindow: boolean;
 }
 
 export interface SafetyConfig {
