@@ -1,11 +1,13 @@
 // Electron 셸: 창·트레이·OS 알림·대화상자·자동 업데이트. 상태와 동작은 core.ts 가 맡는다.
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, safeStorage, shell, Tray } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Alert, AppState, Settings } from '../shared/types';
+import type { Alert, AppState, ChartsView, RemoteSettingsView, Settings } from '../shared/types';
 import * as core from './core';
 import { setLinuxAutostart } from './autostart';
+import { readJson, writeJson } from './config';
 import { createFileLogger, type Logger } from './log';
+import { createRemoteClient, normalizeRemoteUrl, postWithConfirm, type RemoteTarget } from './remoteClient';
 import { startStatusServer } from './statusApi';
 import { createNotificationKeeper, updateToast } from './updatePrompt';
 import { createUpdateController, DISABLED_UPDATE, mockUpdater, type UpdaterLike } from './updater';
@@ -37,8 +39,147 @@ function notify(a: Alert): void {
   notifications.show(new Notification({ title: a.level === 'critical' ? `${APP_NAME} 안전 경고` : APP_NAME, body: a.message }), showWindow);
 }
 
+// ---------- 원격 호스트 (헤드리스 Crypthy 화면 보기) ----------
+//
+// 원격 연결 중에는 화면·트레이가 원격 호스트의 상태를 보여 주고, 켜기·끄기·설정 등은 원격 호스트로 보낸다.
+// 토큰은 이 메인 프로세스만 갖는다(화면에 넘기지 않음). 저장은 OS 보안 저장소(safeStorage)로 암호화한다.
+
+interface RemoteSaved {
+  url: string;
+  enabled: boolean;
+  read: string | null;
+  write: string | null;
+  /** read·write 가 safeStorage 로 암호화된 base64 인지 */
+  enc: boolean;
+}
+
+const REMOTE_POLL_MS = 2000;
+const remoteFile = () => file('remote-client.json');
+let remoteSaved: RemoteSaved = { url: '', enabled: false, read: null, write: null, enc: false };
+let remote: { target: RemoteTarget; client: ReturnType<typeof createRemoteClient> } | null = null;
+let remoteState: AppState | null = null;
+let remoteError: string | null = null;
+let remoteAt: number | null = null;
+let remoteTimer: NodeJS.Timeout | null = null;
+let remoteCharts: ChartsView | null = null;
+
+const canEncrypt = () => {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+};
+const seal = (v: string | null, enc: boolean) => (v === null ? null : enc ? safeStorage.encryptString(v).toString('base64') : v);
+const unseal = (v: string | null, enc: boolean) => (v === null ? null : enc ? safeStorage.decryptString(Buffer.from(v, 'base64')) : v);
+
+function saveRemote(): void {
+  writeJson(remoteFile(), remoteSaved);
+  try {
+    fs.chmodSync(remoteFile(), 0o600);
+  } catch {
+    // Windows 는 사용자 프로필 폴더 권한을 따른다
+  }
+}
+
+function startRemote(target: RemoteTarget): void {
+  stopRemote();
+  remote = { target, client: createRemoteClient(target) };
+  remoteError = null;
+  const tick = async () => {
+    const r = remote;
+    if (!r) return;
+    try {
+      remoteState = await r.client.state();
+      remoteAt = Date.now();
+      remoteError = null;
+    } catch (e) {
+      remoteError = (e as Error).message;
+    }
+    broadcast();
+  };
+  void tick();
+  remoteTimer = setInterval(() => void tick(), REMOTE_POLL_MS);
+}
+
+function stopRemote(): void {
+  if (remoteTimer) clearInterval(remoteTimer);
+  remoteTimer = null;
+  remote = null;
+  remoteState = null;
+  remoteCharts = null;
+  remoteError = null;
+  remoteAt = null;
+}
+
+function loadRemote(): void {
+  const raw = readJson<Partial<RemoteSaved>>(remoteFile(), {});
+  remoteSaved = { url: typeof raw.url === 'string' ? raw.url : '', enabled: raw.enabled === true, read: raw.read ?? null, write: raw.write ?? null, enc: raw.enc === true };
+  if (!remoteSaved.enabled || !remoteSaved.url || !remoteSaved.read) return;
+  try {
+    startRemote({ url: remoteSaved.url, readToken: unseal(remoteSaved.read, remoteSaved.enc)!, writeToken: unseal(remoteSaved.write, remoteSaved.enc) });
+  } catch (e) {
+    log.warn(`remote: cannot read saved tokens: ${(e as Error).message}`);
+  }
+}
+
+/** 원격 호스트에 연결 (주소·토큰을 먼저 확인하고 저장). 빈 토큰은 저장된 값을 다시 쓴다 */
+async function connectRemote(urlRaw: unknown, readRaw: unknown, writeRaw: unknown): Promise<string | null> {
+  const url = normalizeRemoteUrl(String(urlRaw ?? ''));
+  if (!url) return '주소는 100.x.y.z:47321 처럼 IP(또는 호스트 이름)와 포트만 입력하세요';
+  const same = url === remoteSaved.url;
+  const savedRead = same ? unseal(remoteSaved.read, remoteSaved.enc) : null;
+  const savedWrite = same ? unseal(remoteSaved.write, remoteSaved.enc) : null;
+  const readToken = String(readRaw ?? '').trim() || savedRead;
+  const writeToken = String(writeRaw ?? '').trim() || savedWrite;
+  if (!readToken) return '읽기 토큰을 입력하세요 (호스트에서 crypthy-headless --print-tokens)';
+  const target: RemoteTarget = { url, readToken, writeToken: writeToken || null };
+  try {
+    await createRemoteClient(target).state();
+  } catch (e) {
+    return `연결 실패: ${(e as Error).message}`;
+  }
+  const enc = canEncrypt();
+  remoteSaved = { url, enabled: true, read: seal(readToken, enc), write: seal(target.writeToken, enc), enc };
+  saveRemote();
+  log.info(`remote: connected to ${url} (${target.writeToken ? 'read + write' : 'read-only'})`);
+  startRemote(target);
+  return null;
+}
+
+function disconnectRemote(): void {
+  remoteSaved.enabled = false;
+  saveRemote();
+  stopRemote();
+  log.info('remote: back to this PC');
+  broadcast();
+}
+
+const remoteSettingsView = (): RemoteSettingsView => ({
+  url: remoteSaved.url,
+  enabled: !!remote,
+  hasRead: !!remoteSaved.read,
+  hasWrite: !!remoteSaved.write,
+  encrypted: remoteSaved.enc,
+});
+
+/** 화면·트레이에 보낼 상태: 원격 연결 중이면 원격 상태(업데이트·버전은 이 PC 앱 기준) */
+function currentState(): AppState {
+  const local = core.buildState();
+  if (!remote) return { ...local, remote: null };
+  const view = { url: remote.target.url, write: !!remote.target.writeToken, at: remoteAt, error: remoteError, version: remoteState?.appVersion ?? null };
+  return remoteState ? { ...remoteState, update: local.update, appVersion: local.appVersion, remote: view } : { ...local, remote: view };
+}
+
+const LOCAL_ONLY = '원격 호스트에 연결된 동안에는 쓸 수 없는 기능입니다 (이 PC 로 돌아간 뒤 사용하세요)';
+
+/** 원격 연결 중이면 원격 호스트로, 아니면 이 PC 코어로 */
+function routed<A extends unknown[]>(local: (...a: A) => unknown, path: string, body: (...a: A) => Record<string, unknown>) {
+  return (_e: unknown, ...a: A) => (remote ? postWithConfirm(remote.client, path, body(...a), dialogConfirm).finally(broadcast) : local(...a));
+}
+
 function broadcast(): void {
-  const st = core.buildState();
+  const st = currentState();
   if (win && !win.isDestroyed() && win.isVisible()) win.webContents.send('state', st);
   updateTray(st);
 }
@@ -84,7 +225,7 @@ function showWindow(): void {
     win.show();
     win.focus();
     // 숨겨져 있는 동안에는 상태를 보내지 않으므로, 다시 보일 때 바로 최신 상태를 보낸다
-    win.webContents.send('state', core.buildState());
+    win.webContents.send('state', currentState());
     return;
   }
   win = new BrowserWindow({
@@ -122,7 +263,7 @@ function updateTray(st: AppState): void {
   tray.setToolTip(`${APP_NAME}\n${status}\n${temps}`.slice(0, 127));
   const u = st.update;
   const ctl = st.miner.control;
-  const key = `${status}|${u.status}|${u.version}|${u.prompt}|${ctl.mode}|${ctl.canStart}|${ctl.canStop}`;
+  const key = `${st.remote?.url ?? ''}|${status}|${u.status}|${u.version}|${u.prompt}|${ctl.mode}|${ctl.canStart}|${ctl.canStop}`;
   if (key === trayKey) return;
   trayKey = key;
   const updateItem =
@@ -131,18 +272,20 @@ function updateTray(st: AppState): void {
       : u.prompt || u.status === 'ready' || u.status === 'available'
         ? [{ label: u.status === 'ready' ? `업데이트 v${u.version} 설치 준비됨…` : `새 버전 v${u.version} 있음…`, click: focusUpdateBanner }]
         : [{ label: '업데이트 확인', click: () => { showWindow(); void checkUpdateNow(); } }];
-  const control = (fn: (c: core.Confirm) => Promise<string | null>) => () =>
-    void fn(dialogConfirm).then((e) => e && e !== '취소됨' && core.pushAlert({ ts: Date.now(), level: 'warn', code: 'miner_control', message: e }));
+  const control = (fn: (c: core.Confirm) => Promise<string | null>, path: string) => () =>
+    void (remote ? postWithConfirm(remote.client, path, {}, dialogConfirm) : fn(dialogConfirm)).then(
+      (e) => e && e !== '취소됨' && core.pushAlert({ ts: Date.now(), level: 'warn', code: 'miner_control', message: e }),
+    );
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: status, enabled: false },
+      { label: st.remote ? `원격 ${st.remote.url.replace(/^https?:\/\//, '')} · ${status}` : status, enabled: false },
       { type: 'separator' },
       { label: '대시보드 열기', click: showWindow },
       ...(ctl.mode === 'none'
         ? []
         : [
-            { label: '채굴 켜기', enabled: ctl.canStart, click: control(core.startMining) },
-            { label: '채굴 끄기', enabled: ctl.canStop, click: control(core.stopMining) },
+            { label: '채굴 켜기', enabled: ctl.canStart, click: control(core.startMining, '/v1/miner/start') },
+            { label: '채굴 끄기', enabled: ctl.canStop, click: control(core.stopMining, '/v1/miner/stop') },
           ]),
       ...updateItem,
       { type: 'separator' },
@@ -238,6 +381,7 @@ function prepareForInstall(): void {
   core.stopCore();
   statusServer?.close();
   statusServer = null;
+  stopRemote();
   tray?.destroy();
   tray = null;
   app.removeAllListeners('window-all-closed');
@@ -252,25 +396,35 @@ function prepareForInstall(): void {
 // ---------- IPC ----------
 
 function registerIpc(): void {
-  ipcMain.handle('state:get', () => core.buildState());
-  ipcMain.handle('charts:get', () => core.chartsView());
-  ipcMain.handle('pnl:sale', (_e, raw) => core.addSaleRecord(raw));
-  ipcMain.handle('pnl:bootstrap', (_e, fromMs: unknown, watts: unknown) => core.backfillPnl(fromMs, watts));
+  ipcMain.handle('state:get', () => currentState());
+  ipcMain.handle('charts:get', async () => {
+    if (!remote) return core.chartsView();
+    try {
+      remoteCharts = await remote.client.charts();
+    } catch (e) {
+      log.warn(`remote charts: ${(e as Error).message}`);
+    }
+    return remoteCharts ?? { gpus: [], price: [], daily: [], pnl: [], symbol: currentState().profit.symbol };
+  });
+  ipcMain.handle('pnl:sale', routed((raw) => core.addSaleRecord(raw as never), '/v1/pnl/sale', (raw) => ({ sale: raw })));
+  ipcMain.handle('pnl:bootstrap', routed((fromMs, watts) => core.backfillPnl(fromMs, watts), '/v1/pnl/backfill', (fromMs, watts) => ({ fromMs, watts })));
   ipcMain.handle('pnl:export', async () => {
+    if (remote) return LOCAL_ONLY;
     const r = await dialog.showOpenDialog({ title: 'CSV 저장 폴더 선택', properties: ['openDirectory', 'createDirectory'] });
     if (r.canceled || !r.filePaths[0]) return '취소됨';
     core.exportPnlCsv(r.filePaths[0]);
     return null;
   });
   ipcMain.handle('pnl:openFolder', async () => {
-    await shell.openPath(core.pnlFolder());
+    if (!remote) await shell.openPath(core.pnlFolder());
   });
-  ipcMain.handle('safety:clearHold', (_e, id: unknown) => core.clearHold(String(id)));
-  ipcMain.handle('miner:start', () => core.startMining(dialogConfirm));
-  ipcMain.handle('miner:stop', () => core.stopMining(dialogConfirm));
-  ipcMain.handle('miner:importTask', () => core.importMinerTask());
-  ipcMain.handle('settings:save', (_e, patch: Partial<Settings>) => core.saveSettingsPatch(patch));
+  ipcMain.handle('safety:clearHold', routed((id) => core.clearHold(String(id)), '/v1/holds/clear', (id) => ({ id: String(id) })));
+  ipcMain.handle('miner:start', routed(() => core.startMining(dialogConfirm), '/v1/miner/start', () => ({})));
+  ipcMain.handle('miner:stop', routed(() => core.stopMining(dialogConfirm), '/v1/miner/stop', () => ({})));
+  ipcMain.handle('miner:importTask', () => (remote ? LOCAL_ONLY : core.importMinerTask()));
+  ipcMain.handle('settings:save', routed((patch) => core.saveSettingsPatch(patch as Partial<Settings>), '/v1/settings', (patch) => ({ patch })));
   ipcMain.handle('setup:importBat', async () => {
+    if (remote) return LOCAL_ONLY;
     const r = await dialog.showOpenDialog({ title: '기존 채굴기 실행 bat 선택', properties: ['openFile'], filters: [{ name: 'Batch', extensions: ['bat', 'cmd'] }] });
     if (r.canceled || !r.filePaths[0]) return '취소됨';
     return core.importBatText(fs.readFileSync(r.filePaths[0], 'utf8'));
@@ -283,8 +437,11 @@ function registerIpc(): void {
   ipcMain.handle('update:download', () => updater?.download());
   ipcMain.handle('update:dismiss', () => updater?.dismiss());
   ipcMain.handle('update:install', () => installUpdate());
-  ipcMain.handle('power:register', () => core.registerPowerLimits());
-  ipcMain.handle('power:apply', () => core.applyPowerLimits());
+  ipcMain.handle('power:register', () => (remote ? LOCAL_ONLY : core.registerPowerLimits()));
+  ipcMain.handle('power:apply', () => (remote ? LOCAL_ONLY : core.applyPowerLimits()));
+  ipcMain.handle('remote:get', () => remoteSettingsView());
+  ipcMain.handle('remote:connect', (_e, url: unknown, read: unknown, write: unknown) => connectRemote(url, read, write));
+  ipcMain.handle('remote:disconnect', () => disconnectRemote());
 }
 
 function applyLoginItem(s: Settings): void {
@@ -327,6 +484,7 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     applyLoginItem(core.currentSettings());
+    loadRemote();
     tray = new Tray(nativeImage.createFromPath(iconPath()).resize({ width: 16, height: 16 }));
     tray.on('click', showWindow);
     tray.on('double-click', showWindow);

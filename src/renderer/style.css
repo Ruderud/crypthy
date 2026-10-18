@@ -87,6 +87,8 @@ label.check { display: flex; flex-direction: row; align-items: center; gap: 6px;
 .badge { border: 1px solid var(--line); border-radius: 3px; padding: 0 7px; font-size: 11px; color: var(--muted); }
 .badge.ok { color: var(--up); border-color: var(--up); }
 .badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.info { color: var(--info); border-color: var(--info); }
+.badge.crit { color: var(--down); border-color: var(--down); }
 .banner { margin-top: 8px; padding: 6px 10px; border-radius: 4px; background: color-mix(in srgb, var(--down) 12%, transparent); color: var(--down); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
 .table { width: 100%; border-collapse: collapse; }

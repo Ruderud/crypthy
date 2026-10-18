@@ -289,9 +289,32 @@ export interface ChartsView {
   symbol: string;
 }
 
+/** 원격 호스트(헤드리스 Crypthy)에 붙어 있을 때 */
+export interface RemoteView {
+  url: string;
+  /** 쓰기 토큰이 있어 원격으로 조작할 수 있는지 */
+  write: boolean;
+  /** 마지막으로 상태를 받은 시각 (못 받았으면 null) */
+  at: number | null;
+  error: string | null;
+  /** 원격 호스트의 Crypthy 버전 */
+  version: string | null;
+}
+
+export interface RemoteSettingsView {
+  url: string;
+  enabled: boolean;
+  hasRead: boolean;
+  hasWrite: boolean;
+  /** 토큰을 OS 보안 저장소(safeStorage)로 암호화해 저장하는지 */
+  encrypted: boolean;
+}
+
 export interface AppState {
   ts: number;
   mock: boolean;
+  /** 원격 호스트 화면을 보고 있으면 그 정보, 이 PC 화면이면 null */
+  remote?: RemoteView | null;
   setup: SetupView;
   miner: MinerView;
   gpus: GpuView[];
@@ -329,6 +352,9 @@ export interface Api {
   bootstrapPnl(fromMs: number, watts: number): Promise<string | null>;
   exportPnl(): Promise<string | null>;
   openPnlFolder(): Promise<void>;
+  getRemote(): Promise<RemoteSettingsView>;
+  connectRemote(url: string, readToken: string, writeToken: string): Promise<string | null>;
+  disconnectRemote(): Promise<void>;
   startMining(): Promise<string | null>;
   stopMining(): Promise<string | null>;
   importMinerTask(): Promise<string | null>;

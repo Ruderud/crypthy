@@ -262,6 +262,27 @@ function renderControl(m: AppState['miner']) {
           : c.blocker ?? '';
 }
 
+/** 원격 호스트 화면을 보고 있으면 머리말에 표시 (연결이 끊기면 경고 색) */
+function renderRemote(st: AppState) {
+  const r = st.remote;
+  const badge = $('remoteBadge');
+  badge.hidden = !r;
+  if (!r) return;
+  const host = r.url.replace(/^https?:\/\//, '');
+  badge.textContent = `원격 ${host}${r.write ? '' : ' · 읽기 전용'}`;
+  badge.className = `badge ${r.error ? 'crit' : 'info'}`;
+  badge.title = r.error ? `연결 오류: ${r.error}` : `원격 Crypthy v${r.version ?? '?'} · ${r.at ? new Date(r.at).toLocaleTimeString('ko-KR') : '-'} 받음`;
+}
+
+async function refreshRemoteSettings() {
+  const v = await crypthy.getRemote();
+  const url = $<HTMLInputElement>('remoteUrl');
+  if (document.activeElement !== url && !url.value) url.value = v.url.replace(/^https?:\/\//, '');
+  $('remoteInfo').textContent = v.enabled
+    ? `연결됨: ${v.url} (${v.hasWrite ? '읽기 + 쓰기' : '읽기 전용'}). 토큰은 ${v.encrypted ? 'OS 보안 저장소로 암호화해' : '이 사용자만 읽을 수 있는 파일에'} 저장했습니다. 토큰 칸을 비워 두면 저장된 값을 씁니다.`
+    : '연결 안 함 — 이 PC 의 상태를 보여 줍니다. 호스트에서 crypthy-headless --print-tokens 로 토큰을 확인하세요.';
+}
+
 /** 설정의 켜기·끄기 방식에 맞는 입력칸만 보이기 */
 function showControlFields() {
   const mode = $<HTMLSelectElement>('controlMode').value;
@@ -277,6 +298,7 @@ function render(st: AppState) {
   const badge = $('minerBadge');
   badge.textContent = m.running ? `채굴기 실행 중${m.mode === 'external' ? '(외부 실행)' : ''}${m.processes.length ? ` · ${m.processes.join(', ')}` : ''}` : '채굴기 없음';
   renderControl(m);
+  renderRemote(st);
   badge.className = `badge ${m.running ? 'ok' : ''}`;
   $('updated').textContent = new Date(st.ts).toLocaleTimeString('ko-KR');
 
@@ -439,6 +461,17 @@ $('powerApply').addEventListener('click', async () => {
 });
 
 $('controlMode').addEventListener('change', showControlFields);
+$('remoteForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = (id: string) => $<HTMLInputElement>(id).value.trim();
+  void act('remoteMsg', () => crypthy.connectRemote(v('remoteUrl'), v('remoteRead'), v('remoteWrite')), '연결됨').then(() => {
+    $<HTMLInputElement>('remoteRead').value = '';
+    $<HTMLInputElement>('remoteWrite').value = '';
+    void refreshRemoteSettings();
+    void refreshCharts();
+  });
+});
+$('remoteOff').addEventListener('click', () => void crypthy.disconnectRemote().then(() => (refreshRemoteSettings(), refreshCharts(), refresh())));
 $('minerStart').addEventListener('click', () => void act('minerMsg', () => crypthy.startMining(), '켜기 요청함'));
 $('minerStop').addEventListener('click', () => void act('minerMsg', () => crypthy.stopMining(), '껐습니다'));
 $('importTask').addEventListener('click', () => void act('importTaskMsg', () => crypthy.importMinerTask(), '가져옴 (실행 파일·인자)'));
@@ -541,4 +574,5 @@ crypthy.onState((st) => {
 });
 void refresh();
 void refreshCharts();
+void refreshRemoteSettings();
 setInterval(() => void refreshCharts(), 60_000);

@@ -11,6 +11,7 @@
   <header>
     <h1>Crypthy</h1>
     <span id="mock" class="badge warn" hidden>MOCK</span>
+    <span id="remoteBadge" class="badge info" hidden></span>
     <span id="minerBadge" class="badge">-</span>
     <span id="updated" class="muted"></span>
     <span class="spacer"></span>
@@ -149,6 +150,17 @@
       </div>
       <p class="muted small" id="powerTask"></p>
       <pre id="powerLog" class="log"></pre>
+    </section>
+
+    <section class="card wide" id="remoteCard">
+      <h2>원격 호스트 연결 <span class="muted small">헤드리스 Crypthy(예: Ubuntu 서버)에 Tailscale 같은 사설망으로 붙어 같은 화면을 봅니다</span></h2>
+      <form id="remoteForm" class="grid">
+        <label>주소 <input id="remoteUrl" placeholder="100.x.y.z:47321" spellcheck="false" autocomplete="off" /></label>
+        <label>읽기 토큰 <input id="remoteRead" type="password" autocomplete="off" spellcheck="false" /></label>
+        <label>쓰기 토큰 (선택 · 원격 조작) <input id="remoteWrite" type="password" autocomplete="off" spellcheck="false" /></label>
+        <div class="row"><button type="submit" class="primary">연결</button><button type="button" id="remoteOff">이 PC 화면으로</button><span id="remoteMsg" class="msg"></span></div>
+      </form>
+      <p class="muted small" id="remoteInfo"></p>
     </section>
 
     <section class="card wide">
