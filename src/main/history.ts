@@ -1,7 +1,7 @@
 // 차트용 로컬 시계열: GPU별 해시레이트·온도·전력을 1분 단위 평균으로 모아 보관한다.
 // 2초 샘플을 그대로 쌓지 않고 1분 버킷으로 줄이며, GPU당 최대 MAX_POINTS(3일) 만 남긴다.
 import type { ChartPoint, DailyPoint, GpuId, ProfitConfig } from '../shared/types';
-import { dateKey, type Ledger } from './profit';
+import { dateKey, MIN_MATCHED_MS, type Ledger } from './profit';
 
 export const BUCKET_MS = 60_000;
 export const MAX_POINTS = 3 * 24 * 60;
@@ -91,7 +91,11 @@ export function dailyClose(prices: { t: number; usd: number }[]): Record<string,
   return out;
 }
 
-/** 장부의 일별 채굴량·전력량 → 일별 순수익(원). 그날 시세가 없으면 현재 시세 */
+/**
+ * 장부의 일별 값 → 차트용 일별 점.
+ * coin = 그날 확정 채굴량(업데이트 이전 몫 포함), netKrw = 그날 짝지은 구간(3시간 이상)의 순수익.
+ * 짝지은 구간이 짧거나 시세가 없으면 null (음수 착시 방지). 그날 시세가 없으면 현재 시세를 쓴다.
+ */
 export function dailySeries(l: Ledger, closeByDay: Record<string, number>, fallbackUsd: number | null, cfg: Pick<ProfitConfig, 'krwPerKwh' | 'krwPerUsd'>): DailyPoint[] {
   return Object.keys(l.days)
     .sort()
@@ -100,9 +104,9 @@ export function dailySeries(l: Ledger, closeByDay: Record<string, number>, fallb
       const usd = closeByDay[day] ?? fallbackUsd;
       return {
         day,
-        coin: Math.round(d.prl * 1e6) / 1e6,
+        coin: Math.round((d.prl + (d.legacyPrl ?? 0)) * 1e6) / 1e6,
         kwh: Math.round(d.kwh * 1000) / 1000,
-        netKrw: usd === null ? null : Math.round(d.prl * usd * cfg.krwPerUsd - d.kwh * cfg.krwPerKwh),
+        netKrw: usd === null || d.matchedMs < MIN_MATCHED_MS ? null : Math.round(d.prl * usd * cfg.krwPerUsd - d.matchedKwh * cfg.krwPerKwh),
       };
     });
 }

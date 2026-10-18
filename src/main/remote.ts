@@ -46,6 +46,11 @@ export function parseKryptexPool(json: unknown): PoolStats | null {
   return { netHashrate, blockReward, blockTimeS, fee };
 }
 
+/** 풀 통계만 (지갑 없이도 실시간 추정에 필요) */
+export async function fetchKryptexPool(ticker: string): Promise<PoolStats | null> {
+  return parseKryptexPool(await getJson(`https://pool.kryptex.com/${encodeURIComponent(ticker)}/api/v1/pool/stats`));
+}
+
 export async function fetchKryptex(ticker: string, wallet: string) {
   const base = `https://pool.kryptex.com/${encodeURIComponent(ticker)}/api/v1`;
   const addr = encodeURIComponent(walletAddress(wallet));

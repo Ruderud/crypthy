@@ -79,6 +79,46 @@ function renderHub(st: AppState) {
     .join('')}<tr><td colspan="6" class="small muted">풀 안내: ${h.poolSources.map((u) => link(u, u.replace(/^https:\/\//, ''))).join(' · ')}</td></tr>`;
 }
 
+const signCls = (v: number | null) => (v === null ? '' : v < 0 ? 'crit' : 'good');
+
+function periodNet(v: AppState['profit']['today']): string {
+  if (v.status === 'noPrice') return '<span class="muted">시세 없음</span>';
+  if (v.status === 'collecting') return `<span class="muted">집계 중 (확정 구간 ${n(v.matchedHours, 1)}h / 3h)</span>`;
+  return `<span class="${signCls(v.confirmedNetKrw)}">${krw(v.confirmedNetKrw)}</span> <span class="muted small">${n(v.matchedHours, 1)}h 구간</span>`;
+}
+
+function renderProfit(p: AppState['profit']): string {
+  const sym = esc(p.symbol);
+  const price = p.price
+    ? `$${esc(p.price.usd)} <span class="${(p.change24hPct ?? 0) < 0 ? 'crit' : 'good'} small">${n(p.change24hPct, 1, '%')} 24h</span>` +
+      `<div class="small ${p.price.stale ? 'warn' : 'muted'}">${p.price.stale ? '지난 시세 · ' : ''}${new Date(p.price.at).toLocaleTimeString('ko-KR')} 기준</div>`
+    : '<span class="muted">시세 없음</span>';
+  const live = p.liveKrwPerH === null
+    ? `<span class="muted">${p.liveCoinPerH === null ? '해시레이트·풀 통계 필요' : '시세 없음'}</span>`
+    : `<span class="${signCls(p.liveKrwPerH)} big-num">${krw(p.liveKrwPerH)}/h</span> <span class="muted small">${n(p.liveCoinPerH, 3)} ${sym}/h</span>`;
+  const est = (v: AppState['profit']['today']) =>
+    v.estNetKrw === null ? '<span class="muted">-</span>' : `<span class="${signCls(v.estNetKrw)}">${krw(v.estNetKrw)}</span> <span class="muted small">${n(v.estCoin, 3)} ${sym} · ${n(v.kwh, 2)} kWh</span>`;
+  const rows = [
+    stat('실시간 추정 순수익', live),
+    stat(`${p.symbol} 시세`, price),
+    stat('오늘 추정 순수익', est(p.today)),
+    stat('이번 달 추정 순수익', est(p.month)),
+  ];
+  if (p.supported) {
+    rows.push(
+      stat('풀 누적 채굴량', `${n(p.lifetimeCoin, 4)} ${sym}`),
+      stat('미지급 잔액 / 최근 지급', `${n(p.balanceCoin, 3)} / ${n(p.paidCoin, 3)} ${sym}`),
+      stat('오늘 확정 채굴량', `${n(p.today.confirmedCoin, 4)} ${sym}`),
+      stat('오늘 확정 순수익', periodNet(p.today)),
+      stat('이번 달 확정 채굴량', `${n(p.month.confirmedCoin, 4)} ${sym}`),
+      stat('이번 달 확정 순수익', periodNet(p.month)),
+    );
+  } else {
+    rows.push(stat('풀 확정 채굴량', '지갑과 Kryptex 풀(*.kryptex.network)을 입력하면 표시합니다'));
+  }
+  return rows.join('');
+}
+
 function renderUpdate(st: AppState) {
   const u = st.update;
   const status: Record<typeof u.status, string> = {
@@ -191,19 +231,8 @@ function render(st: AppState) {
     : '<li class="muted">알림 없음</li>';
 
   const p = st.profit;
-  const sym = esc(p.symbol);
-  $('profitSub').textContent = `${p.symbol} · 풀 공개 API · CoinGecko · 실측 GPU 전력`;
-  $('profit').innerHTML = p.supported
-    ? [
-        stat(`${p.symbol} 시세`, p.prlUsd === null ? '-' : `$${p.prlUsd} <span class="${(p.prlChange24hPct ?? 0) < 0 ? 'crit' : 'good'} small">${n(p.prlChange24hPct, 1, '%')} 24h</span>`),
-        stat('미지급 잔액', `${n(p.balancePrl, 3)} ${sym}`),
-        stat('최근 지급 합(최근 페이지)', `${n(p.paidPrl, 3)} ${sym}`),
-        stat('오늘 채굴 / 전력', `${n(p.todayPrl, 3)} ${sym} / ${n(p.todayKwh, 2, ' kWh')}`),
-        stat('오늘 순수익', krw(p.todayNetKrw), (p.todayNetKrw ?? 0) < 0 ? 'crit' : 'good'),
-        stat('이번 달 채굴 / 전력', `${n(p.monthPrl, 3)} ${sym} / ${n(p.monthKwh, 1, ' kWh')}`),
-        stat('이번 달 순수익', krw(p.monthNetKrw), (p.monthNetKrw ?? 0) < 0 ? 'crit' : 'good'),
-      ].join('')
-    : stat('수익 조회', '지갑과 Kryptex 풀(*.kryptex.network)을 입력하면 표시합니다');
+  $('profitSub').textContent = `${p.symbol} · 추정 = 실측 해시레이트 × 풀 통계, 확정 = 풀 누적(잔액+지급)`;
+  $('profit').innerHTML = renderProfit(p);
   $('profitErr').textContent = p.error ?? '';
 
   const pr = st.settings.profit;

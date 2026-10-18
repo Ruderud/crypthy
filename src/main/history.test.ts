@@ -58,17 +58,19 @@ describe('price history', () => {
 });
 
 describe('dailySeries', () => {
-  it('uses that day close, falling back to the current price', () => {
-    const t1 = new Date(2026, 9, 16, 10).getTime();
+  it('uses the matched period with that day close; short or unpriced periods have no net', () => {
+    const H = 3_600_000;
+    const t1 = new Date(2026, 9, 16, 8).getTime();
     const t2 = new Date(2026, 9, 17, 10).getTime();
     let l = recordEarnings(emptyLedger(), 0, [], t1);
-    l = recordEarnings(l, 2, [], t1 + 1000);
-    l = recordEnergy(l, 1000, 3_600_000, t1);
-    l = recordEarnings(l, 3, [], t2);
+    for (let h = 0; h < 4; h++) l = recordEnergy(l, 1000, H, t1 + h * H); // 4시간, 4kWh
+    l = recordEarnings(l, 2, [], t1 + 4 * H); // 4시간 구간 → 확정
+    l = recordEnergy(l, 1000, H, t2);
+    l = recordEarnings(l, 3, [], t2 + H); // 1시간 구간 → 집계 중
     const cfg = { krwPerKwh: 350, krwPerUsd: 1340 };
     expect(dailySeries(l, { '2026-10-16': 1.5 }, 2, cfg)).toEqual([
-      { day: '2026-10-16', coin: 2, kwh: 1, netKrw: Math.round(2 * 1.5 * 1340 - 350) },
-      { day: '2026-10-17', coin: 1, kwh: 0, netKrw: Math.round(1 * 2 * 1340) },
+      { day: '2026-10-16', coin: 2, kwh: 4, netKrw: Math.round(2 * 1.5 * 1340 - 4 * 350) },
+      { day: '2026-10-17', coin: 1, kwh: 1, netKrw: null },
     ]);
     expect(dailySeries(l, {}, null, cfg)[0].netKrw).toBeNull();
   });

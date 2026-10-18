@@ -104,19 +104,38 @@ export interface CompareRow {
   rentalSource: 'manual' | 'vast' | null;
 }
 
+/** 기간(오늘·이번 달) 요약. confirmed = 풀 확정, est = 해시레이트 추정 */
+export interface PeriodView {
+  /** 풀 확정 채굴량 (업데이트 이전 장부 몫 포함) */
+  confirmedCoin: number;
+  /** 전력 구간을 짝지은 확정 채굴량·전력량·시간 */
+  matchedCoin: number;
+  matchedKwh: number;
+  matchedHours: number;
+  /** 짝지은 구간의 순수익. 구간이 짧거나(집계 중) 시세가 없으면 null */
+  confirmedNetKrw: number | null;
+  estCoin: number;
+  kwh: number;
+  estNetKrw: number | null;
+  status: 'ok' | 'collecting' | 'noPrice';
+}
+
 export interface ProfitView {
   supported: boolean;
   symbol: string;
-  prlUsd: number | null;
-  prlChange24hPct: number | null;
-  balancePrl: number | null;
-  paidPrl: number | null;
-  todayPrl: number;
-  monthPrl: number;
-  todayKwh: number;
-  monthKwh: number;
-  todayNetKrw: number | null;
-  monthNetKrw: number | null;
+  /** 시세. 조회 실패 시 마지막 정상 시세(at 시각, stale=true). 한 번도 못 받았으면 null */
+  price: { usd: number; at: number; stale: boolean } | null;
+  change24hPct: number | null;
+  balanceCoin: number | null;
+  /** 최근 지급 내역 페이지 합 */
+  paidCoin: number | null;
+  /** 풀 누적 채굴량 (미지급 잔액 + 지금까지 본 지급). 앱을 켜기 전 채굴분도 포함 */
+  lifetimeCoin: number | null;
+  /** 실시간 추정: 실측 해시레이트 × 풀 통계 기대 채굴량 × 시세 − 실측 GPU 전력비 */
+  liveCoinPerH: number | null;
+  liveKrwPerH: number | null;
+  today: PeriodView;
+  month: PeriodView;
   compare: CompareRow[];
   updatedAt: number | null;
   error: string | null;

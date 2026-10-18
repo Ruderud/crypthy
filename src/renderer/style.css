@@ -130,6 +130,7 @@ footer a { color: inherit; }
 .update-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .update-notes { margin: 2px 0 0; white-space: pre-wrap; font: 12px/1.45 var(--font); color: var(--text); max-height: 120px; overflow: auto; }
 button:disabled { opacity: 0.5; cursor: default; }
+.big-num { font-size: 16px; font-weight: 700; }
 
 @media (max-width: 900px) {
   main, .chart-row { grid-template-columns: 1fr; }

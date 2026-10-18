@@ -9,8 +9,8 @@ import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardwa
 import { MINER_APIS, type MinerStats } from './minerApi';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
-  emptyLedger, miningNetKrwPerHour, netKrw, recordEarnings, recordEnergy, rentalNetKrwPerHour,
-  reviewAlerts, summarize, type Ledger, type Payout, type PoolStats,
+  emptyLedger, migrateLedger, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
+  rentalNetKrwPerHour, reviewAlerts, summarize, type Ledger, type Payout, type PoolStats,
 } from './profit';
 import {
   buildLimitsJson, isPowerTaskRegistered, readPowerLog, registerPowerTask, runPowerTask, validateWatts,
@@ -18,7 +18,7 @@ import {
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
 import { setLinuxAutostart } from './autostart';
-import { fetchCoingecko, fetchKryptex, fetchMarketChart, fetchVastMedian } from './remote';
+import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastMedian } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
 import { startStatusServer } from './statusApi';
@@ -77,6 +77,8 @@ let powerRegistered = false;
 let powerLog: string | null = null;
 const remote = {
   prlUsd: null as number | null,
+  /** 시세를 받은 시각 (조회 실패 시 마지막 정상 시세를 계속 쓰고 이 시각을 보여 준다) */
+  priceAt: null as number | null,
   change24h: null as number | null,
   balance: null as number | null,
   payouts: [] as Payout[],
@@ -170,18 +172,26 @@ function compareRows(gpus: GpuView[]): CompareRow[] {
 
 function profitView(gpus: GpuView[]): ProfitView {
   const p = settings.profit;
-  const sum = summarize(ledger, Date.now());
+  const now = Date.now();
   const usd = remote.prlUsd;
+  const sum = summarize(ledger, now, usd, p);
+  const supported = !!kryptexPool();
+  const hash = lastStats?.totalHashrate ?? null;
+  const watts = gpus.reduce((s, g) => s + (g.present ? (g.powerW ?? 0) : 0), 0);
+  const liveCoinPerH = hash && remote.pool ? prlPerHour(hash, remote.pool) : null;
   return {
-    supported: !!kryptexPool(),
+    supported,
     symbol: coin().symbol,
-    prlUsd: usd,
-    prlChange24hPct: remote.change24h,
-    balancePrl: remote.balance,
-    paidPrl: remote.payouts.length ? remote.payouts.reduce((s, x) => s + x.amount, 0) : null,
-    ...sum,
-    todayNetKrw: usd === null ? null : netKrw(sum.todayPrl, sum.todayKwh, usd, p),
-    monthNetKrw: usd === null ? null : netKrw(sum.monthPrl, sum.monthKwh, usd, p),
+    price: usd === null || remote.priceAt === null ? null : { usd, at: remote.priceAt, stale: now - remote.priceAt > PRICE_STALE_MS },
+    change24hPct: remote.change24h,
+    balanceCoin: remote.balance,
+    paidCoin: remote.payouts.length ? remote.payouts.reduce((s, x) => s + x.amount, 0) : null,
+    lifetimeCoin: supported ? ledger.lastTotal : null,
+    liveCoinPerH,
+    // 전체 GPU 전력비를 빼서 보수적으로 (채굴 안 하는 GPU 전력도 비용)
+    liveKrwPerH: liveCoinPerH !== null && usd !== null ? liveCoinPerH * usd * p.krwPerUsd - (watts / 1000) * p.krwPerKwh : null,
+    today: sum.today,
+    month: sum.month,
     compare: compareRows(gpus),
     updatedAt: remote.updatedAt,
     error: remote.error,
@@ -354,7 +364,10 @@ async function poll(): Promise<void> {
 
   if (lastPollAt) {
     const watts = lastNv.reduce((s, g) => s + (g.powerW ?? 0), 0);
-    ledger = recordEnergy(ledger, watts, Math.min(now - lastPollAt, 10_000), now);
+    const dt = Math.min(now - lastPollAt, 10_000);
+    // 같은 시간의 해시레이트 기반 추정 채굴량 (풀 통계·채굴기 API 가 있을 때만)
+    const est = lastStats?.totalHashrate && remote.pool ? (prlPerHour(lastStats.totalHashrate, remote.pool) * dt) / 3_600_000 : 0;
+    ledger = recordEnergy(ledger, watts, dt, now, est);
   }
   lastPollAt = now;
 
@@ -382,12 +395,17 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
     fetchCoingecko(c.coingeckoId).then((r) => {
       if (!r) throw new Error('CoinGecko 응답 형식');
       remote.prlUsd = r.usd;
+      remote.priceAt = now;
       remote.change24h = r.change24h;
+      ledger = recordPrice(ledger, r.usd, now);
       if (settings.profit.baselinePrlUsd <= 0) {
         settings.profit.baselinePrlUsd = r.usd;
         saveSettings();
       }
     }).catch((e) => errors.push(`시세: ${(e as Error).message}`)),
+    kp && !settings.wallet
+      ? fetchKryptexPool(kp.ticker).then((pool) => { remote.pool = pool ?? remote.pool; }).catch((e) => errors.push(`풀: ${(e as Error).message}`))
+      : null,
     kp && settings.wallet
       ? fetchKryptex(kp.ticker, settings.wallet).then((k) => {
           remote.pool = k.pool ?? remote.pool;
@@ -524,7 +542,7 @@ function applyPatch(p: Partial<Settings>): string | null {
     // 코인이 바뀌면 시세 기준가·장부 기준점을 새로 잡는다
     settings.profit.baselinePrlUsd = 0;
     ledger = emptyLedger();
-    remote.prlUsd = remote.balance = null;
+    remote.prlUsd = remote.balance = remote.priceAt = null;
     remote.payouts = [];
     priceSeries = [];
   }
@@ -659,12 +677,19 @@ function loadState(): void {
   // 0.1.x 의 SRBMiner API 포트(apiPort)를 이어받는다
   if (raw && !raw.minerApi && Number.isInteger(raw.apiPort)) settings.minerApi.port = raw.apiPort as number;
   if (!catalog.coins.some((c) => c.id === settings.coin)) settings.coin = catalog.coins[0].id;
-  ledger = { ...emptyLedger(), ...readJson<Partial<Ledger>>(file('ledger.json'), {}) };
+  // 0.3.1 이하 장부는 v2 로 옮긴다 (음수를 만들던 일별 값은 순수익 계산에서 뺌, 풀 누적 기준점은 유지)
+  ledger = migrateLedger(readJson<unknown>(file('ledger.json'), null));
+  if (ledger.lastPrice) {
+    remote.prlUsd = ledger.lastPrice.usd;
+    remote.priceAt = ledger.lastPrice.at;
+  }
   history = loadHistory(readJson<unknown>(file('history.json'), null));
   if (MOCK && Object.keys(history.series).length === 0) {
     const seed = mockSeed(Date.now());
     for (const g of seed.gpus) history.series[g.id] = g.points;
-    ledger.days = { ...seed.days, ...ledger.days };
+    for (const [k, d] of Object.entries(seed.days)) {
+      ledger.days[k] ??= { prl: d.prl, kwh: d.kwh, matchedKwh: d.kwh * 0.97, matchedMs: 23 * 3_600_000, estPrl: d.prl * 0.95 };
+    }
   }
   // 0.1.x 의 안전 제외(excluded)는 보류(holds)로 이어받는다
   const saved = readJson<{ holds?: Record<string, string>; excluded?: Record<string, string> }>(file('runtime.json'), {});

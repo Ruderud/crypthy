@@ -1,4 +1,4 @@
-import type { Alert, ProfitConfig } from '../shared/types';
+import type { Alert, PeriodView, ProfitConfig } from '../shared/types';
 
 export interface PoolStats {
   /** 네트워크 해시레이트 (H/s) */
@@ -72,20 +72,42 @@ export function reviewAlerts(
   return alerts;
 }
 
-// ---- 일/월 누적 장부 (로컬 날짜 기준) ----
+// ---- 일/월 누적 장부 (로컬 날짜 기준, v2) ----
+//
+// 순수익이 음수로 보이던 원인: 풀 확정 채굴량은 잔액이 블록·정산 단위로 띄엄띄엄 늘 때만 기록되는데,
+// 전력량은 앱을 켠 순간부터 초 단위로 쌓였다. 그래서 앱 시작 직후·자정 직후에는 전력만 먼저 잡혔다.
+// v2 는 두 지표를 나눈다.
+//  - 확정(confirmed): 풀 누적(잔액 + 지급)이 늘어난 만큼의 채굴량과, 그 증가가 일어나기까지 쓴 전력(matched)을 짝지어 기록
+//  - 추정(estimate): 실측 해시레이트 × 풀 통계 기대 채굴량을, 전력과 같은 시간 동안 누적
 
 export interface DayEntry {
+  /** 풀 확정 채굴량 (기준점 이후 증가분) */
   prl: number;
+  /** 이 PC GPU 전력량 (전체) */
   kwh: number;
+  /** prl 증가와 같은 구간의 전력량·시간 */
+  matchedKwh: number;
+  matchedMs: number;
+  /** 해시레이트 기반 추정 채굴량 (kwh 와 같은 시간에 누적) */
+  estPrl: number;
+  /** v2 이전 장부에서 옮긴 값. 전력 구간을 맞출 수 없어 순수익 계산에는 쓰지 않는다 */
+  legacyPrl?: number;
+  legacyKwh?: number;
 }
 
 export interface Ledger {
+  version: 2;
   /** 마지막으로 기록한 (미지급 잔액 + 지금까지 본 지급 합계). 줄어들어도 내리지 않는다(high-water mark) */
   lastTotal: number | null;
   /** 지금까지 본 지급액 누적 합계 */
   paidTotal: number;
   seenPayouts: string[];
   days: Record<string, DayEntry>;
+  /** 마지막 확정 증가 이후 쓴 전력 (다음 증가 때 그 증가분과 짝지음) */
+  pendingKwh: number;
+  pendingMs: number;
+  /** 마지막으로 받은 정상 시세 (시세 조회 실패 시 시각과 함께 사용) */
+  lastPrice: { usd: number; at: number } | null;
 }
 
 export interface Payout {
@@ -95,8 +117,47 @@ export interface Payout {
 
 const KEEP_DAYS = 62;
 const KEEP_PAYOUT_KEYS = 300;
+/** 확정 순수익은 짝지은 구간이 이 시간 이상일 때만 보여 준다 (짧은 구간은 정산 간격 때문에 들쭉날쭉) */
+export const MIN_MATCHED_MS = 3 * 3_600_000;
+/** 이 시간보다 오래된 시세는 "지난 시세" 로 표시 */
+export const PRICE_STALE_MS = 30 * 60_000;
 
-export const emptyLedger = (): Ledger => ({ lastTotal: null, paidTotal: 0, seenPayouts: [], days: {} });
+export const emptyLedger = (): Ledger => ({
+  version: 2, lastTotal: null, paidTotal: 0, seenPayouts: [], days: {}, pendingKwh: 0, pendingMs: 0, lastPrice: null,
+});
+
+const emptyDay = (): DayEntry => ({ prl: 0, kwh: 0, matchedKwh: 0, matchedMs: 0, estPrl: 0 });
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/**
+ * 저장된 장부를 v2 로 읽는다. v1(0.3.1 이하)의 일별 prl·kwh 는 구간이 맞지 않아 음수를 만들던 값이라
+ * legacyPrl·legacyKwh 로 옮기고 순수익 계산에서 뺀다. 풀 누적 기준점(lastTotal·paidTotal)은 유지한다.
+ */
+export function migrateLedger(raw: unknown): Ledger {
+  const l = emptyLedger();
+  if (!raw || typeof raw !== 'object') return l;
+  const r = raw as Partial<Ledger> & { version?: number };
+  l.lastTotal = typeof r.lastTotal === 'number' && Number.isFinite(r.lastTotal) ? r.lastTotal : null;
+  l.paidTotal = num(r.paidTotal);
+  l.seenPayouts = Array.isArray(r.seenPayouts) ? r.seenPayouts.filter((k) => typeof k === 'string') : [];
+  if (r.lastPrice && Number.isFinite(r.lastPrice.usd) && Number.isFinite(r.lastPrice.at)) l.lastPrice = { usd: r.lastPrice.usd, at: r.lastPrice.at };
+  const days = r.days && typeof r.days === 'object' ? r.days : {};
+  for (const [k, v] of Object.entries(days)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !v || typeof v !== 'object') continue;
+    const d = v as Partial<DayEntry>;
+    if (r.version === 2) {
+      l.days[k] = { prl: num(d.prl), kwh: num(d.kwh), matchedKwh: num(d.matchedKwh), matchedMs: num(d.matchedMs), estPrl: num(d.estPrl) };
+      if (d.legacyPrl || d.legacyKwh) Object.assign(l.days[k], { legacyPrl: num(d.legacyPrl), legacyKwh: num(d.legacyKwh) });
+    } else {
+      l.days[k] = { ...emptyDay(), legacyPrl: num(d.prl), legacyKwh: num(d.kwh) };
+    }
+  }
+  if (r.version === 2) {
+    l.pendingKwh = num(r.pendingKwh);
+    l.pendingMs = num(r.pendingMs);
+  }
+  return l;
+}
 
 export function dateKey(ms: number): string {
   const d = new Date(ms);
@@ -106,7 +167,7 @@ export function dateKey(ms: number): string {
 
 function day(l: Ledger, now: number): DayEntry {
   const k = dateKey(now);
-  l.days[k] ??= { prl: 0, kwh: 0 };
+  l.days[k] ??= emptyDay();
   return l.days[k];
 }
 
@@ -118,9 +179,10 @@ function prune(l: Ledger): void {
 
 /**
  * 풀 잔액·지급 내역 조회 1회분을 장부에 반영한다(새 장부 반환).
- * total = 미지급 잔액 + 지금까지 본 지급 합계. total 이 이전 최고치보다 커진 만큼만 채굴량으로 기록한다.
+ * total = 미지급 잔액 + 지금까지 본 지급 합계. total 이 이전 최고치보다 커진 만큼만 확정 채굴량으로 기록하고,
+ * 그동안 쌓인 대기 전력(pending)을 같은 날짜에 짝지어 옮긴다.
  * (지급으로 잔액이 먼저 줄고 지급 내역은 나중에 보이는 경우에도 이중 계상하지 않음)
- * 첫 조회는 기준점만 잡는다.
+ * 첫 조회는 기준점만 잡고, 그 이전 전력은 버린다(짝지을 채굴량이 없으므로).
  */
 export function recordEarnings(prev: Ledger, balance: number, payouts: Payout[], now: number): Ledger {
   const l: Ledger = structuredClone(prev);
@@ -129,36 +191,73 @@ export function recordEarnings(prev: Ledger, balance: number, payouts: Payout[],
   l.paidTotal += fresh.reduce((s, p) => s + p.amount, 0);
   l.seenPayouts.push(...fresh.map((p) => p.key));
   const total = balance + l.paidTotal;
-  if (l.lastTotal === null) l.lastTotal = total;
-  else if (total > l.lastTotal) {
-    day(l, now).prl += total - l.lastTotal;
+  if (l.lastTotal === null) {
+    l.lastTotal = total;
+    l.pendingKwh = 0;
+    l.pendingMs = 0;
+  } else if (total > l.lastTotal) {
+    const d = day(l, now);
+    d.prl += total - l.lastTotal;
+    d.matchedKwh += l.pendingKwh;
+    d.matchedMs += l.pendingMs;
+    l.pendingKwh = 0;
+    l.pendingMs = 0;
     l.lastTotal = total;
   }
   prune(l);
   return l;
 }
 
-/** 실측 GPU 전력(W)을 dtMs 동안 사용한 것으로 누적 */
-export function recordEnergy(prev: Ledger, watts: number, dtMs: number, now: number): Ledger {
+/** 실측 GPU 전력(W)을 dtMs 동안 사용한 것으로 누적. estPrl 은 같은 시간의 해시레이트 기반 추정 채굴량 */
+export function recordEnergy(prev: Ledger, watts: number, dtMs: number, now: number, estPrl = 0): Ledger {
   if (!(watts > 0) || !(dtMs > 0)) return prev;
   const l: Ledger = structuredClone(prev);
-  day(l, now).kwh += (watts * dtMs) / 3_600_000 / 1000;
+  const kwh = (watts * dtMs) / 3_600_000 / 1000;
+  const d = day(l, now);
+  d.kwh += kwh;
+  if (estPrl > 0 && Number.isFinite(estPrl)) d.estPrl += estPrl;
+  // 확정 집계가 시작된 뒤(기준점이 있을 때)만 짝지을 전력으로 모은다
+  if (l.lastTotal !== null) {
+    l.pendingKwh += kwh;
+    l.pendingMs += dtMs;
+  }
   prune(l);
   return l;
 }
 
-export function summarize(l: Ledger, now: number): { todayPrl: number; monthPrl: number; todayKwh: number; monthKwh: number } {
+export function recordPrice(prev: Ledger, usd: number, now: number): Ledger {
+  return Number.isFinite(usd) && usd > 0 ? { ...prev, lastPrice: { usd, at: now } } : prev;
+}
+
+export type PeriodSummary = PeriodView;
+
+function summarizeDays(entries: DayEntry[], usd: number | null, cfg: Pick<ProfitConfig, 'krwPerKwh' | 'krwPerUsd'>): PeriodSummary {
+  const sum = (f: (d: DayEntry) => number) => entries.reduce((s, d) => s + f(d), 0);
+  const matchedCoin = sum((d) => d.prl);
+  const matchedKwh = sum((d) => d.matchedKwh);
+  const matchedMs = sum((d) => d.matchedMs);
+  const estCoin = sum((d) => d.estPrl);
+  const kwh = sum((d) => d.kwh);
+  const status = usd === null ? 'noPrice' : matchedMs < MIN_MATCHED_MS ? 'collecting' : 'ok';
+  return {
+    confirmedCoin: matchedCoin + sum((d) => d.legacyPrl ?? 0),
+    matchedCoin,
+    matchedKwh,
+    matchedHours: matchedMs / 3_600_000,
+    confirmedNetKrw: status === 'ok' ? netKrw(matchedCoin, matchedKwh, usd as number, cfg) : null,
+    estCoin,
+    kwh,
+    // 해시레이트 추정이 없으면(통계 API·풀 통계 없음) 전력비만으로 음수를 만들지 않는다
+    estNetKrw: usd !== null && estCoin > 0 ? netKrw(estCoin, kwh, usd, cfg) : null,
+    status,
+  };
+}
+
+export function summarize(l: Ledger, now: number, usd: number | null, cfg: Pick<ProfitConfig, 'krwPerKwh' | 'krwPerUsd'>): { today: PeriodSummary; month: PeriodSummary } {
   const today = dateKey(now);
   const month = today.slice(0, 7);
-  let monthPrl = 0;
-  let monthKwh = 0;
-  for (const [k, v] of Object.entries(l.days)) {
-    if (k.startsWith(month)) {
-      monthPrl += v.prl;
-      monthKwh += v.kwh;
-    }
-  }
-  return { todayPrl: l.days[today]?.prl ?? 0, monthPrl, todayKwh: l.days[today]?.kwh ?? 0, monthKwh };
+  const monthDays = Object.entries(l.days).filter(([k]) => k.startsWith(month)).map(([, v]) => v);
+  return { today: summarizeDays(l.days[today] ? [l.days[today]] : [], usd, cfg), month: summarizeDays(monthDays, usd, cfg) };
 }
 
 export function netKrw(prl: number, kwh: number, prlUsd: number, cfg: Pick<ProfitConfig, 'krwPerKwh' | 'krwPerUsd'>): number {
