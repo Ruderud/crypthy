@@ -107,8 +107,8 @@ function renderProfit(p: AppState['profit'], pnl: AppState['pnl']): string {
     rows.push(
       stat('오늘 수익', periodProfit(pnl.today, sym)),
       stat('이번 달 수익', periodProfit(pnl.month, sym)),
-      stat('풀 누적 채굴량', `${n(p.lifetimeCoin, 4)} ${sym}`),
-      stat('미지급 잔액 / 최근 지급', `${n(p.balanceCoin, 3)} / ${n(p.paidCoin, 3)} ${sym}`),
+      stat('풀 누적 채굴량 (지급 + 풀 잔고)', `${n(p.lifetimeCoin, 4)} ${sym}`),
+      stat('지급 완료 / 지급 중 / 풀 잔고(미지급)', `${n(p.paidCoin === null ? null : p.paidCoin - p.payingCoin, 4)} / ${n(p.payingCoin, 4)} / ${n(p.balanceCoin, 4)} ${sym}`),
     );
   } else {
     rows.push(
@@ -141,7 +141,7 @@ function renderPnl(st: AppState) {
   $('pnlSub').textContent = '매출 = 채굴 시점 시세, 미실현 = 보유량 × 현재가, 총 PnL = 실현 + 미실현 − 전력비';
   $('pnlSummary').innerHTML = [
     stat('총 PnL', p.totalPnlKrw === null ? '<span class="muted">시세 없음</span>' : `<span class="${signCls(p.totalPnlKrw)} big-num">${krw(p.totalPnlKrw)}</span>${est(p.estimated)}`),
-    stat('누적 채굴량', `${n(p.all.mined, 4)} ${sym}`),
+    stat('누적 채굴량', `${n(p.all.confirmed + p.all.backfill, 4)} ${sym}${p.all.pending > 0 ? ` <span class="muted small" title="풀에 아직 반영되지 않은 실시간 추정분">+ 추정 ${n(p.all.pending, 4)}</span>` : ''}`),
     stat('보유 / 매도', `${n(p.holdings, 4)} / ${n(p.soldQty, 4)} ${sym}`),
     stat('실현 손익', krw(p.realizedKrw)),
     stat('미실현 손익', p.unrealizedKrw === null ? '<span class="muted">시세 없음</span>' : krw(p.unrealizedKrw)),

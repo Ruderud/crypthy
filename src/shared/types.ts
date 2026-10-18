@@ -261,9 +261,11 @@ export interface ProfitView {
   price: { usd: number; at: number; stale: boolean } | null;
   change24hPct: number | null;
   balanceCoin: number | null;
-  /** 최근 지급 내역 페이지 합 */
+  /** 지금까지 본 지급 합계 (지급 중 포함) */
   paidCoin: number | null;
-  /** 풀 누적 채굴량 (미지급 잔액 + 지금까지 본 지급). 앱을 켜기 전 채굴분도 포함 */
+  /** 그중 아직 지급 중인 금액 */
+  payingCoin: number;
+  /** 풀 누적 채굴량 = 풀 잔고(미지급) + 지급 합계. 앱을 켜기 전 채굴분도 포함 */
   lifetimeCoin: number | null;
   /** 실시간 추정: 실측 해시레이트 × 풀 통계 기대 채굴량 × 시세 − 실측 GPU 전력비 */
   liveCoinPerH: number | null;
