@@ -16,6 +16,17 @@ describe('SRBMiner device numbers ↔ cards', () => {
     expect(resolveGpuIds([16], map)).toEqual({ ids: [2] });
   });
 
+  it('real RUD --list-devices (SRBMiner 3.7.6): the AMD iGPU is GPU0, so the RTX 5080 is --gpu-id 2', () => {
+    const listed = parseListDevices(fs.readFileSync(path.join(__dirname, 'fixtures/srbminer-list-devices.txt'), 'utf8'));
+    expect(listed.map((d) => [d.srbId, d.buses])).toEqual([[0, [0x79]], [1, [1]], [2, [16]]]);
+    const map = mapFromListed(listed, NV_BUSES);
+    expect(map).toEqual([{ srbId: 1, bus: 1 }, { srbId: 2, bus: 16 }]);
+    expect(resolveGpuIds([16], map)).toEqual({ ids: [2] }); // 5080 만
+    expect(resolveGpuIds([1], map)).toEqual({ ids: [1] }); // 5090 만
+    // nvidia-smi 의 00000000:10:00.0 과 SRBMiner 의 0000:10:00.0 은 같은 bus (도메인 자릿수·대소문자 무관)
+    expect(mapFromListed(parseListDevices('GPU2 [CUDA][1] [0000:1A:00.0] X'), [0x1a])).toEqual([{ srbId: 2, bus: 26 }]);
+  });
+
   it('reads --list-devices in several shapes (bus as PCI id, hex or decimal)', () => {
     const shapes = [
       'GPU0 : AMD Radeon(TM) Graphics [BUS: 0e] [CU: 2]\nGPU1 : NVIDIA GeForce RTX 5090 [BUS: 01] [MEM: 31.84 GB]\nGPU2 : NVIDIA GeForce RTX 5080 [BUS: 10] [MEM: 15.92 GB]',

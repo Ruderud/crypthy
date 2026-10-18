@@ -1,0 +1,4 @@
+SRBMiner-MULTI CPU & AMD & NVIDIA & INTEL GPU Miner v3.7.6
+GPU0 [OpenCL][0] [79:00.0]      amd_radeon_tm_graphics (iGPU: disabled by default)
+GPU1 [CUDA][0]   [0000:01:00.0] RTX 5090  32606 MB
+GPU2 [CUDA][1]   [0000:10:00.0] RTX 5080  16302 MB

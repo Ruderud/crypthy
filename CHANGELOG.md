@@ -10,6 +10,8 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [0.4.5] - 2026-10-18
 
+To mine only on the RTX 5080: SRBMiner's device numbers can differ from nvidia-smi because of an integrated GPU (with an AMD iGPU as GPU0, the RTX 5080 is `--gpu-id 2`); the app maps them automatically.
+
 ### Fixed
 - Per-GPU mining did not apply to SRBMiner (Pearl, Windows): SRBMiner ignores `CUDA_VISIBLE_DEVICES`, so a GPU switched off kept mining. SRBMiner now gets `--gpu-id` with its own device numbers for the chosen cards. Those numbers differ from nvidia-smi (on the reporting PC RTX 5090 = 1, RTX 5080 = 2), so they are mapped by PCI bus from SRBMiner's stats API (learned while all cards mine) or from `SRBMiner-MULTI --list-devices` (raw output kept in `logs/srb-list-devices.txt`), cached per miner, cards and driver version. Other miners still get `CUDA_VISIBLE_DEVICES`.
 - If the cards cannot be mapped, mining is not blocked: it starts on all cards and the miner card and alerts say "card selection could not be applied — mining on all cards" with the reason. The "off but mining" check stays as verification.
