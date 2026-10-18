@@ -189,6 +189,7 @@ npm ci && npm run build && npx electron .
 | 钱包 / 矿池 | 空 | 公开地址 `.worker` 和 `host:port`；仅用于查询矿池公开统计 |
 | 挖矿程序统计 API / 端口 | SRBMiner-MULTI / 21550 | `none` 表示关闭 |
 | 挖矿开关 | 不使用 | 计划任务（Windows）、systemd 用户单元（Linux）或可执行文件 + 参数；停止前确认（开） |
+| 共享账本文件夹 | 空（仅本机） | 双系统：两个系统都能读写的文件夹，见[共享账本](#shared-ledger) |
 | 危险条件下停止挖矿程序 | 开 | 关 = 仅通知 |
 | 登录时启动 | 关 | Windows 登录项 / Linux XDG autostart |
 | 更新检查周期 | 60 分钟 | 30–1440 分钟 |
@@ -281,6 +282,25 @@ sudo systemctl daemon-reload
 - 响应中还包含仅含四舍五入汇总值的 `pnl` 对象（`mined_coin`、`holdings_coin`、`revenue_krw`、`energy_cost_krw`、`realized_krw`、`unrealized_krw`、`total_pnl_krw`、`estimated`），不暴露原始日志。
 - 无界面主机在同一端口上还提供需要令牌的端点（`/v1/state`、`/v1/charts`、写入）；见[无界面主机](#headless)。
 
+<a id="shared-ledger"></a>
+
+### 共享账本（双系统）
+
+同一台电脑交替启动 Windows（Crypthy）和 Linux（`crypthy-headless`）时，各自使用自己的数据，PnL 会分成两份。把两边都指向一个两个系统都能读写的文件夹（例如一个小的 FAT32/exFAT 分区），就能共用一份 PnL：
+
+- Windows：**设置 → 共享账本文件夹（공유 장부 폴더）**，例如 `U:\`。
+- Linux 无界面：`--shared-ledger <挂载路径>`（或 `settings.json` 中的 `sharedLedgerDir`）：
+```bash
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mnt/crypthy
+```
+
+- Crypthy 使用其中的 `crypthy/`。每个实例只向自己的 `pnl/events-<实例 id>.jsonl` 追加，其他文件只读。PnL 由所有文件合并后重新计算，因此与单一账本的结果一致。
+- 矿池基准（最后的矿池累计值、已看到的支付）通过 `pool-state.json` 共享：下一个启动的系统从上一个停止的位置继续，矿池增量和支付只计一次。顺序按世代号而不是时钟判断（两个系统读取硬件时钟的方式可能不同）。
+- 币种、钱包、矿池和收益设置是共享的（`shared-settings.json`）；挖矿开关、远程 API 和功率限制按系统分别保存。
+- 首次启用时会把现有本地账本复制到本实例的文件中。之前在两个数据文件夹之间复制过的记录只计一次。
+- 文件夹不存在（未挂载）时继续在本地记录，文件夹重新出现时再补上缺少的记录。两个实例的电力记录在时间上重叠时会发出警告。
+- 两个系统不能同时基于同一矿池数据运行（双系统本来就不会）。
+
 ### 文件位置
 
 | 文件 | 路径 |
@@ -295,6 +315,7 @@ sudo systemctl daemon-reload
 | PnL 每日汇总（不限期限） | `%APPDATA%\Crypthy\pnl\daily.json` |
 | 应用日志（更新与退出过程，1 MB 轮换） | `%APPDATA%\Crypthy\logs\main.log` |
 | 无界面主机数据与令牌 | `/var/lib/crypthy-headless/`（仅所有者） |
+| 共享账本 | `<文件夹>\crypthy\`（按实例的事件、矿池基准、共享设置） |
 
 <a id="safety-and-privacy"></a>
 

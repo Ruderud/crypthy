@@ -189,6 +189,7 @@ The app UI is currently in Korean only.
 | Wallet / pool | empty | Public address `.worker` and `host:port`; only for public pool statistics |
 | Miner stats API / port | SRBMiner-MULTI / 21550 | `none` disables it |
 | Mining on/off | not used | Scheduled task (Windows), systemd user unit (Linux) or executable + arguments; confirm before stopping (on) |
+| Shared ledger folder | empty (this PC only) | Dual boot: folder both OSes can reach; see [Shared ledger](#shared-ledger) |
 | Stop miners on dangerous conditions | on | Off = alerts only |
 | Start at login | off | Windows login item / Linux XDG autostart |
 | Update check interval | 60 min | 30–1440 minutes |
@@ -281,6 +282,25 @@ sudo systemctl daemon-reload
 - The response also includes a `pnl` object with rounded totals only (`mined_coin`, `holdings_coin`, `revenue_krw`, `energy_cost_krw`, `realized_krw`, `unrealized_krw`, `total_pnl_krw`, `estimated`); the raw log is never exposed.
 - A headless host serves the same port with more endpoints (`/v1/state`, `/v1/charts`, writes) behind tokens; see [Headless host](#headless).
 
+<a id="shared-ledger"></a>
+
+### Shared ledger (dual boot)
+
+When one PC boots both Windows (Crypthy) and Linux (`crypthy-headless`), each keeps its own data, so the PnL would split in two. Point both at one folder both OSes can read and write, such as a small FAT32/exFAT partition, and they share one PnL:
+
+- Windows: **Settings → shared ledger folder**, e.g. `U:\`.
+- Linux headless: `--shared-ledger <mount path>` (or `sharedLedgerDir` in `settings.json`):
+```bash
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mnt/crypthy
+```
+
+- Inside it Crypthy uses `crypthy/`. Each instance appends only to its own `pnl/events-<instance id>.jsonl` and only reads the others. The PnL is recomputed from all of them, so totals match a single ledger.
+- The pool baseline (last pool total, payouts seen) is shared in `pool-state.json`: the OS that starts next continues from where the other stopped, so pool increases and payouts are counted once. Order uses a generation number, not the clock (the two OSes may read the hardware clock differently).
+- Coin, wallet, pool and profit settings are shared (`shared-settings.json`); miner on/off, remote API and power limits stay per OS.
+- The first time, the existing local ledger is copied into this instance's file. Events copied between the two data folders before are counted once.
+- If the folder is missing (not mounted), Crypthy keeps recording locally and copies the missing events when the folder is back. Energy records of two instances that overlap in time are flagged.
+- The two OSes must not run at the same time on the same pool data (a dual boot never does).
+
 ### File locations
 
 | File | Path |
@@ -295,6 +315,7 @@ sudo systemctl daemon-reload
 | PnL daily totals (no time limit) | `%APPDATA%\Crypthy\pnl\daily.json` |
 | App log (update and quit steps, rotated at 1 MB) | `%APPDATA%\Crypthy\logs\main.log` |
 | Headless host data and tokens | `/var/lib/crypthy-headless/` (owner only) |
+| Shared ledger | `<folder>\crypthy\` (events per instance, pool baseline, shared settings) |
 
 <a id="safety-and-privacy"></a>
 

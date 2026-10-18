@@ -189,6 +189,7 @@ npm ci && npm run build && npx electron .
 | 지갑 / 풀 | 비어 있음 | 공개 주소 `.worker`와 `host:port`. 풀 공개 통계에만 사용 |
 | 채굴기 통계 API / 포트 | SRBMiner-MULTI / 21550 | `none`이면 끕니다 |
 | 채굴 켜기·끄기 | 사용 안 함 | 예약 작업(Windows), systemd 사용자 유닛(Linux), 실행 파일 + 인자. 끄기 전 확인(켬) |
+| 공유 장부 폴더 | 비어 있음(이 PC 만) | 듀얼부팅: 두 OS 가 모두 읽고 쓰는 폴더, [공유 장부](#shared-ledger) 참고 |
 | 위험 조건에서 채굴기 정지 | 켜짐 | 끄면 알림만 보냅니다 |
 | 로그인 시 실행 | 꺼짐 | Windows 로그인 항목 / Linux XDG autostart |
 | 업데이트 확인 주기 | 60분 | 30~1440분 |
@@ -281,6 +282,25 @@ sudo systemctl daemon-reload
 - 응답에는 반올림한 집계값만 담은 `pnl` 객체도 들어갑니다(`mined_coin`, `holdings_coin`, `revenue_krw`, `energy_cost_krw`, `realized_krw`, `unrealized_krw`, `total_pnl_krw`, `estimated`). 원시 로그는 노출하지 않습니다.
 - 헤드리스 호스트는 같은 포트에서 토큰이 필요한 엔드포인트(`/v1/state`, `/v1/charts`, 쓰기)를 더 제공합니다. [헤드리스 호스트](#headless)를 참고하세요.
 
+<a id="shared-ledger"></a>
+
+### 공유 장부 (듀얼부팅)
+
+한 PC에서 Windows(Crypthy)와 Linux(`crypthy-headless`)를 번갈아 부팅하면 각자 자기 데이터를 써서 PnL이 둘로 나뉩니다. 두 OS가 모두 읽고 쓸 수 있는 폴더(작은 FAT32/exFAT 파티션 등)를 둘 다 지정하면 PnL 하나를 같이 씁니다.
+
+- Windows: **설정 → 공유 장부 폴더**에 `U:\` 처럼 입력합니다.
+- Linux 헤드리스: `--shared-ledger <마운트 경로>`(또는 `settings.json`의 `sharedLedgerDir`):
+```bash
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mnt/crypthy
+```
+
+- 그 폴더 안의 `crypthy/`를 씁니다. 인스턴스마다 자기 파일 `pnl/events-<인스턴스 id>.jsonl`에만 덧붙이고 다른 파일은 읽기만 합니다. PnL은 모든 파일을 합쳐 다시 계산하므로 장부 하나로 기록한 것과 같습니다.
+- 풀 기준점(마지막 풀 누적치·본 지급)은 `pool-state.json`으로 공유합니다. 다음에 켜진 OS가 이전 OS가 멈춘 지점부터 이어 받으므로 풀 증가분과 지급을 한 번만 셉니다. 순서는 시계가 아니라 세대 번호로 판단합니다(두 OS가 하드웨어 시계를 다르게 읽을 수 있음).
+- 코인·지갑·풀·수익 설정은 공유합니다(`shared-settings.json`). 채굴 켜기·끄기, 원격 API, 전력 제한은 OS마다 따로입니다.
+- 처음 켤 때 기존 로컬 장부를 이 인스턴스의 파일로 옮깁니다. 이전에 두 데이터 폴더 사이에 복사한 기록은 한 번만 셉니다.
+- 폴더가 없으면(마운트 안 됨) 로컬에 계속 기록하고, 폴더가 다시 보이면 밀린 기록을 옮깁니다. 두 인스턴스의 전력 기록이 시간상 겹치면 경고합니다.
+- 두 OS가 같은 풀 데이터로 동시에 돌면 안 됩니다(듀얼부팅에서는 그럴 일이 없습니다).
+
 ### 파일 위치
 
 | 파일 | 경로 |
@@ -295,6 +315,7 @@ sudo systemctl daemon-reload
 | PnL 일별 집계(기간 제한 없음) | `%APPDATA%\Crypthy\pnl\daily.json` |
 | 앱 로그(업데이트·종료 과정, 1MB에서 회전) | `%APPDATA%\Crypthy\logs\main.log` |
 | 헤드리스 호스트 데이터·토큰 | `/var/lib/crypthy-headless/` (소유자만) |
+| 공유 장부 | `<폴더>\crypthy\` (인스턴스별 이벤트, 풀 기준점, 공유 설정) |
 
 <a id="safety-and-privacy"></a>
 
