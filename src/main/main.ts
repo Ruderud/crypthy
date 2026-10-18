@@ -18,8 +18,8 @@ import {
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
 import {
-  addEnergy, addMined, addSale, appendEvent, bootstrap, dailyCsv, emptyBook, eventsCsv, freshPayouts, loadBook, pnlDaily,
-  priceUnpriced, readEvents, summarizePnl, type PnlBook, type PnlEvent,
+  addEnergy, addPending, addPoolIncrease, addSale, appendEvent, bootstrap, dailyCsv, emptyBook, estimateBackfillFrom, eventsCsv,
+  freshPayouts, loadBook, pnlDaily, priceUnpriced, readEvents, separateLegacyBackfill, startTracking, summarizePnl, type PnlBook, type PnlEvent,
 } from './pnl';
 import { setLinuxAutostart } from './autostart';
 import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastStats, type VastStats } from './remote';
@@ -248,6 +248,7 @@ function pnlView(): PnlView {
     ...s,
     trackStart: pnl.trackStart,
     bootstrapped: pnl.bootstrapped,
+    backfill: pnl.backfill && { from: pnl.backfill.from, to: pnl.backfill.to, qty: pnl.backfill.qty, watts: pnl.backfill.watts, auto: pnl.backfill.auto },
     currentWatts: Math.round(lastNv.reduce((a, g) => a + (g.powerW ?? 0), 0)),
     logDir: pnlDir(),
   };
@@ -259,12 +260,36 @@ function savePnl(final = false): void {
   writeJson(path.join(pnlDir(), 'daily.json'), pnl);
 }
 
+/** 소급 적용(다시 계산하면 이전 소급분을 바꿔 끼움). trackStart 가 있을 때만 부른다 */
+function applyBackfill(from: number, watts: number, auto: boolean): void {
+  const ts = pnl.trackStart!;
+  const fx = settings.profit.krwPerUsd;
+  const closeKrw = Object.fromEntries(Object.entries(dailyClose(priceSeries)).map(([d, usd]) => [d, usd * fx]));
+  const r = bootstrap(pnl, { coin: settings.coin, from, to: ts.at, qty: ts.total, watts, krwPerKwh: settings.profit.krwPerKwh, closeKrwByDay: closeKrw, fallbackKrw: priceKrw(), auto });
+  logEvent({ t: Date.now(), type: 'bootstrap', coin: settings.coin, from, to: ts.at, qty: ts.total, watts, kwh: r.kwh, auto });
+}
+
+/**
+ * 추적 시작 전 채굴분을 자동으로 소급한다(한 번만). 시작 시각은 풀 누적치 ÷ 지금 기대 채굴 속도로 추정하고
+ * 가장 이른 지급보다 늦지 않게, 전력은 지금 GPU 전력 합. 해시레이트·풀 통계·전력이 모두 있을 때까지 기다린다.
+ */
+function autoBackfill(): void {
+  const ts = pnl.trackStart;
+  if (!ts || pnl.bootstrapped || !(ts.total > 0) || !kryptexPool()) return;
+  const watts = Math.round(lastNv.reduce((a, g) => a + (g.powerW ?? 0), 0));
+  const rate = lastStats?.totalHashrate && remote.pool ? prlPerHour(lastStats.totalHashrate, remote.pool) : null;
+  const paid = remote.payouts.map((p) => p.at).filter((t): t is number => typeof t === 'number' && Number.isFinite(t));
+  const from = estimateBackfillFrom({ to: ts.at, qty: ts.total, coinPerHour: rate, earliestPayoutAt: paid.length ? Math.min(...paid) : null });
+  if (from === null || !(watts > 0)) return;
+  applyBackfill(from, watts, true);
+}
+
 function chartsView(): ChartsView {
   return {
     gpus: settings.gpus.filter((g) => history.series[g.id] || history.acc[g.id]).map((g) => ({ id: g.id, label: g.label, points: seriesOf(history, g.id) })),
     price: priceSeries,
     daily: dailySeries(ledger, dailyClose(priceSeries), remote.prlUsd, settings.profit),
-    pnl: pnlDaily(pnl, settings.coin),
+    pnl: pnlDaily(pnl, settings.coin, priceKrw()),
     symbol: coin().symbol,
   };
 }
@@ -418,6 +443,8 @@ async function poll(): Promise<void> {
     // 같은 시간의 해시레이트 기반 추정 채굴량 (풀 통계·채굴기 API 가 있을 때만)
     const est = lastStats?.totalHashrate && remote.pool ? (prlPerHour(lastStats.totalHashrate, remote.pool) * dt) / 3_600_000 : 0;
     ledger = recordEnergy(ledger, watts, dt, now, est);
+    // 풀에 아직 반영되지 않은 몫 (다음 풀 증가 때 확정분으로 바뀜)
+    addPending(pnl, settings.coin, now, est);
     const kwh = (watts * dt) / 3_600_000 / 1000;
     addEnergy(pnl, settings.coin, now, kwh, settings.profit.krwPerKwh);
     if (kwh > 0) {
@@ -481,11 +508,12 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
               logEvent({ t: now, type: 'pool', coin: c.id, total: ledger.lastTotal });
               if (prevTotal === null) {
                 // 처음 잡은 누적치 = 추적 시작 이전 채굴분 (소급 대상)
-                pnl.trackStart ??= { at: now, total: ledger.lastTotal };
+                startTracking(pnl, c.id, now, ledger.lastTotal);
               } else if (ledger.lastTotal > prevTotal) {
                 const qty = ledger.lastTotal - prevTotal;
-                addMined(pnl, c.id, now, qty, priceKrw());
-                logEvent({ t: now, type: 'mined', coin: c.id, qty, krwPerCoin: priceKrw() });
+                const from = pnl.lastMinedAt ?? undefined;
+                addPoolIncrease(pnl, c.id, now, qty, priceKrw());
+                logEvent({ t: now, type: 'mined', coin: c.id, qty, krwPerCoin: priceKrw(), from });
               }
             }
           }
@@ -505,6 +533,7 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
   remote.updatedAt = now;
   remote.error = errors.length ? errors.join(' · ') : null;
   writeJson(file('ledger.json'), ledger);
+  autoBackfill();
   savePnl();
 
   const rows = compareRows(gpuViews()).map((r) => ({ ...r, reviewRentalUsd: settings.gpus.find((g) => g.id === r.id)?.reviewRentalUsd ?? 0 }));
@@ -747,14 +776,11 @@ function registerIpc(): void {
   ipcMain.handle('pnl:bootstrap', (_e, fromMs: unknown, watts: unknown) => {
     const from = Number(fromMs);
     const w = Number(watts);
-    if (pnl.bootstrapped) return '이미 소급 적용했습니다';
+    if (pnl.bootstrapped && !pnl.backfill) return '이전 버전에서 적용한 소급분이라 다시 계산할 수 없습니다';
     if (!pnl.trackStart) return '풀 누적치를 아직 받지 못했습니다 (지갑·Kryptex 풀 설정 후 다시 시도)';
     if (!Number.isFinite(from) || from >= pnl.trackStart.at || from < pnl.trackStart.at - 366 * 86_400_000) return '채굴 시작 시각은 추적 시작 이전, 1년 이내여야 합니다';
     if (!(w >= 0 && w <= 20_000)) return '추정 전력(W)을 확인해 주세요';
-    const fx = settings.profit.krwPerUsd;
-    const closeKrw = Object.fromEntries(Object.entries(dailyClose(priceSeries)).map(([d, usd]) => [d, usd * fx]));
-    const r = bootstrap(pnl, { coin: settings.coin, from, to: pnl.trackStart.at, qty: pnl.trackStart.total, watts: w, krwPerKwh: settings.profit.krwPerKwh, closeKrwByDay: closeKrw, fallbackKrw: priceKrw() });
-    logEvent({ t: Date.now(), type: 'bootstrap', coin: settings.coin, from, to: pnl.trackStart.at, qty: pnl.trackStart.total, watts: w, kwh: r.kwh });
+    applyBackfill(from, w, false);
     savePnl();
     return null;
   });
@@ -855,7 +881,12 @@ function loadState(): void {
   history = loadHistory(readJson<unknown>(file('history.json'), null));
   pnl = loadBook(readJson<unknown>(path.join(pnlDir(), 'daily.json'), null));
   // 0.3.3 이하에서 업데이트: 이미 잡힌 풀 누적치를 추적 시작점으로 (그 이전 채굴분은 소급으로 채움)
-  if (!pnl.trackStart && ledger.lastTotal !== null) pnl.trackStart = { at: Date.now(), total: ledger.lastTotal };
+  if (!pnl.trackStart && ledger.lastTotal !== null) startTracking(pnl, settings.coin, Date.now(), ledger.lastTotal);
+  // 0.3.4 에서 일별 장부에 합쳐 둔 소급분은 따로 떼어 낸다 (다시 계산할 수 있게)
+  if (pnl.bootstrapped && !pnl.backfill) {
+    const ev = readEvents(pnlEvents()).filter((e) => e.type === 'bootstrap').at(-1);
+    if (ev?.type === 'bootstrap') separateLegacyBackfill(pnl, ev);
+  }
   if (MOCK && Object.keys(history.series).length === 0) {
     const seed = mockSeed(Date.now());
     for (const g of seed.gpus) history.series[g.id] = g.points;

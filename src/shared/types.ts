@@ -213,8 +213,13 @@ export interface DailyPoint {
 }
 
 export interface PnlPeriodView {
+  /** 확정 + 소급 + 실시간 추정 */
   mined: number;
+  confirmed: number;
+  backfill: number;
+  pending: number;
   revenueKrw: number;
+  unpriced: number;
   energyCostKrw: number;
   netKrw: number;
   estimated: boolean;
@@ -224,6 +229,7 @@ export interface PnlPeriodView {
 export interface PnlView {
   symbol: string;
   today: PnlPeriodView;
+  month: PnlPeriodView;
   d7: PnlPeriodView;
   d30: PnlPeriodView;
   all: PnlPeriodView;
@@ -236,6 +242,8 @@ export interface PnlView {
   /** 추적 시작(이전 채굴분은 소급 대상) */
   trackStart: { at: number; total: number } | null;
   bootstrapped: boolean;
+  /** 적용된 소급(시작 시각·전력은 고쳐서 다시 계산 가능). 0.3.4 에서 적용해 떼어 내지 못했으면 null */
+  backfill: { from: number; to: number; qty: number; watts: number; auto: boolean } | null;
   /** 소급 전력 추정 기본값(현재 GPU 전력 합) */
   currentWatts: number;
   logDir: string;
