@@ -12,6 +12,37 @@ export type Platform = 'windows' | 'linux' | 'other';
 export interface Command {
   file: string;
   args: string[];
+  /** 추가 환경 변수 (GPU 선택) */
+  env?: Record<string, string>;
+}
+
+/**
+ * GPU 별 채굴: 고른 NVIDIA GPU 만 채굴기에 보이게 하는 환경 변수.
+ * CUDA_VISIBLE_DEVICES 는 CUDA·NVIDIA OpenCL 채굴기 공통이라 채굴기마다 다른 장치 번호(--gpu-id)를 몰라도 된다.
+ * UUID 로 지정하고, UUID 를 모르면 PCI bus 순서 번호(nvidia-smi 순서)로. 모두 고르면 null(제한 없음), 하나도 없으면 오류.
+ */
+export function gpuSelectionEnv(gpus: { index: number; uuid: string | null; mine: boolean }[]): Record<string, string> | null | 'none' {
+  const chosen = gpus.filter((g) => g.mine);
+  if (chosen.length === gpus.length) return null;
+  if (!chosen.length) return 'none';
+  const ids = chosen.every((g) => g.uuid) ? chosen.map((g) => g.uuid as string) : chosen.map((g) => String(g.index));
+  return { CUDA_DEVICE_ORDER: 'PCI_BUS_ID', CUDA_VISIBLE_DEVICES: ids.join(',') };
+}
+
+/** GPU 선택이 적용될 때 겹치는 채굴기 인자(SRBMiner --gpu-id 등 장치 번호 지정)를 뺀다. 뺀 것이 있으면 removed */
+export function stripGpuArgs(args: string): { args: string; removed: string[] } {
+  const tokens = parseArgs(args);
+  const out: string[] = [];
+  const removed: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (/^--(gpu-id|gpu-ids|devices|cuda-devices)=/i.test(t)) removed.push(t);
+    else if (/^--(gpu-id|gpu-ids|devices|cuda-devices)$/i.test(t)) {
+      removed.push(`${t} ${tokens[i + 1] ?? ''}`.trim());
+      i++;
+    } else out.push(t);
+  }
+  return { args: out.map(quoteArg).join(' '), removed };
 }
 
 const CONTROL_CHARS = /[\0-\x1f\x7f]/;
@@ -177,9 +208,12 @@ export function startBlocker(o: { config: MinerControlConfig; platform: Platform
  * 직접 실행 옵션: 셸 없이, 앱과 분리해(앱을 꺼도 채굴은 계속).
  * hide 면 Windows 에서 콘솔 창 없이 (Node 의 windowsHide → CREATE_NO_WINDOW + SW_HIDE)
  */
-export function spawnOptions(cwd: string | undefined, hide: boolean, out: number | 'ignore' = 'ignore') {
+export function spawnOptions(cwd: string | undefined, hide: boolean, out: number | 'ignore' = 'ignore', env?: Record<string, string>) {
   // 출력은 파일로 (앱의 "채굴 창 보기"에서 원할 때만 본다). 입력은 없음
-  return { cwd, detached: true, stdio: ['ignore', out, out] as ['ignore', number | 'ignore', number | 'ignore'], shell: false, windowsHide: hide };
+  return {
+    cwd, detached: true, stdio: ['ignore', out, out] as ['ignore', number | 'ignore', number | 'ignore'], shell: false, windowsHide: hide,
+    ...(env ? { env: { ...process.env, ...env } } : {}),
+  };
 }
 
 /**
@@ -206,9 +240,10 @@ export interface ControlDeps {
 /** 켜기·끄기 실행부. 조건 확인(startBlocker)·동의·확인 대화상자는 호출부가 맡는다 */
 export function createMinerControl(deps: ControlDeps) {
   return {
-    async start(c: MinerControlConfig): Promise<string | null> {
+    async start(c: MinerControlConfig, env?: Record<string, string>): Promise<string | null> {
       const s = startCommand(c);
       if (!s) return '켜기 방식이 설정되지 않았습니다';
+      if (env) s.cmd.env = env;
       try {
         if (s.kind === 'spawn') await deps.spawnDetached(s.cmd, s.cwd, s.hide ?? true);
         else await deps.exec(s.cmd);

@@ -12,6 +12,8 @@ export interface GpuConfig {
   rentalUsdManual: number;
   /** 대여 표시가가 이 값 이상이면 재검토 알림 ($/h, 0 = 끔) */
   reviewRentalUsd: number;
+  /** 이 GPU 로 채굴 (실행 파일 방식에서 GPU 별로 고를 때). 기본 true */
+  mine: boolean;
 }
 
 export interface Settings {
@@ -96,6 +98,10 @@ export interface GpuView {
   /** 안전 보류 사유. 보류 중에는 채굴기가 다시 돌면 다시 정지한다(설정에서 끌 수 있음) */
   hold: string | null;
   present: boolean;
+  /** 채굴할 GPU 로 골랐는지 (설정의 mine) */
+  mine: boolean;
+  /** GPU 별 채굴 선택이 실제로 적용되는지 (실행 파일 방식 + NVIDIA) */
+  selectable: boolean;
 }
 
 export interface Alert {
@@ -385,6 +391,8 @@ export interface Api {
   stopMining(): Promise<string | null>;
   importMinerTask(): Promise<string | null>;
   disableMinerTask(): Promise<string | null>;
+  /** GPU 별 채굴 켜기·끄기 (채굴 중이면 선택을 바꿔 다시 시작) */
+  setGpuMining(id: GpuId, mine: boolean): Promise<string | null>;
   minerLog(): Promise<{ text: string; path: string; at: number | null; available: boolean }>;
   /** 찾아보기: kind 'exe' 는 실행 파일, 'folder' 는 폴더. 취소하면 null */
   pickPath(kind: 'exe' | 'folder', current: string): Promise<string | null>;

@@ -63,7 +63,7 @@ export function mergeSettings(base: Settings, patch: Partial<Settings>): Setting
 }
 
 export function newGpu(id: GpuId, label: string): GpuConfig {
-  return { id, label, powerLimitW: null, rentalUsdManual: 0, reviewRentalUsd: 0 };
+  return { id, label, powerLimitW: null, rentalUsdManual: 0, reviewRentalUsd: 0, mine: true };
 }
 
 /** nvidia-smi 이름을 짧은 표시명으로 ("NVIDIA GeForce RTX 5090" → "RTX 5090") */

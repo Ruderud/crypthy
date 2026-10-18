@@ -11,6 +11,7 @@ export const NVSMI_FIELDS = [
   'power.min_limit',
   'power.max_limit',
   'utilization.gpu',
+  'uuid',
 ] as const;
 
 export interface NvGpu {
@@ -27,6 +28,8 @@ export interface NvGpu {
   powerMinW: number | null;
   powerMaxW: number | null;
   utilPct: number | null;
+  /** GPU UUID (예: GPU-1a2b…). CUDA_VISIBLE_DEVICES 로 채굴할 GPU 를 고를 때 */
+  uuid: string | null;
 }
 
 function num(v: string | undefined): number | null {
@@ -49,7 +52,8 @@ export function parseNvsmiCsv(out: string): NvGpu[] {
   for (const line of out.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const c = line.split(',').map((s) => s.trim());
-    if (c.length < NVSMI_FIELDS.length) continue;
+    // uuid 는 0.4.4 에 추가: 열이 하나 모자란 출력(테스트·구버전 형식)도 받는다
+    if (c.length < NVSMI_FIELDS.length - 1) continue;
     const index = Number.parseInt(c[0], 10);
     if (!Number.isInteger(index) || !BUS_ID_RE.test(c[2])) continue;
     gpus.push({
@@ -64,6 +68,7 @@ export function parseNvsmiCsv(out: string): NvGpu[] {
       powerMinW: num(c[7]),
       powerMaxW: num(c[8]),
       utilPct: num(c[9]),
+      uuid: /^GPU-[0-9a-f-]+$/i.test(c[10] ?? '') ? c[10] : null,
     });
   }
   return gpus;

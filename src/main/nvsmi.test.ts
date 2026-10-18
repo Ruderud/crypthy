@@ -9,7 +9,7 @@ describe('parseNvsmiCsv', () => {
     expect(gpus).toHaveLength(2);
     expect(gpus[0]).toEqual({
       index: 0, name: 'NVIDIA GeForce RTX 5090', busId: '00000000:01:00.0', bus: 1,
-      tempC: 63, fanPct: 72, powerW: 588.12, powerLimitW: 600, powerMinW: 400, powerMaxW: 600, utilPct: 100,
+      tempC: 63, fanPct: 72, powerW: 588.12, powerLimitW: 600, powerMinW: 400, powerMaxW: 600, utilPct: 100, uuid: null,
     });
     expect(gpus[1]).toMatchObject({ busId: '00000000:10:00.0', bus: 16, powerLimitW: 280, powerMaxW: 400 });
   });
@@ -20,6 +20,12 @@ describe('parseNvsmiCsv', () => {
     expect(gpus[0].fanPct).toBeNull();
     expect(gpus[0].powerW).toBeNull();
     expect(gpus[0].powerMinW).toBeNull();
+  });
+
+  it('reads the GPU UUID (used to pick GPUs for mining) and ignores junk in that column', () => {
+    const [a, b] = parseNvsmiCsv('0, RTX 5090, 00000000:01:00.0, 40, 30, 20, 600, 150, 600, 0, GPU-1a2b3c4d-0000-1111-2222-333344445555\n1, RTX 5080, 00000000:10:00.0, 40, 30, 20, 280, 150, 400, 0, [N/A]\n');
+    expect(a.uuid).toBe('GPU-1a2b3c4d-0000-1111-2222-333344445555');
+    expect(b.uuid).toBeNull();
   });
 
   it('parsePciBus handles hex bus ids', () => {

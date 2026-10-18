@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MinerControlConfig } from '../shared/types';
 import {
-  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, parseArgs, parseTaskStatus, parseTaskXml, quoteArg, spawnOptions, startBlocker,
+  autoStartDecision, controlProcessName, gpuSelectionEnv, stripGpuArgs, createMinerControl, decodeConsole, parseArgs, parseTaskStatus, parseTaskXml, quoteArg, spawnOptions, startBlocker,
   startCommand, stopCommand, unwrapConhost, validateControl, type Command,
 } from './minerControl';
 
@@ -91,6 +91,37 @@ describe('quiet start and automatic start', () => {
     // 예약 작업이 먼저 띄운 채굴기 → 두 번째를 띄우지 않음 / 안전 보류
     expect(autoStartDecision({ ...ok, blocker: '채굴기가 이미 실행 중입니다' })).toEqual({ start: false, reason: '채굴기가 이미 실행 중입니다' });
     expect(autoStartDecision({ ...ok, blocker: '안전 보류 중: RTX 5090(팬 정지)' }).start).toBe(false);
+  });
+});
+
+describe('per-GPU mining', () => {
+  // RUD: 5090 (nvidia-smi 0, bus 01) 은 사용자가 쓰고 5080 (nvidia-smi 1, bus 10) 만 채굴
+  const g5090 = { index: 0, uuid: 'GPU-aaaa-5090', mine: false };
+  const g5080 = { index: 1, uuid: 'GPU-bbbb-5080', mine: true };
+
+  it('shows only the chosen GPUs to the miner by UUID (independent of the miner\'s own device numbers)', () => {
+    expect(gpuSelectionEnv([g5090, g5080])).toEqual({ CUDA_DEVICE_ORDER: 'PCI_BUS_ID', CUDA_VISIBLE_DEVICES: 'GPU-bbbb-5080' });
+    // UUID 를 모르면 PCI bus 순서 번호
+    expect(gpuSelectionEnv([{ ...g5090, uuid: null }, { ...g5080, uuid: null }])).toEqual({ CUDA_DEVICE_ORDER: 'PCI_BUS_ID', CUDA_VISIBLE_DEVICES: '1' });
+  });
+
+  it('no restriction when every GPU is chosen; an error when none is', () => {
+    expect(gpuSelectionEnv([{ ...g5090, mine: true }, g5080])).toBeNull();
+    expect(gpuSelectionEnv([g5090, { ...g5080, mine: false }])).toBe('none');
+  });
+
+  it('removes device-number arguments that would conflict with the selection', () => {
+    expect(stripGpuArgs('--algorithm pearlhash --gpu-id 0,1 --pool p:1')).toEqual({ args: '--algorithm pearlhash --pool p:1', removed: ['--gpu-id 0,1'] });
+    expect(stripGpuArgs('--gpu-id=1 --wallet "a b"')).toEqual({ args: '--wallet "a b"', removed: ['--gpu-id=1'] });
+    expect(stripGpuArgs('--disable-gpu-amd --algorithm x')).toEqual({ args: '--disable-gpu-amd --algorithm x', removed: [] });
+  });
+
+  it('passes the selection to the miner process as environment variables', async () => {
+    const seen: (Record<string, string> | undefined)[] = [];
+    const ctl = createMinerControl({ exec: async () => undefined, spawnDetached: async (c) => void seen.push(c.env), killMiners: async () => null });
+    await ctl.start(cfg({ mode: 'direct', exe: SRB }), { CUDA_VISIBLE_DEVICES: 'GPU-bbbb-5080' });
+    expect(seen).toEqual([{ CUDA_VISIBLE_DEVICES: 'GPU-bbbb-5080' }]);
+    expect(spawnOptions(undefined, true, 'ignore', { CUDA_VISIBLE_DEVICES: 'x' }).env?.CUDA_VISIBLE_DEVICES).toBe('x');
   });
 });
 
