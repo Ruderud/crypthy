@@ -1,0 +1,49 @@
+name: Installer smoke test
+
+# Windows 설치형 업데이트 확인: 최신 릴리스를 설치·실행해 둔 채로 이 커밋의 설치 파일을
+# electron-updater 와 같은 인자(--updated /S --force-run)로 돌린다.
+#   update: 새 버전으로 바뀌고 실행되며 사용자 데이터가 남는지
+#   locked: Crypthy.exe 교체가 실패하면 깨진 앱을 실행하지 않고 오류 코드 2로 끝나는지
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [update, locked]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build the NSIS installer (no publish)
+        run: npx electron-builder --win nsis --x64 --publish never
+      - name: Download the latest released installer
+        shell: bash
+        run: |
+          tag="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          echo "previous release: $tag"
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p "Crypthy-${tag#v}-setup-x64.exe" -D prev
+      - name: Update while the app is running (${{ matrix.scenario }})
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $from = (Get-ChildItem prev\*.exe)[0].FullName
+          $to = "release\Crypthy-$version-setup-x64.exe"
+          $lock = '${{ matrix.scenario }}' -eq 'locked'
+          ./scripts/smoke-update.ps1 -From $from -To $to -ExpectVersion "$version.0" -Lock:$lock
