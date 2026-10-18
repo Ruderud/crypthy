@@ -36,6 +36,23 @@ describe('container detection', () => {
     expect(isContainerized(child, map)).toBe(true);
   });
 
+  // Vast.ai 호스트: 임대 고객 컨테이너와 defjob(빈 시간 채굴) 컨테이너는 절대 건드리지 않는다
+  it('never targets Vast.ai customer or defjob containers, even with a configured (trusted) miner name', () => {
+    const kaalia = proc({ pid: 70, comm: 'kaalia', ppid: 1 });
+    const underKaalia = srb(71, { ppid: 70 });
+    const dockerMiner = srb(80, { cgroup: '0::/system.slice/docker-9f1e2d3c4b5a.scope\n' });
+    const otherNs = srb(90, { samePidNs: false });
+    const hostMiner = srb(100);
+    const all = [kaalia, underKaalia, dockerMiner, otherNs, hostMiner];
+    expect([...findMiners(all, KNOWN, ['SRBMiner-MULTI']).entries()]).toEqual([['SRBMiner-MULTI', [100]]]);
+    // 3단계 위 조상이 containerd-shim 이어도 컨테이너
+    const shim = proc({ pid: 200, comm: 'containerd-shim', ppid: 1 });
+    const sh = proc({ pid: 201, comm: 'sh', ppid: 200 });
+    const bash = proc({ pid: 202, comm: 'bash', ppid: 201 });
+    const deep = srb(203, { ppid: 202 });
+    expect(findMiners([shim, sh, bash, deep], KNOWN, ['SRBMiner-MULTI']).size).toBe(0);
+  });
+
   it('treats other or unknown PID namespaces as containers', () => {
     expect(isContainerized(srb(10, { samePidNs: false }), new Map())).toBe(true);
     expect(isContainerized(srb(10, { samePidNs: null }), new Map())).toBe(true);

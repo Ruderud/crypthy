@@ -27,3 +27,48 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run check:readme
+
+  # 헤드리스 묶음을 Ubuntu 에 실제로 설치(systemd)해 Node 18 로 돌리고 원격 API 를 확인한다
+  headless:
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run pack:headless
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 18
+      - name: Install with install.sh and check the remote API
+        run: |
+          set -eu
+          node -v
+          v="$(node -p "require('./package.json').version")"
+          mkdir -p /tmp/h && tar xzf "release/crypthy-headless-$v.tar.gz" -C /tmp/h
+          sudo env PATH="$PATH" sh "/tmp/h/crypthy-headless-$v/install.sh" --user "$USER" --enable-write
+          sleep 5
+          systemctl is-active crypthy-headless
+          test "$(stat -c %a /var/lib/crypthy-headless/remote-read.token)" = 600
+          read_t="$(crypthy-headless --print-tokens | awk '/^read/{print $2}')"
+          write_t="$(crypthy-headless --print-tokens | awk '/^write/{print $2}')"
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          test "$(code http://127.0.0.1:47321/v1/state)" = 401
+          test "$(code -H "Host: evil.example" -H "Authorization: Bearer $read_t" http://127.0.0.1:47321/v1/state)" = 403
+          curl -sf -H "Authorization: Bearer $read_t" http://127.0.0.1:47321/v1/state | node -e '
+            let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+              const j = JSON.parse(s);
+              if (j.appVersion !== process.argv[1]) throw new Error("version " + j.appVersion);
+              console.log("state ok", j.appVersion, "gpus", j.gpus.length, "running", j.miner.running);
+            });' "$v"
+          test "$(code -X POST -H 'content-type: application/json' -H "Authorization: Bearer $read_t" -d '{}' http://127.0.0.1:47321/v1/miner/stop)" = 401
+          test "$(code -X POST -H 'content-type: application/json' -H "Authorization: Bearer $write_t" -d '{}' http://127.0.0.1:47321/v1/miner/stop)" = 400
+          if crypthy-headless --bind 0.0.0.0 --port 47999; then echo "0.0.0.0 must be refused" >&2; exit 1; fi
+          sudo systemctl stop crypthy-headless
+          sudo journalctl -u crypthy-headless --no-pager | tail -8
+          sudo journalctl -u crypthy-headless --no-pager | grep -q 'SIGTERM: saving'
