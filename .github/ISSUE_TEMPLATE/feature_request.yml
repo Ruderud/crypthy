@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a feature, a coin/miner catalog entry or a translation
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources (for catalog entries)
+      description: Official repository, dev fee page and pool guide URLs. Unverified values are shown as unverified.
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Project principles
+      options:
+        - label: The proposal does not require Crypthy to download, run or restart miners, add a fee, or collect secrets.
+          required: true

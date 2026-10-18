@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work as described in the README
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security issues here; see SECURITY.md. Never paste wallet seeds, passwords or tokens.
+        A public wallet address is not needed to reproduce most problems; leave it out.
+  - type: input
+    id: version
+    attributes:
+      label: Crypthy version
+      placeholder: "0.3.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows (installer)
+        - Windows (zip)
+        - Linux (AppImage)
+        - Linux (deb)
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: GPU(s) and driver version
+      placeholder: "RTX 5090 + RTX 5080, driver 591.86"
+  - type: input
+    id: miner
+    attributes:
+      label: Miner and version (if relevant)
+      placeholder: "SRBMiner-MULTI 3.7.6 with --api-enable --api-port 21550"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Alerts, logs or local status API output
+      description: For example the alert list, `power-limit.log`, or `GET http://127.0.0.1:47321/v1/status`. Remove anything private.
+      render: text
