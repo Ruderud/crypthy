@@ -88,6 +88,7 @@ cat > "/etc/systemd/system/$UNIT" <<UNIT_EOF
 Description=Crypthy headless (GPU monitor, safety stop, remote API)
 After=network-online.target nvidia-persistenced.service tailscaled.service
 Wants=network-online.target
+${SHARED:+RequiresMountsFor=$SHARED}
 
 [Service]
 User=$RUN_USER

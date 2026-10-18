@@ -298,7 +298,7 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 - The pool baseline (last pool total, payouts seen) is shared in `pool-state.json`: the OS that starts next continues from where the other stopped, so pool increases and payouts are counted once. Order uses a generation number, not the clock (the two OSes may read the hardware clock differently).
 - Coin, wallet, pool and profit settings are shared (`shared-settings.json`); miner on/off, remote API and power limits stay per OS.
 - The first time, the existing local ledger is copied into this instance's file. Events copied between the two data folders before are counted once.
-- If the folder is missing (not mounted), Crypthy keeps recording locally and copies the missing events when the folder is back. Energy records of two instances that overlap in time are flagged.
+- If the folder is missing (not mounted), Crypthy keeps recording energy and sales locally and copies them when the folder is back; pool increases are not recorded meanwhile (they would be counted twice) and resume from the shared baseline. Once set up, a folder without `crypthy/` counts as not mounted. On Linux the service waits for the mount (`RequiresMountsFor`). Energy records of two instances that overlap in time are flagged.
 - The two OSes must not run at the same time on the same pool data (a dual boot never does).
 
 ### File locations

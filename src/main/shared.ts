@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Settings } from '../shared/types';
-import { eventKey, readEvents, type PnlEvent } from './pnl';
+import { eventKey, parseEventLine, readEvents, type PnlEvent } from './pnl';
 import type { Ledger } from './profit';
 
 export const SHARED_SUBDIR = 'crypthy';
@@ -66,7 +66,7 @@ export function appendLines(file: string, lines: string[]): void {
 }
 
 /**
- * 로컬 이벤트 로그(source of truth) 중 공유 폴더의 내 파일에 아직 없는 것을 덧붙인다.
+ * 로컬 이벤트 로그(source of truth) 중 공유 폴더의 내 파일에 아직 없는 것을 덧붙인다 (전체 비교, 테스트·첫 동기화용).
  * 공유 폴더가 없던 동안 쌓인 이벤트도 이때 반영된다. 처음 켤 때는 기존 로컬 장부 전체가 여기서 옮겨진다.
  */
 export function syncOwnEvents(localFile: string, ownShared: string): number {
@@ -76,8 +76,71 @@ export function syncOwnEvents(localFile: string, ownShared: string): number {
   return missing.length;
 }
 
-/** 공유 폴더의 모든 인스턴스 이벤트 (파일별) */
-export function readSharedEvents(root: string): { src: string; events: PnlEvent[] }[] {
+/**
+ * 덧붙이기만 하는 파일을 이어 읽는다: 지난번 이후 늘어난 바이트만 읽고, 끝의 덜 쓴 줄은 다음 번으로 미룬다.
+ * 파일이 작아지면(회전·교체) 처음부터 다시 읽는다. 큰 장부를 1분마다 통째로 읽지 않으려는 것.
+ */
+export function createTailReader() {
+  const cache = new Map<string, { size: number; rest: Buffer; events: PnlEvent[] }>();
+  return (file: string): PnlEvent[] => {
+    let size: number;
+    try {
+      size = fs.statSync(file).size;
+    } catch {
+      cache.delete(file);
+      return [];
+    }
+    let c = cache.get(file);
+    if (!c || size < c.size) c = { size: 0, rest: Buffer.alloc(0), events: [] };
+    if (size > c.size) {
+      const fd = fs.openSync(file, 'r');
+      const buf = Buffer.alloc(size - c.size);
+      try {
+        fs.readSync(fd, buf, 0, buf.length, c.size);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const all = Buffer.concat([c.rest, buf]);
+      const end = all.lastIndexOf(0x0a);
+      const done = end >= 0 ? all.subarray(0, end) : Buffer.alloc(0);
+      c.rest = end >= 0 ? Buffer.from(all.subarray(end + 1)) : all;
+      for (const line of done.toString('utf8').split('\n')) {
+        const ev = parseEventLine(line);
+        if (ev) c.events.push(ev);
+      }
+      c.size = size;
+    }
+    cache.set(file, c);
+    return c.events;
+  };
+}
+
+/** 로컬 로그 → 공유 폴더의 내 파일 미러. 처음 한 번만 전체를 비교하고 이후로는 늘어난 줄만 확인한다 */
+export function createMirror(localFile: string, ownShared: string) {
+  const tail = createTailReader();
+  let keys: Set<string> | null = null;
+  let checked = 0;
+  return (): number => {
+    let missing: PnlEvent[];
+    if (!keys) {
+      keys = new Set(readEvents(ownShared).map(eventKey));
+      const have = keys;
+      missing = readEvents(localFile).filter((ev) => !have.has(eventKey(ev)));
+      checked = tail(localFile).length;
+    } else {
+      const local = tail(localFile);
+      if (local.length < checked) checked = 0;
+      missing = local.slice(checked).filter((ev) => !keys!.has(eventKey(ev)));
+      checked = local.length;
+    }
+    appendLines(ownShared, missing.map((ev) => JSON.stringify(ev)));
+    for (const ev of missing) keys.add(eventKey(ev));
+    return missing.length;
+  };
+}
+
+/** 공유 폴더의 모든 인스턴스 이벤트 (파일별). read 를 주면 이어 읽기 */
+export function readSharedEvents(root: string, read: (file: string) => PnlEvent[] = readEvents): { src: string; events: PnlEvent[] }[] {
   let names: string[] = [];
   try {
     names = fs.readdirSync(path.join(root, 'pnl'));
@@ -88,7 +151,7 @@ export function readSharedEvents(root: string): { src: string; events: PnlEvent[
     .map((n) => EVENTS_RE.exec(n)?.[1])
     .filter((id): id is string => !!id)
     .sort()
-    .map((id) => ({ src: id, events: readEvents(sharedEventsFile(root, id)) }));
+    .map((id) => ({ src: id, events: read(sharedEventsFile(root, id)) }));
 }
 
 /** 공유 이벤트 파일들의 크기·수정 시각 (바뀌었을 때만 다시 계산하려고) */
@@ -114,6 +177,8 @@ export interface PoolState {
   /** 세대 번호: 쓸 때마다 1씩 커진다 */
   gen: number;
   by: string;
+  /** 이 기준점의 코인 (다른 코인의 기준점은 받아들이지 않는다) */
+  coin: string;
   lastTotal: number | null;
   paidTotal: number;
   seenPayouts: string[];
@@ -130,6 +195,7 @@ export function readPoolState(root: string): PoolState | null {
     return {
       gen: r.gen as number,
       by: typeof r.by === 'string' ? r.by : '',
+      coin: typeof r.coin === 'string' ? r.coin : '',
       lastTotal: typeof r.lastTotal === 'number' && Number.isFinite(r.lastTotal) ? r.lastTotal : null,
       paidTotal: num(r.paidTotal),
       seenPayouts: Array.isArray(r.seenPayouts) ? r.seenPayouts.filter((k): k is string => typeof k === 'string') : [],
@@ -162,8 +228,8 @@ export function adoptPoolState(l: Ledger, s: PoolState): Ledger {
   };
 }
 
-export const poolStateOf = (l: Ledger, lastMinedAt: number | null, gen: number, by: string): PoolState => ({
-  gen, by, lastTotal: l.lastTotal, paidTotal: l.paidTotal, seenPayouts: l.seenPayouts.slice(-300), lastMinedAt,
+export const poolStateOf = (l: Ledger, coin: string, lastMinedAt: number | null, gen: number, by: string): PoolState => ({
+  gen, by, coin, lastTotal: l.lastTotal, paidTotal: l.paidTotal, seenPayouts: l.seenPayouts.slice(-300), lastMinedAt,
 });
 
 // ---- 공유 설정 (기기와 무관한 것만) ----
@@ -193,4 +259,8 @@ export function writeSharedSettings(root: string, s: SharedSettings): void {
 export interface SyncState {
   poolGen: number;
   settingsGen: number;
+  /** 한 번 연결해 crypthy/ 를 만든 공유 폴더. 이후 crypthy/ 가 없으면 만들지 않고 "연결 안 됨"으로 본다 (마운트 안 된 빈 마운트 지점) */
+  rootDir?: string;
+  /** 연결이 끊긴 동안 바꾼 공유 설정 (다시 보이면 올린다) */
+  settingsDirty?: boolean;
 }

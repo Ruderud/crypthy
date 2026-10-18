@@ -24,12 +24,12 @@ import { linuxPower } from './powerLimitLinux';
 import type { Logger } from './log';
 import {
   addEnergy, addPending, addPoolIncrease, addSale, appendEvent, bookDailyPoints, bootstrap, dailyCsv, emptyBook, estimateBackfillFrom, eventsCsv,
-  freshPayouts, loadBook, mergeEvents, pnlDaily, priceUnpriced, readEvents, replayEvents, separateLegacyBackfill, startTracking, summarizePnl,
+  clearPending, freshPayouts, loadBook, mergeEvents, pnlDaily, priceUnpriced, readEvents, replayEvents, separateLegacyBackfill, startTracking, summarizePnl,
   type PnlBook, type PnlEvent,
 } from './pnl';
 import {
-  adoptPoolState, ensureInstanceId, poolStateOf, readPoolState, readSharedEvents, readSharedSettings, SHARED_SETTING_KEYS, sharedEventsFile,
-  sharedEventsStamp, sharedRoot, sharedSettingsOf, syncOwnEvents, writePoolState, writeSharedSettings, type SyncState,
+  adoptPoolState, createMirror, createTailReader, ensureInstanceId, poolStateOf, readPoolState, readSharedEvents, readSharedSettings,
+  SHARED_SETTING_KEYS, sharedEventsFile, sharedEventsStamp, sharedRoot, sharedSettingsOf, writePoolState, writeSharedSettings, type SyncState,
 } from './shared';
 import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastStats, type VastStats } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
@@ -137,6 +137,9 @@ let sharedDirty = true;
 let sharedStatus: SharedLedgerView | null = null;
 /** 로컬 소급분을 날짜별 금액이 담긴 이벤트로 올렸는지 (실행마다 한 번 확인) */
 let backfillShared = false;
+/** 공유 폴더 이어 읽기·내 파일 미러 (폴더가 바뀌면 새로) */
+let sharedTail = createTailReader();
+let mirror: { dir: string; push: () => number } | null = null;
 const SHARED_SYNC_MS = 60_000;
 
 /** 전력 이벤트는 10분 단위로 묶어 기록 */
@@ -278,7 +281,7 @@ function hubView(): HubView {
 function flushEnergy(): void {
   if (!energyBuf || energyBuf.kwh <= 0) return;
   const span = Math.max(1, energyBuf.end - energyBuf.start);
-  logEvent({ t: energyBuf.end, type: 'energy', start: energyBuf.start, end: energyBuf.end, avgW: energyBuf.wms / span, kwh: energyBuf.kwh, krwPerKwh: settings.profit.krwPerKwh });
+  logEvent({ t: energyBuf.end, type: 'energy', start: energyBuf.start, end: energyBuf.end, avgW: energyBuf.wms / span, kwh: energyBuf.kwh, krwPerKwh: settings.profit.krwPerKwh, coin: settings.coin });
   energyBuf = null;
 }
 
@@ -663,7 +666,10 @@ export async function poll(): Promise<void> {
       energyBuf.end = now;
       energyBuf.wms += watts * dt;
       energyBuf.kwh += kwh;
-      if (energyBuf.end - energyBuf.start >= ENERGY_EVENT_MS) flushEnergy();
+      if (energyBuf.end - energyBuf.start >= ENERGY_EVENT_MS) {
+        flushEnergy();
+        if (sharedBook) syncShared();
+      }
     }
   }
   lastPollAt = now;
@@ -711,6 +717,9 @@ export async function refreshRemote(includeVast: boolean): Promise<void> {
           remote.payouts = k.payouts;
           if (k.balance !== null) {
             remote.balance = k.balance;
+            // 공유 장부를 쓰는데 폴더가 안 보이면 풀 증가를 기록하지 않는다: 다른 OS 가 이미 센 몫을 이 PC 의
+            // 오래된 기준점으로 다시 세게 된다. 폴더가 다시 보이면 그때의 기준점부터 이어 간다
+            if (sharedDir() && !sharedStatus?.ok) return;
             // 다른 인스턴스(다른 OS)가 그 사이 기록한 기준점이 있으면 먼저 받아들인다
             syncPoolIn();
             const prevTotal = ledger.lastTotal;
@@ -747,6 +756,7 @@ export async function refreshRemote(includeVast: boolean): Promise<void> {
   remote.updatedAt = now;
   remote.error = errors.length ? errors.join(' · ') : null;
   writeJson(file('ledger.json'), ledger);
+  if (sharedDir()) syncShared();
   autoBackfill();
   savePnl();
 
@@ -793,6 +803,16 @@ function validatePatch(p: Partial<Settings>): string | null {
   return null;
 }
 
+/** 코인이 바뀌면 시세 기준가·장부 기준점을 새로 잡는다 (로컬 변경·공유 설정 받아들이기 공통) */
+function resetForCoin(): void {
+  settings.profit.baselinePrlUsd = 0;
+  ledger = emptyLedger();
+  remote.prlUsd = remote.balance = remote.priceAt = null;
+  remote.payouts = [];
+  priceSeries = [];
+  sharedDirty = true;
+}
+
 export function applyPatch(p: Partial<Settings>): string | null {
   const err = validatePatch(p);
   if (err) return err;
@@ -804,22 +824,21 @@ export function applyPatch(p: Partial<Settings>): string | null {
   const dirChanged = p.sharedLedgerDir !== undefined && p.sharedLedgerDir !== settings.sharedLedgerDir;
   settings = mergeSettings(settings, p);
   refreshKnownMiners();
-  if (coinChanged) {
-    // 코인이 바뀌면 시세 기준가·장부 기준점을 새로 잡는다
-    settings.profit.baselinePrlUsd = 0;
-    ledger = emptyLedger();
-    remote.prlUsd = remote.balance = remote.priceAt = null;
-    remote.payouts = [];
-    priceSeries = [];
-  }
+  if (coinChanged) resetForCoin();
   saveSettings();
   env.onSettings?.(settings);
   if (dirChanged) {
     sharedBook = null;
     sharedStamp = '';
     sharedStatus = null;
+    mirror = null;
+    sharedTail = createTailReader();
     syncShared();
-  } else if (sharedChanged) pushSharedSettings();
+  } else if (sharedChanged) {
+    sync.settingsDirty = true;
+    saveSync();
+    pushSharedSettings();
+  }
   if (vastChanged) {
     // 필터가 바뀌면 이전 조건의 시세를 버리고 바로 다시 조회
     remote.vast = {};
@@ -969,8 +988,12 @@ function syncPoolIn(): void {
   if (!dir || !sharedStatus?.ok) return;
   const st = readPoolState(sharedRoot(dir));
   if (!st || st.gen <= sync.poolGen) return;
+  // 다른 코인의 기준점은 받지 않는다 (공유 설정의 코인을 먼저 받아들인 뒤 다시 맞춘다)
+  if (st.coin && st.coin !== settings.coin) return;
   ledger = adoptPoolState(ledger, st);
   if (st.lastMinedAt !== null) pnl.lastMinedAt = Math.max(pnl.lastMinedAt ?? 0, st.lastMinedAt);
+  // 재부팅 전 실시간 추정분은 그 사이 다른 OS 가 확정분으로 기록했다
+  if (st.by !== instanceId) clearPending(pnl, settings.coin);
   sync.poolGen = st.gen;
   saveSync();
   env.log.info(`shared ledger: adopted pool state gen ${st.gen} from ${st.by} (total ${st.lastTotal})`);
@@ -983,7 +1006,7 @@ function syncPoolOut(): void {
   try {
     const root = sharedRoot(dir);
     const gen = Math.max(sync.poolGen, readPoolState(root)?.gen ?? 0) + 1;
-    writePoolState(root, poolStateOf(ledger, pnl.lastMinedAt, gen, instanceId));
+    writePoolState(root, poolStateOf(ledger, settings.coin, pnl.lastMinedAt, gen, instanceId));
     sync.poolGen = gen;
     saveSync();
   } catch (e) {
@@ -999,6 +1022,7 @@ function pushSharedSettings(): void {
     const gen = Math.max(sync.settingsGen, readSharedSettings(root)?.gen ?? 0) + 1;
     writeSharedSettings(root, sharedSettingsOf(settings, gen, instanceId));
     sync.settingsGen = gen;
+    sync.settingsDirty = false;
     saveSync();
   } catch (e) {
     env.log.warn(`shared ledger: cannot write shared settings: ${(e as Error).message}`);
@@ -1021,59 +1045,72 @@ export function syncShared(): void {
     return;
   }
   const root = sharedRoot(dir);
-  const status: SharedLedgerView = { dir, ok: false, error: null, instanceId, instances: [], at: sharedStatus?.at ?? null, overlaps: sharedOverlaps };
+  const status: SharedLedgerView = { dir, ok: false, error: null, instanceId, instances: sharedStatus?.instances ?? [], at: sharedStatus?.at ?? null, overlaps: sharedOverlaps };
   try {
     if (!fs.existsSync(dir)) throw new Error('폴더가 없습니다 (디스크가 연결·마운트되지 않았을 수 있습니다)');
+    // 한 번 연결했던 폴더에 crypthy/ 가 없으면 만들지 않는다: 마운트되지 않은 빈 마운트 지점일 가능성이 크다
+    if (sync.rootDir === dir && !fs.existsSync(path.join(root, 'pnl'))) throw new Error(`${root} 가 없습니다 (공유 파티션이 마운트되지 않았을 수 있습니다)`);
     fs.mkdirSync(path.join(root, 'pnl'), { recursive: true });
+    if (sync.rootDir !== dir) {
+      sync.rootDir = dir;
+      saveSync();
+    }
     status.ok = true;
     sharedStatus = status;
 
+    // 1) 공유 설정: 이 PC 에서 바꾼 것(연결이 끊겼던 동안 포함)을 먼저 올리고, 아니면 더 새로운 것을 받아들인다
     const ss = readSharedSettings(root);
-    if (ss && ss.gen > sync.settingsGen) {
+    if (!ss || sync.settingsDirty) pushSharedSettings();
+    else if (ss.gen > sync.settingsGen) {
       const patch = Object.fromEntries(SHARED_SETTING_KEYS.map((k) => [k, ss[k]]).filter(([, v]) => v !== undefined)) as Partial<Settings>;
       if (!validatePatch(patch)) {
+        const coinChanged = patch.coin !== undefined && patch.coin !== settings.coin;
         settings = mergeSettings(settings, patch);
+        if (coinChanged) resetForCoin();
         saveSettings();
         env.log.info(`shared ledger: adopted shared settings gen ${ss.gen} from ${ss.by}`);
       }
       sync.settingsGen = ss.gen;
       saveSync();
-    } else if (!ss) pushSharedSettings();
+    }
 
+    // 2) 풀 기준점
     syncPoolIn();
 
-    // 소급분은 날짜별 금액을 담은 이벤트로 한 번 올려 둔다 (0.4.0 이전 소급 이벤트에는 금액이 없음)
-    if (!backfillShared && pnl.backfill && !readEvents(pnlEvents()).some((e) => e.type === 'bootstrap' && e.days)) {
-      const bf = pnl.backfill;
-      logEvent({ t: Date.now(), type: 'bootstrap', coin: bf.coin, from: bf.from, to: bf.to, qty: bf.qty, watts: bf.watts, kwh: Object.values(bf.days).reduce((a, d) => a + d.energyKwh, 0), auto: bf.auto, days: bf.days });
-    }
-    backfillShared = true;
-
-    const pushed = syncOwnEvents(pnlEvents(), sharedEventsFile(root, instanceId));
+    // 3) 내 로그 → 공유 폴더의 내 파일 (처음엔 기존 장부 전체, 이후 늘어난 것만)
+    if (!mirror || mirror.dir !== dir) mirror = { dir, push: createMirror(pnlEvents(), sharedEventsFile(root, instanceId)) };
+    const pushed = mirror.push();
     if (pushed) env.log.info(`shared ledger: pushed ${pushed} events`);
 
+    // 4) 모든 인스턴스 이벤트로 다시 계산 (파일이 바뀌었을 때만, 늘어난 부분만 읽는다)
     const stamp = sharedEventsStamp(root);
     if (stamp !== sharedStamp || sharedDirty || !sharedBook) {
-      const lists = readSharedEvents(root);
-      // 이 인스턴스는 로컬 로그를 그대로 쓴다 (방금 기록한 것까지 바로 반영)
-      lists.push({ src: instanceId, events: readEvents(pnlEvents()) });
+      let lists = readSharedEvents(root, sharedTail);
+      // 소급분은 날짜별 금액을 담은 이벤트로 한 번 올려 둔다 (어느 인스턴스에도 그런 이벤트가 없을 때만)
+      if (!backfillShared && pnl.backfill && pnl.backfill.coin === settings.coin && !lists.some((l) => l.events.some((e) => e.type === 'bootstrap' && e.days))) {
+        const bf = pnl.backfill;
+        logEvent({ t: Date.now(), type: 'bootstrap', coin: bf.coin, from: bf.from, to: bf.to, qty: bf.qty, watts: bf.watts, kwh: Object.values(bf.days).reduce((a, d) => a + d.energyKwh, 0), auto: bf.auto, days: bf.days });
+        mirror.push();
+        lists = readSharedEvents(root, sharedTail);
+      }
+      backfillShared = true;
       const r = replayEvents(mergeEvents(lists), settings.coin);
       sharedBook = r.book;
       if (r.overlaps > 0 && r.overlaps !== sharedOverlaps) {
         alertOnce({ ts: Date.now(), level: 'warn', code: 'shared_ledger_overlap', message: `공유 장부: 다른 OS 의 전력 기록과 시간이 ${r.overlaps}곳 겹칩니다 — 두 인스턴스가 동시에 돌았거나 시계가 어긋났을 수 있습니다` }, 6 * 3600_000);
       }
       sharedOverlaps = r.overlaps;
-      sharedStamp = stamp;
+      sharedStamp = sharedEventsStamp(root);
       sharedDirty = false;
-      status.instances = [...new Set(lists.map((l) => l.src))].sort();
-    } else status.instances = sharedStatus?.instances ?? [];
+      status.instances = lists.map((l) => l.src);
+    }
     status.overlaps = sharedOverlaps;
     status.at = Date.now();
   } catch (e) {
     status.ok = false;
     status.error = (e as Error).message;
     sharedBook = null;
-    alertOnce({ ts: Date.now(), level: 'warn', code: 'shared_ledger_offline', message: `공유 장부 폴더를 쓸 수 없어 이 PC 에만 기록합니다 (${status.error}). 폴더가 다시 보이면 밀린 기록을 옮깁니다` }, 6 * 3600_000);
+    alertOnce({ ts: Date.now(), level: 'warn', code: 'shared_ledger_offline', message: `공유 장부 폴더를 쓸 수 없어 이 PC 에만 기록합니다 (${status.error}). 이 동안 풀 증가분은 기록하지 않고, 폴더가 다시 보이면 이어서 기록합니다` }, 6 * 3600_000);
   }
   sharedStatus = status;
 }

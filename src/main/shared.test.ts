@@ -8,8 +8,8 @@ import {
 } from './pnl';
 import { emptyLedger, recordEarnings, type Ledger, type Payout } from './profit';
 import {
-  adoptPoolState, ensureInstanceId, poolStateOf, readPoolState, readSharedEvents, sharedEventsFile, sharedRoot, syncOwnEvents, writeAtomic,
-  writePoolState,
+  adoptPoolState, appendLines, createMirror, createTailReader, ensureInstanceId, poolStateOf, readPoolState, readSharedEvents, sharedEventsFile,
+  sharedRoot, syncOwnEvents, writeAtomic, writePoolState,
 } from './shared';
 
 const H = 3_600_000;
@@ -41,7 +41,7 @@ class Instance {
   syncIn() {
     if (!this.shared) return;
     const st = readPoolState(sharedRoot(this.shared));
-    if (!st || st.gen <= this.poolGen) return;
+    if (!st || st.gen <= this.poolGen || (st.coin && st.coin !== 'pearl')) return;
     this.ledger = adoptPoolState(this.ledger, st);
     if (st.lastMinedAt !== null) this.book.lastMinedAt = Math.max(this.book.lastMinedAt ?? 0, st.lastMinedAt);
     this.poolGen = st.gen;
@@ -50,11 +50,15 @@ class Instance {
     if (!this.shared) return;
     const root = sharedRoot(this.shared);
     const gen = Math.max(this.poolGen, readPoolState(root)?.gen ?? 0) + 1;
-    writePoolState(root, poolStateOf(this.ledger, this.book.lastMinedAt, gen, this.id));
+    writePoolState(root, poolStateOf(this.ledger, 'pearl', this.book.lastMinedAt, gen, this.id));
     this.poolGen = gen;
   }
+  /** 공유 폴더가 안 보이는 상태 (마운트 안 됨) */
+  offline = false;
   /** 풀 잔액·지급 조회 1회 (core.refreshRemote 의 풀 부분) */
   observe(t: number, balance: number, payouts: Payout[], legacy = false) {
+    // core: 공유 장부를 쓰는데 폴더가 안 보이면 풀 증가를 기록하지 않는다
+    if (this.shared && this.offline) return;
     this.syncIn();
     const prev = this.ledger.lastTotal;
     const fresh = freshPayouts(new Set(this.ledger.seenPayouts), payouts);
@@ -167,6 +171,22 @@ describe('shared ledger across a dual boot (Windows ↔ Ubuntu, never at the sam
     expect(loneBook.trackStart?.total).not.toBe(1); // 기준점이 다름 → 소급하면 Windows 몫을 다시 센다
   });
 
+  it('an OS that cannot see the folder records nothing for the pool, so nothing is counted twice when it reconnects', () => {
+    const shared = tmp();
+    const win = new Instance('windows-aaaaaa', shared);
+    const lin = new Instance('linux-bbbbbb', shared);
+    for (const t of winTimes) win.observe(t, pool(t).balance, pool(t).payouts);
+    win.push();
+    lin.offline = true; // 부팅했는데 공유 파티션이 마운트되지 않음
+    for (const t of linTimes.slice(0, 4)) lin.observe(t, pool(t).balance, pool(t).payouts);
+    lin.offline = false; // 다시 보임 → 그 시점의 기준점부터
+    for (const t of linTimes.slice(4)) lin.observe(t, pool(t).balance, pool(t).payouts);
+    lin.push();
+    const merged = replayEvents(mergeEvents(readSharedEvents(sharedRoot(shared))), 'pearl').book;
+    const last = linTimes.at(-1)!;
+    expect(summarizePnl(merged, 'pearl', last, KRW).all.mined).toBeCloseTo(((last - day(18, 9)) / H) * 0.3, 9);
+  });
+
   it('flags energy records of two instances that overlap in time', () => {
     const shared = tmp();
     const a = new Instance('windows-aaaaaa', shared);
@@ -179,7 +199,58 @@ describe('shared ledger across a dual boot (Windows ↔ Ubuntu, never at the sam
   });
 });
 
+describe('replay details', () => {
+  it('pre-0.4.1 energy without a coin belongs to the coin of the events before it', () => {
+    const t0 = day(18, 9);
+    const ev = (e: Omit<PnlEvent, 't'> & { t?: number }, t: number) => ({ ...e, t }) as PnlEvent;
+    const events = mergeEvents([{ src: 'w', events: [
+      ev({ type: 'pool', coin: 'other', total: 1 }, t0),
+      ev({ type: 'energy', start: t0, end: t0 + H, avgW: 1000, kwh: 1, krwPerKwh: 350 }, t0 + H),
+      ev({ type: 'pool', coin: 'pearl', total: 1 }, t0 + 2 * H),
+      ev({ type: 'energy', start: t0 + 2 * H, end: t0 + 3 * H, avgW: 1000, kwh: 1, krwPerKwh: 350 }, t0 + 3 * H),
+    ] }]);
+    expect(summarizePnl(replayEvents(events, 'pearl').book, 'pearl', t0 + 3 * H, KRW).all.energyCostKrw).toBeCloseTo(350, 6);
+  });
+
+  it('0.3.4 migration (baseline without a pool event): the first increase is not part of the baseline', () => {
+    const t = day(18, 10);
+    const events = mergeEvents([{ src: 'w', events: [
+      { t, type: 'pool', coin: 'pearl', total: 6.4 } as PnlEvent,
+      { t, type: 'mined', coin: 'pearl', qty: 0.3, krwPerCoin: KRW } as PnlEvent,
+    ] }]);
+    const b = replayEvents(events, 'pearl').book;
+    expect(b.trackStart?.at).toBe(t);
+    expect(b.trackStart?.total).toBeCloseTo(6.1, 9);
+    expect(summarizePnl(b, 'pearl', t, KRW).all.mined).toBeCloseTo(0.3, 9);
+  });
+});
+
 describe('shared folder files', () => {
+  it('reads only the appended part and waits for a torn last line', () => {
+    const f = path.join(tmp(), 'events-x.jsonl');
+    const read = createTailReader();
+    appendLines(f, ['{"t":1,"type":"price","coin":"pearl","usd":1,"krwPerUsd":1}']);
+    fs.appendFileSync(f, '{"t":2,"type":"price","coin":"pearl",');
+    expect(read(f).map((e) => e.t)).toEqual([1]);
+    fs.appendFileSync(f, '"usd":1,"krwPerUsd":1}\n');
+    expect(read(f).map((e) => e.t)).toEqual([1, 2]);
+    fs.writeFileSync(f, '{"t":9,"type":"price","coin":"pearl","usd":1,"krwPerUsd":1}\n'); // 교체되면 처음부터
+    expect(read(f).map((e) => e.t)).toEqual([9]);
+  });
+
+  it('the mirror pushes only new local events after the first full comparison', () => {
+    const d = tmp();
+    const local = path.join(d, 'events.jsonl');
+    const shared = path.join(d, 'shared', 'events-me.jsonl');
+    appendEvent(local, { t: 1, type: 'price', coin: 'pearl', usd: 1, krwPerUsd: 1, id: 'a' });
+    const push = createMirror(local, shared);
+    expect(push()).toBe(1);
+    expect(push()).toBe(0);
+    appendEvent(local, { t: 2, type: 'price', coin: 'pearl', usd: 1, krwPerUsd: 1, id: 'b' });
+    expect(push()).toBe(1);
+    expect(readEvents(shared).map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
   it('appends only the events missing from this instance\'s shared file (offline catch-up, no duplicates)', () => {
     const shared = tmp();
     const inst = new Instance('linux-bbbbbb', shared);
@@ -209,9 +280,9 @@ describe('shared folder files', () => {
     const root = sharedRoot(tmp());
     expect(readPoolState(root)).toBeNull();
     const l = { ...emptyLedger(), lastTotal: 5, paidTotal: 2, seenPayouts: ['tx1'] };
-    writePoolState(root, poolStateOf({ ...l, lastTotal: 6.5, seenPayouts: ['tx1', 'tx2'], paidTotal: 3 }, 123, 4, 'windows-aaaaaa'));
+    writePoolState(root, poolStateOf({ ...l, lastTotal: 6.5, seenPayouts: ['tx1', 'tx2'], paidTotal: 3 }, 'pearl', 123, 4, 'windows-aaaaaa'));
     const st = readPoolState(root)!;
-    expect(st).toMatchObject({ gen: 4, by: 'windows-aaaaaa', lastMinedAt: 123 });
+    expect(st).toMatchObject({ gen: 4, by: 'windows-aaaaaa', coin: 'pearl', lastMinedAt: 123 });
     const adopted = adoptPoolState({ ...l, pendingKwh: 1, pendingMs: 9 }, st);
     expect(adopted).toMatchObject({ lastTotal: 6.5, paidTotal: 3, seenPayouts: ['tx1', 'tx2'], pendingKwh: 0, pendingMs: 0 });
   });

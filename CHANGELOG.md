@@ -12,7 +12,7 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ### Added
 - **Shared ledger for a dual boot** (Windows Crypthy ↔ Linux `crypthy-headless`): Settings → shared ledger folder (headless: `--shared-ledger DIR`). Each instance appends only to its own `crypthy/pnl/events-<instance id>.jsonl`; the PnL is recomputed from all instances, so both OSes show the same totals. The pool baseline (last total, payouts seen) is shared with a generation number, so a pool increase or payout is counted once whichever OS sees it. Coin, wallet, pool and profit settings are shared; miner on/off, remote API and power limits stay per OS.
-- The first time, the existing local ledger is exported to the shared folder; events already copied between the two data folders are counted once. Without the folder (not mounted) Crypthy records locally and catches up later. Overlapping energy records of two instances are flagged.
+- The first time, the existing local ledger is exported to the shared folder; events already copied between the two data folders are counted once. Without the folder (not mounted) Crypthy keeps energy and sales locally and catches up later, and records no pool increase meanwhile so nothing is counted twice; the Linux service waits for the mount. Overlapping energy records of two instances are flagged.
 - Events now carry an id; the backfill event carries its per-day amounts so every instance recomputes the same backfill.
 
 ## [0.4.0] - 2026-10-18

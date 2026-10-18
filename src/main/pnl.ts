@@ -25,7 +25,7 @@ export type PnlEvent = EventBase & (
   | { type: 'pool'; coin: string; total: number }
   | { type: 'payout'; coin: string; key: string; amount: number; at: number | null }
   | { type: 'mined'; coin: string; qty: number; krwPerCoin: number | null; from?: number }
-  | { type: 'energy'; start: number; end: number; avgW: number; kwh: number; krwPerKwh: number }
+  | { type: 'energy'; start: number; end: number; avgW: number; kwh: number; krwPerKwh: number; coin?: string }
   | { type: 'price'; coin: string; usd: number; krwPerUsd: number }
   | { type: 'sale'; coin: string; qty: number; proceedsKrw: number; feeKrw: number; venue: string; note: string }
   | { type: 'bootstrap'; coin: string; from: number; to: number; qty: number; watts: number; kwh: number; auto?: boolean; days?: Record<string, BackfillDay> }
@@ -60,6 +60,17 @@ export function appendEvent(file: string, ev: PnlEvent, maxBytes = EVENTS_MAX_BY
 }
 
 export const rotated = (file: string) => file.replace(/\.jsonl$/, '.1.jsonl');
+
+/** 한 줄을 이벤트로 (형식이 맞지 않거나 쓰다가 끊긴 줄이면 null) */
+export function parseEventLine(line: string): PnlEvent | null {
+  if (!line.trim()) return null;
+  try {
+    const ev = JSON.parse(line) as PnlEvent;
+    return ev && typeof ev === 'object' && EVENT_TYPES.has(ev.type) && Number.isFinite(ev.t) ? ev : null;
+  } catch {
+    return null;
+  }
+}
 
 /** 회전된 파일(.1) → 현재 파일 순으로 읽고, 형식이 맞지 않는 줄은 건너뛴다 */
 export function readEvents(file: string): PnlEvent[] {
@@ -242,7 +253,7 @@ export function addPending(b: PnlBook, coin: string, at: number, qty: number): v
   b.pending[k] = (b.pending[k] ?? 0) + qty;
 }
 
-function clearPending(b: PnlBook, coin: string): void {
+export function clearPending(b: PnlBook, coin: string): void {
   for (const k of Object.keys(b.pending)) if (k.startsWith(`${coin}|`)) delete b.pending[k];
 }
 
@@ -546,18 +557,26 @@ export function replayEvents(events: (PnlEvent & { src?: string })[], coin: stri
   let lastBoot: Extract<PnlEvent, { type: 'bootstrap' }> | null = null;
   let firstPool: { at: number; total: number } | null = null;
   let lastPriceKrw: number | null = null;
+  let mined = false;
   const spans: { start: number; end: number; src: string }[] = [];
+  /** 0.4.1 이전 전력 이벤트에는 코인이 없다: 그 앞의 풀·채굴·시세 이벤트의 코인으로 본다 */
+  let lastCoin = coin;
   for (const ev of events) {
+    if ('coin' in ev && typeof ev.coin === 'string' && ev.type !== 'energy') lastCoin = ev.coin;
     switch (ev.type) {
       case 'pool':
         if (ev.coin === coin && !firstPool) firstPool = { at: ev.t, total: ev.total };
         break;
       case 'mined':
         if (ev.coin !== coin) break;
+        // 첫 풀 누적 이벤트와 같은 관측의 증가분이면 기준점은 그 증가 전 값 (0.3.4 장부 변환은 기준점 이벤트를 남기지 않았다)
+        if (firstPool && ev.t === firstPool.at && !mined) firstPool.total -= ev.qty;
+        mined = true;
         addMinedSpan(b, coin, ev.from, ev.t, ev.qty, ev.krwPerCoin);
         b.lastMinedAt = Math.max(b.lastMinedAt ?? 0, ev.t);
         break;
       case 'energy':
+        if ((ev.coin ?? lastCoin) !== coin) break;
         addEnergySpan(b, coin, ev.start, ev.end, ev.kwh, ev.krwPerKwh);
         spans.push({ start: ev.start, end: ev.end, src: ev.src ?? '' });
         break;
