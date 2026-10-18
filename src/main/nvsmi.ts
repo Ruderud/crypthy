@@ -12,6 +12,7 @@ export const NVSMI_FIELDS = [
   'power.max_limit',
   'utilization.gpu',
   'uuid',
+  'driver_version',
 ] as const;
 
 export interface NvGpu {
@@ -30,6 +31,8 @@ export interface NvGpu {
   utilPct: number | null;
   /** GPU UUID (예: GPU-1a2b…). CUDA_VISIBLE_DEVICES 로 채굴할 GPU 를 고를 때 */
   uuid: string | null;
+  /** 드라이버 버전 (SRBMiner 장치 번호 캐시가 바뀌었는지 판단) */
+  driver: string | null;
 }
 
 function num(v: string | undefined): number | null {
@@ -52,8 +55,8 @@ export function parseNvsmiCsv(out: string): NvGpu[] {
   for (const line of out.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const c = line.split(',').map((s) => s.trim());
-    // uuid 는 0.4.4 에 추가: 열이 하나 모자란 출력(테스트·구버전 형식)도 받는다
-    if (c.length < NVSMI_FIELDS.length - 1) continue;
+    // uuid(0.4.4)·driver_version(0.4.5) 은 나중에 추가: 그 열이 없는 출력(테스트·구버전 형식)도 받는다
+    if (c.length < NVSMI_FIELDS.length - 2) continue;
     const index = Number.parseInt(c[0], 10);
     if (!Number.isInteger(index) || !BUS_ID_RE.test(c[2])) continue;
     gpus.push({
@@ -69,6 +72,7 @@ export function parseNvsmiCsv(out: string): NvGpu[] {
       powerMaxW: num(c[8]),
       utilPct: num(c[9]),
       uuid: /^GPU-[0-9a-f-]+$/i.test(c[10] ?? '') ? c[10] : null,
+      driver: /^\d+(\.\d+)+$/.test(c[11] ?? '') ? c[11] : null,
     });
   }
   return gpus;

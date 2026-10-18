@@ -9,7 +9,7 @@ describe('parseNvsmiCsv', () => {
     expect(gpus).toHaveLength(2);
     expect(gpus[0]).toEqual({
       index: 0, name: 'NVIDIA GeForce RTX 5090', busId: '00000000:01:00.0', bus: 1,
-      tempC: 63, fanPct: 72, powerW: 588.12, powerLimitW: 600, powerMinW: 400, powerMaxW: 600, utilPct: 100, uuid: null,
+      tempC: 63, fanPct: 72, powerW: 588.12, powerLimitW: 600, powerMinW: 400, powerMaxW: 600, utilPct: 100, uuid: null, driver: null,
     });
     expect(gpus[1]).toMatchObject({ busId: '00000000:10:00.0', bus: 16, powerLimitW: 280, powerMaxW: 400 });
   });
