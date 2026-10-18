@@ -8,6 +8,18 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-10-18
+
+### Fixed
+- Installing the 0.3.8 update left one Windows PC with a broken app ("This app can't run on your PC") and Crypthy no longer started. The same in-app update (0.3.7 → 0.3.8) works on a clean Windows runner, so the trigger on that PC is not confirmed; during the update `Crypthy.exe` is briefly missing or half-written, and when the silent installer cannot replace the files it overwrites them ignoring errors and starts the app anyway (`--force-run`). The installer now checks the installed `Crypthy.exe` version before starting it; on a mismatch it does not start the app, explains how to reinstall and opens the release page.
+- Before handing over to the installer the app now releases everything it holds: timers, the local status API server, the tray, all windows and the close guards of the tray app.
+
+**If 0.3.8 left Crypthy broken:** download `Crypthy-0.3.9-setup-x64.exe` from [Releases](https://github.com/Ruderud/crypthy/releases/tag/v0.3.9) and run it. Settings, ledger and PnL data in `%APPDATA%\Crypthy` are kept.
+
+### Added
+- File log at `%APPDATA%\Crypthy\logs\main.log` (rotated at 1 MB): app start and quit, update states, installer hand-over and uncaught errors, plus electron-updater's own log.
+- Windows CI smoke test on every push: (1) install the latest release, start it, then run the new installer with electron-updater's arguments; (2) let the installed app download the new version from a local update server and install it from inside the app; (3) hold `Crypthy.exe` open from another process. Each must end on the new version with user data kept, or, when the file cannot be replaced, show an error and never start a half-installed app.
+
 ## [0.3.8] - 2026-10-18
 
 ### Changed
@@ -121,7 +133,8 @@ Release notes on GitHub are taken from the matching section of this file.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/Ruderud/crypthy/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/Ruderud/crypthy/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/Ruderud/crypthy/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/Ruderud/crypthy/compare/v0.3.5...v0.3.6

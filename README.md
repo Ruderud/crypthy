@@ -226,7 +226,7 @@ sudo systemctl daemon-reload
 - **Later** hides the same notice until the next scheduled check; a manual check shows it again.
 - Install happens only when you click. Miners run separately from the app, so mining continues through the restart; only the safety watch pauses briefly.
 - Downloads are checked against the sha512 in `latest.yml` / `latest-linux.yml`. Builds are unsigned, so signature verification (`verifyUpdateCodeSignature`) is off; this only proves the file matches the one on GitHub Releases.
-- A failed update leaves an alert and does not affect the safety watch. Try the flow with `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1`.
+- A failed update leaves an alert and does not affect the safety watch. If installing the update cannot replace the app files, the installer does not start a half-installed app; it says so and opens the release page. To recover, download `Crypthy-<version>-setup-x64.exe` from [Releases](https://github.com/Ruderud/crypthy/releases) and run it; settings and data in `%APPDATA%\Crypthy` are kept. The update steps are written to `%APPDATA%\Crypthy\logs\main.log`. Try the flow with `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1`.
 
 ### Local status API
 
@@ -261,6 +261,7 @@ sudo systemctl daemon-reload
 | Power-limit script and log | `C:\ProgramData\Crypthy\` |
 | PnL event log (rotated at 5 MB) | `%APPDATA%\Crypthy\pnl\events.jsonl` |
 | PnL daily totals (no time limit) | `%APPDATA%\Crypthy\pnl\daily.json` |
+| App log (update and quit steps, rotated at 1 MB) | `%APPDATA%\Crypthy\logs\main.log` |
 
 <a id="safety-and-privacy"></a>
 

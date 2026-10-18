@@ -226,7 +226,7 @@ sudo systemctl daemon-reload
 - **稍后** 会在下一次定期检查之前隐藏同一提示；手动检查时会再次显示。
 - 仅在点击时才会安装。挖矿程序与应用分开运行，所以重启后挖矿仍会继续，只有安全监控会短暂暂停。
 - 下载的文件通过 `latest.yml` / `latest-linux.yml` 中的 sha512 进行校验。由于没有代码签名，签名校验（`verifyUpdateCodeSignature`）处于关闭状态；这只能保证文件与 GitHub Releases 上的一致。
-- 即使更新失败，也只会留下通知，不会影响安全监控。可用 `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1` 体验整个流程。
+- 即使更新失败，也只会留下通知，不会影响安全监控。如果更新安装无法替换应用文件，安装程序不会启动只安装了一半的应用，而是给出提示并打开发布页面。从 [Releases](https://github.com/Ruderud/crypthy/releases) 下载 `Crypthy-<版本>-setup-x64.exe` 并运行即可恢复，`%APPDATA%\Crypthy` 中的设置和记录会保留。更新过程记录在 `%APPDATA%\Crypthy\logs\main.log`。可用 `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1` 体验整个流程。
 
 ### 本地状态 API
 
@@ -261,6 +261,7 @@ sudo systemctl daemon-reload
 | 功率限制脚本和日志 | `C:\ProgramData\Crypthy\` |
 | PnL 事件日志（5 MB 轮换） | `%APPDATA%\Crypthy\pnl\events.jsonl` |
 | PnL 每日汇总（不限期限） | `%APPDATA%\Crypthy\pnl\daily.json` |
+| 应用日志（更新与退出过程，1 MB 轮换） | `%APPDATA%\Crypthy\logs\main.log` |
 
 <a id="safety-and-privacy"></a>
 

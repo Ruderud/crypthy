@@ -226,7 +226,7 @@ sudo systemctl daemon-reload
 - **나중에**는 같은 안내를 다음 정기 확인 때까지 숨깁니다. 수동으로 확인하면 다시 보입니다.
 - 설치는 사용자가 누를 때만 이뤄집니다. 채굴기는 앱과 따로 실행되므로 재시작해도 채굴은 계속되고, 안전 감시만 잠시 멈춥니다.
 - 받은 파일은 `latest.yml` / `latest-linux.yml`의 sha512로 확인합니다. 코드 서명이 없어 서명 검증(`verifyUpdateCodeSignature`)은 끕니다. 따라서 이 검증은 받은 파일이 GitHub Releases에 올라간 파일과 같다는 것까지만 보장합니다.
-- 업데이트가 실패하면 알림만 남기고 안전 감시에는 영향을 주지 않습니다. `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1`로 안내 흐름을 확인할 수 있습니다.
+- 업데이트가 실패하면 알림만 남기고 안전 감시에는 영향을 주지 않습니다. 업데이트 설치가 앱 파일을 바꾸지 못하면 설치 파일은 반쯤 설치된 앱을 실행하지 않고 안내와 함께 릴리스 페이지를 엽니다. [Releases](https://github.com/Ruderud/crypthy/releases)에서 `Crypthy-<버전>-setup-x64.exe`를 받아 실행하면 복구되며, `%APPDATA%\Crypthy`의 설정·기록은 그대로 남습니다. 업데이트 과정은 `%APPDATA%\Crypthy\logs\main.log`에 기록됩니다. `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1`로 안내 흐름을 확인할 수 있습니다.
 
 ### 로컬 상태 API
 
@@ -261,6 +261,7 @@ sudo systemctl daemon-reload
 | 전력 제한 스크립트·로그 | `C:\ProgramData\Crypthy\` |
 | PnL 이벤트 로그(5MB에서 회전) | `%APPDATA%\Crypthy\pnl\events.jsonl` |
 | PnL 일별 집계(기간 제한 없음) | `%APPDATA%\Crypthy\pnl\daily.json` |
+| 앱 로그(업데이트·종료 과정, 1MB에서 회전) | `%APPDATA%\Crypthy\logs\main.log` |
 
 <a id="safety-and-privacy"></a>
 
