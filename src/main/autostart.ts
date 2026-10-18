@@ -10,13 +10,14 @@ export function quoteExec(p: string): string {
   return `"${p.replace(/(["`$\\])/g, '\\$1')}"`;
 }
 
-export function buildDesktopEntry(execPath: string): string {
+/** hidden 이면 트레이에만 (--hidden), 아니면 창을 띄운다 */
+export function buildDesktopEntry(execPath: string, hidden = true): string {
   return [
     '[Desktop Entry]',
     'Type=Application',
     'Name=Crypthy',
     'Comment=Coin mining hub and PC manager',
-    `Exec=${quoteExec(execPath)} --hidden`,
+    `Exec=${quoteExec(execPath)}${hidden ? ' --hidden' : ''}`,
     'Terminal=false',
     'X-GNOME-Autostart-enabled=true',
     '',
@@ -28,11 +29,11 @@ export function autostartFile(home = os.homedir()): string {
 }
 
 /** AppImage 는 마운트 경로가 매번 바뀌므로 APPIMAGE(원본 파일) 경로를 쓴다 */
-export function setLinuxAutostart(enabled: boolean, execPath = process.env.APPIMAGE || process.execPath, file = autostartFile()): void {
+export function setLinuxAutostart(enabled: boolean, hidden = true, execPath = process.env.APPIMAGE || process.execPath, file = autostartFile()): void {
   if (!enabled) {
     fs.rmSync(file, { force: true });
     return;
   }
   fs.mkdirSync(nodePath.dirname(file), { recursive: true });
-  fs.writeFileSync(file, buildDesktopEntry(execPath), { mode: 0o644 });
+  fs.writeFileSync(file, buildDesktopEntry(execPath, hidden), { mode: 0o644 });
 }

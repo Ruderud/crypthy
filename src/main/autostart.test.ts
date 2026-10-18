@@ -5,6 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { autostartFile, buildDesktopEntry, quoteExec, setLinuxAutostart } from './autostart';
 
 describe('desktop entry', () => {
+  it('can start with the window shown (no --hidden)', () => {
+    const e = buildDesktopEntry('/opt/crypthy/crypthy', false);
+    expect(e).toContain('Exec="/opt/crypthy/crypthy"\n');
+    expect(e).not.toContain('--hidden');
+  });
+
   it('quotes the executable and passes --hidden', () => {
     expect(buildDesktopEntry('/home/u/Apps/Crypthy-0.3.0-linux-x86_64.AppImage')).toContain('Exec="/home/u/Apps/Crypthy-0.3.0-linux-x86_64.AppImage" --hidden');
   });
@@ -23,9 +29,9 @@ describe('desktop entry', () => {
   it('writes and removes the autostart file', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crypthy-as-'));
     const f = path.join(dir, 'autostart', 'crypthy.desktop');
-    setLinuxAutostart(true, '/opt/crypthy/crypthy', f);
+    setLinuxAutostart(true, true, '/opt/crypthy/crypthy', f);
     expect(fs.readFileSync(f, 'utf8')).toContain('Exec="/opt/crypthy/crypthy" --hidden');
-    setLinuxAutostart(false, '/opt/crypthy/crypthy', f);
+    setLinuxAutostart(false, true, '/opt/crypthy/crypthy', f);
     expect(fs.existsSync(f)).toBe(false);
     fs.rmSync(dir, { recursive: true });
   });

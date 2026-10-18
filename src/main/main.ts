@@ -426,7 +426,18 @@ function registerIpc(): void {
   ipcMain.handle('miner:start', routed(() => core.startMining(dialogConfirm), '/v1/miner/start', () => ({})));
   ipcMain.handle('miner:stop', routed(() => core.stopMining(dialogConfirm), '/v1/miner/stop', () => ({})));
   ipcMain.handle('miner:importTask', () => (remote ? LOCAL_ONLY : core.importMinerTask()));
-  ipcMain.handle('settings:save', routed((patch) => core.saveSettingsPatch(patch as Partial<Settings>), '/v1/settings', (patch) => ({ patch })));
+  ipcMain.handle(
+    'settings:save',
+    routed(async (patch) => {
+      const p = patch as Partial<Settings>;
+      // 채굴 자동 시작을 처음 켤 때는 위험·비용 고지 동의를 먼저 받는다 (자동 시작은 동의 없이는 하지 않는다)
+      if (p.autoStartMining === true && !core.currentSettings().autoStartMining && !core.isConsented()) {
+        if (!(await dialogConfirm('consent', core.CONSENT_TEXT))) return '채굴 자동 시작은 위험·비용 고지에 동의해야 켤 수 있습니다';
+        core.acceptRisk();
+      }
+      return core.saveSettingsPatch(p);
+    }, '/v1/settings', (patch) => ({ patch })),
+  );
   ipcMain.handle('setup:importBat', async () => {
     if (remote) return LOCAL_ONLY;
     const r = await dialog.showOpenDialog({ title: '기존 채굴기 실행 bat 선택', properties: ['openFile'], filters: [{ name: 'Batch', extensions: ['bat', 'cmd'] }] });
@@ -450,10 +461,11 @@ function registerIpc(): void {
 
 function applyLoginItem(s: Settings): void {
   if (!app.isPackaged || MOCK) return;
-  if (process.platform === 'win32') app.setLoginItemSettings({ openAtLogin: s.openAtLogin, args: ['--hidden'] });
+  // 로그인 시 창을 띄울지(loginShowWindow) 트레이에만 둘지(--hidden)
+  if (process.platform === 'win32') app.setLoginItemSettings({ openAtLogin: s.openAtLogin, args: s.loginShowWindow ? [] : ['--hidden'] });
   else if (IS_LINUX) {
     try {
-      setLinuxAutostart(s.openAtLogin);
+      setLinuxAutostart(s.openAtLogin, !s.loginShowWindow);
     } catch (e) {
       core.pushAlert({ ts: Date.now(), level: 'warn', code: 'autostart_failed', message: `자동 실행 설정 실패: ${(e as Error).message}` });
     }

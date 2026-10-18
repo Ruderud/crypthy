@@ -400,7 +400,7 @@ function fillForms(st: AppState) {
   showControlFields();
   // 원격 호스트 화면: 채굴기 실행 방식·안전 설정·로그인 시 실행은 호스트에서만 바꾼다 (원격 쓰기 토큰으로 임의 프로그램 실행 방지)
   for (const el of Array.from(form.elements) as HTMLInputElement[]) {
-    const hostOnly = !!st.remote && /^(minerControl\.|safety|openAtLogin|sharedLedgerDir)/.test(el.name);
+    const hostOnly = !!st.remote && /^(minerControl\.|safety|openAtLogin|loginShowWindow|autoStartMining|sharedLedgerDir)/.test(el.name);
     el.disabled = hostOnly;
     el.title = hostOnly ? '원격 호스트에서만 바꿀 수 있습니다' : '';
   }
