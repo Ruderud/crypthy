@@ -1,0 +1,134 @@
+import { describe, expect, it } from 'vitest';
+import type { MinerControlConfig } from '../shared/types';
+import {
+  controlProcessName, createMinerControl, decodeConsole, parseArgs, parseTaskXml, startBlocker, startCommand, stopCommand, validateControl,
+  type Command,
+} from './minerControl';
+
+const cfg = (p: Partial<MinerControlConfig>): MinerControlConfig => ({ mode: 'none', taskName: '', unit: '', exe: '', args: '', confirmStop: true, ...p });
+const SRB = 'C:\\Mining\\SRBMiner\\SRBMiner-MULTI.exe';
+
+describe('argument parsing (no shell)', () => {
+  it('splits on spaces, keeps quoted spaces, and passes shell metacharacters through as plain text', () => {
+    expect(parseArgs('--algorithm pearlhash --pool prl.kryptex.network:8048 --wallet abc.rig1 --api-enable --api-port 21550')).toEqual([
+      '--algorithm', 'pearlhash', '--pool', 'prl.kryptex.network:8048', '--wallet', 'abc.rig1', '--api-enable', '--api-port', '21550',
+    ]);
+    expect(parseArgs('--log-file "C:\\Mining logs\\srb.txt"  --x ""')).toEqual(['--log-file', 'C:\\Mining logs\\srb.txt', '--x', '']);
+    expect(parseArgs('a & calc.exe | b > c $(rm -rf ~) `x`')).toEqual(['a', '&', 'calc.exe', '|', 'b', '>', 'c', '$(rm', '-rf', '~)', '`x`']);
+    expect(parseArgs('"say \\"hi\\""')).toEqual(['say "hi"']);
+  });
+
+  it('rejects newlines, control characters and unbalanced quotes', () => {
+    expect(() => parseArgs('a\nb')).toThrow();
+    expect(() => parseArgs('a\0b')).toThrow();
+    expect(() => parseArgs('"open')).toThrow();
+  });
+});
+
+describe('start / stop commands', () => {
+  it('Windows scheduled task: schtasks /Run and /End with the name as one argument', () => {
+    const c = cfg({ mode: 'task', taskName: 'PearlMiner' });
+    expect(validateControl(c, 'windows')).toBeNull();
+    expect(startCommand(c)).toEqual({ kind: 'exec', cmd: { file: 'schtasks.exe', args: ['/Run', '/TN', 'PearlMiner'] } });
+    expect(stopCommand(c)).toEqual({ file: 'schtasks.exe', args: ['/End', '/TN', 'PearlMiner'] });
+    expect(validateControl(cfg({ mode: 'task', taskName: '\\Mining\\PearlMiner' }), 'windows')).toBeNull();
+  });
+
+  it('rejects task names that could be read as options or break quoting', () => {
+    for (const bad of ['/F', '-x', 'a"b', 'a|b', 'a\nb', '', ' PearlMiner']) {
+      expect(validateControl(cfg({ mode: 'task', taskName: bad }), 'windows')).not.toBeNull();
+    }
+    expect(validateControl(cfg({ mode: 'task', taskName: 'PearlMiner' }), 'linux')).not.toBeNull();
+  });
+
+  it('systemd --user: unit after -- so it can never be an option', () => {
+    const c = cfg({ mode: 'systemd', unit: 'srbminer.service' });
+    expect(validateControl(c, 'linux')).toBeNull();
+    expect(startCommand(c)!.cmd).toEqual({ file: 'systemctl', args: ['--user', 'start', '--', 'srbminer.service'] });
+    expect(stopCommand(c)).toEqual({ file: 'systemctl', args: ['--user', 'stop', '--', 'srbminer.service'] });
+    for (const bad of ['--now', 'a b', 'a;b', '$(x)', '']) expect(validateControl(cfg({ mode: 'systemd', unit: bad }), 'linux')).not.toBeNull();
+  });
+
+  it('direct: absolute .exe on Windows, args as an array, cwd = the miner folder, stop by process', () => {
+    const c = cfg({ mode: 'direct', exe: SRB, args: '--algorithm pearlhash --api-enable' });
+    expect(validateControl(c, 'windows')).toBeNull();
+    expect(startCommand(c)).toEqual({ kind: 'spawn', cmd: { file: SRB, args: ['--algorithm', 'pearlhash', '--api-enable'] }, cwd: 'C:\\Mining\\SRBMiner' });
+    expect(stopCommand(c)).toBeNull();
+    expect(controlProcessName(c, 'windows')).toBe('SRBMiner-MULTI.exe');
+    expect(validateControl(cfg({ mode: 'direct', exe: 'SRBMiner-MULTI.exe' }), 'windows')).not.toBeNull();
+    expect(validateControl(cfg({ mode: 'direct', exe: 'C:\\Mining\\start.bat' }), 'windows')).not.toBeNull();
+    expect(validateControl(cfg({ mode: 'direct', exe: '/opt/srb/SRBMiner-MULTI' }), 'linux')).toBeNull();
+    expect(validateControl(cfg({ mode: 'direct', exe: SRB, args: 'a\r\nb' }), 'windows')).not.toBeNull();
+  });
+});
+
+describe('importing a scheduled task', () => {
+  it('reads Command and Arguments from schtasks /XML, unescaping XML entities and outer quotes', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-16"?>
+<Task><Actions Context="Author"><Exec>
+  <Command>"${SRB}"</Command>
+  <Arguments>--algorithm pearlhash --pool prl.kryptex.network:8048 --wallet abc.rig &amp;&amp; --api-enable</Arguments>
+  <WorkingDirectory>C:\\Mining\\SRBMiner</WorkingDirectory>
+</Exec></Actions></Task>`;
+    expect(parseTaskXml(xml)).toEqual({ exe: SRB, args: '--algorithm pearlhash --pool prl.kryptex.network:8048 --wallet abc.rig && --api-enable' });
+    expect(parseTaskXml('<Task><Actions><ComHandler/></Actions></Task>')).toBeNull();
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]);
+    expect(parseTaskXml(decodeConsole(utf16))?.exe).toBe(SRB);
+  });
+});
+
+describe('start conditions', () => {
+  const base = { config: cfg({ mode: 'task', taskName: 'PearlMiner' }), platform: 'windows' as const, running: false, holds: [] as string[], starting: false };
+
+  it('allows start only when configured, nothing is running and no safety hold remains', () => {
+    expect(startBlocker(base)).toBeNull();
+    expect(startBlocker({ ...base, config: cfg({}) })).toMatch(/방식/);
+    expect(startBlocker({ ...base, running: true })).toMatch(/이미 실행 중/);
+    expect(startBlocker({ ...base, starting: true })).toMatch(/켜는 중/);
+  });
+
+  it('after a danger stop the hold blocks start until the user clears it', () => {
+    expect(startBlocker({ ...base, holds: ['RTX 5090(팬 정지)'] })).toMatch(/안전 보류 중: RTX 5090\(팬 정지\)/);
+  });
+});
+
+describe('controller', () => {
+  const fake = (killErr: string | null = null, execFail = false) => {
+    const calls: string[] = [];
+    const deps = {
+      exec: async (c: Command) => {
+        calls.push(`exec ${c.file} ${c.args.join(' ')}`);
+        if (execFail) throw new Error('ERROR: The task is not running.');
+      },
+      spawnDetached: (c: Command, cwd?: string) => void calls.push(`spawn ${c.file} ${c.args.join(' ')} @${cwd}`),
+      killMiners: async () => {
+        calls.push('kill');
+        return killErr;
+      },
+    };
+    return { calls, ctl: createMinerControl(deps) };
+  };
+
+  it('stop runs the stop command then stops the miner process; it never starts anything', async () => {
+    const { calls, ctl } = fake();
+    expect(await ctl.stop(cfg({ mode: 'task', taskName: 'PearlMiner' }))).toBeNull();
+    expect(calls).toEqual(['exec schtasks.exe /End /TN PearlMiner', 'kill']);
+  });
+
+  it('a failed /End (task already ended, miner started elsewhere) still stops the process', async () => {
+    const { calls, ctl } = fake(null, true);
+    expect(await ctl.stop(cfg({ mode: 'task', taskName: 'PearlMiner' }))).toBeNull();
+    expect(calls.at(-1)).toBe('kill');
+  });
+
+  it('reports a process that cannot be stopped (e.g. started as administrator)', async () => {
+    const { ctl } = fake('관리자 권한으로 실행된 채굴기는 앱이 끌 수 없습니다');
+    expect(await ctl.stop(cfg({ mode: 'direct', exe: SRB }))).toMatch(/관리자 권한/);
+  });
+
+  it('direct start spawns detached without a shell', async () => {
+    const { calls, ctl } = fake();
+    expect(await ctl.start(cfg({ mode: 'direct', exe: SRB, args: '--a "b c"' }))).toBeNull();
+    expect(calls).toEqual([`spawn ${SRB} --a b c @C:\\Mining\\SRBMiner`]);
+  });
+});
