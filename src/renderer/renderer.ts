@@ -471,6 +471,13 @@ $('bootstrapForm').addEventListener('submit', (e) => {
 });
 $('pnlExport').addEventListener('click', () => void crypthy.exportPnl());
 $('pnlFolder').addEventListener('click', () => void crypthy.openPnlFolder());
+crypthy.onFocusUpdate(() => {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  const b = $('updateBanner');
+  b.classList.remove('flash');
+  void b.offsetWidth; // 애니메이션 다시 시작
+  b.classList.add('flash');
+});
 $('updateLater').addEventListener('click', () => void crypthy.dismissUpdate().then(refresh));
 
 // 테마: 화면별 편의 설정이라 localStorage 에만 둔다 (dark → light → system)

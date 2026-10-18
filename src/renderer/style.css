@@ -51,6 +51,8 @@ a { color: var(--accent); }
 /* 헤더와 업데이트 배너를 함께 상단에 고정 — 스크롤해도 업데이트 선택지가 보이게 */
 .topbar { position: sticky; top: 0; z-index: 3; background: var(--bg); }
 .topbar .update-banner { margin: 8px 12px; }
+.update-banner.flash { animation: banner-flash 0.7s ease-in-out 3; }
+@keyframes banner-flash { 50% { box-shadow: 0 0 0 3px var(--accent); } }
 header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
 h1::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 2px; background: var(--accent); transform: rotate(45deg); }

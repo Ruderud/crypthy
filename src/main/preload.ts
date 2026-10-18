@@ -6,6 +6,9 @@ const api: Api = {
   onState: (cb) => {
     ipcRenderer.on('state', (_e, s: AppState) => cb(s));
   },
+  onFocusUpdate: (cb) => {
+    ipcRenderer.on('update:focus', () => cb());
+  },
   clearHold: (id) => ipcRenderer.invoke('safety:clearHold', id),
   saveSettings: (patch) => ipcRenderer.invoke('settings:save', patch),
   importBat: () => ipcRenderer.invoke('setup:importBat'),

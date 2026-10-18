@@ -312,6 +312,8 @@ export interface AppState {
 export interface Api {
   getState(): Promise<AppState>;
   onState(cb: (s: AppState) => void): void;
+  /** OS 알림·트레이에서 업데이트 안내로 왔을 때 (배너로 스크롤·강조) */
+  onFocusUpdate(cb: () => void): void;
   clearHold(id: GpuId): Promise<void>;
   saveSettings(patch: Partial<Settings>): Promise<string | null>;
   importBat(): Promise<string | null>;
