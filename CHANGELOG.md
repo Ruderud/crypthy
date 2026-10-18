@@ -8,6 +8,19 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-19
+
+Start with a dry run: create a SafeTrade API key with **trade permission only** (no withdrawal, IP restriction if possible), enter it on the **SafeTrade auto-sell** card, set a minimum price, run **dry run** and check the plan, then turn dry run off.
+
+### Added
+- **SafeTrade auto-sell** (off by default, starts as a dry run): once a day at a set time, sells the PRL available on SafeTrade (minus an amount you keep) through SafeTrade's official API (`safetrade.com/api`, signed with `X-Auth-Apikey`/`X-Auth-Nonce`/`X-Auth-Signature`). Limit orders only, one tick under the best ask, cancelled and placed a step lower after N minutes; **never below the floor** = max(minimum price, reference × (1 − X%)), reference = higher of SafeTrade's 24 h average and CoinGecko. A minimum price is required for real sales.
+- An abnormal book (spread, thin bids, API error) skips the day with an alert. Daily and per-order limits, PRL markets only (`prlusdt`, `prlusdc`). The order response must match side, type, market, price and amount, or the order is cancelled.
+- Sales are recorded as realized sales in the PnL and in the shared ledger (order ids, average price, fee, USDT). Once a day on one device: the day is marked before the first order, a shared-ledger folder keeps a per-day (UTC) record, and if the app stops mid-sale the open order is cancelled and what sold is recorded at the next start. Switching auto-sell off stops before the next order.
+- Key handling: entered by you in the app and encrypted with the OS secure storage (Windows DPAPI; Linux only with a real keyring), or on a headless host `install.sh --safetrade-key FILE` → `/etc/crypthy/safetrade-key.json` (root 0600) passed with systemd `LoadCredential`, or a 0600 file in the data folder. The key is never sent back to the screen, to remote screens, the status API, logs or error messages.
+- Remote API: `POST /v1/autosell/run` (write token; real sales ask for confirmation). A remote screen can only switch auto-sell on or off, dry run and the time; the floor, limits and market are changed on the host. Turning on real sales or loosening limits asks for confirmation.
+- Reminders only (no automation of withdrawals or wallet sending): PRL to send to SafeTrade when there is nothing to sell, and a weekly (Sunday) withdrawal suggestion.
+- **Cash-out route memo** with editable fees and measured date (2026-10-19): Pearl wallet → SafeTrade (no fee, minimum 1 PRL, 10 confirmations) → PRL/USDT → Binance (USDT BSC, 1 USDT fixed fee, minimum 2) → Upbit/Bithumb (travel rule). Sell daily, withdraw weekly.
+
 ## [0.4.5] - 2026-10-18
 
 To mine only on the RTX 5080: SRBMiner's device numbers can differ from nvidia-smi because of an integrated GPU (with an AMD iGPU as GPU0, the RTX 5080 is `--gpu-id 2`); the app maps them automatically.

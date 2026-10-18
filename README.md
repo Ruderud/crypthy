@@ -76,6 +76,15 @@ Drawn with [TradingView Lightweight Charts™](https://www.tradingview.com/light
 - **Manual sales** (optional): quantity, proceeds, fee, venue and note, stored locally only. Without sales everything is unrealized.
 - **CSV export** of daily totals and events, and a button to open the log folder.
 
+### Auto-sell on SafeTrade and cash-out route (v0.5.0)
+
+- **Auto-sell** (off by default, starts as a dry run): once a day at a set time Crypthy sells the PRL that is available on SafeTrade (minus an amount you keep) through SafeTrade's official API. Limit orders only, never market orders, one tick under the best ask; if they do not fill within N minutes they are cancelled and placed a step lower.
+- **Never below the floor**: floor = max(your minimum price, reference price × (1 − X%)), where the reference is the higher of SafeTrade's 24 h average and CoinGecko. A minimum price is required for real sales.
+- On an abnormal book (spread above Y%, thin bids, API error) nothing is sold that day and an alert is shown. There are a daily maximum and a per-order maximum.
+- Order IDs, fills, average price, fee and USDT received are recorded in the PnL as realized sales and in the shared ledger. It runs once a day on one device only (a per-day record in the shared ledger folder). If the app stops mid-sale, the open order is cancelled and what was sold is recorded at the next start.
+- **Not automated**: withdrawals (SafeTrade → Binance) and sending from the Pearl wallet. Crypthy only reminds you: PRL to send to SafeTrade, and a weekly withdrawal suggestion.
+- **Cash-out route memo** with editable fees and the date they were measured: Pearl wallet → SafeTrade (PRL deposit, no fee, minimum 1 PRL, 10 confirmations) → sell PRL/USDT → Binance (USDT on BSC, 1 USDT fixed fee, minimum 2) → Upbit/Bithumb (travel rule). Because the withdrawal fee is fixed: sell daily, withdraw weekly.
+
 ### Theme
 
 Dark exchange-style dashboard by default (yellow accent, tabular numbers, green up / red down) with light and system themes. No exchange logos, names or icons are used.
@@ -314,6 +323,26 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 - If the folder is missing (not mounted), Crypthy keeps recording energy and sales locally and copies them when the folder is back; pool increases are not recorded meanwhile (they would be counted twice) and resume from the shared baseline. Once set up, a folder without `crypthy/` counts as not mounted. On Linux the service waits for the mount (`RequiresMountsFor`). Energy records of two instances that overlap in time are flagged.
 - The two OSes must not run at the same time on the same pool data (a dual boot never does).
 
+<a id="auto-sell"></a>
+
+### SafeTrade auto-sell
+
+1. On SafeTrade create an API key with **trade permission only**: **no withdrawal permission**, and an IP restriction to this PC if you can. Crypthy cannot check a key's permissions through the API.
+2. Desktop: on the **SafeTrade auto-sell** card enter the key and secret and save. They are encrypted with the OS secure storage (Windows DPAPI) and never shown again, sent to remote screens, logged or put in the status API. **Delete key** removes them.
+3. Set a **minimum price**, leave **dry run** on, turn on **auto-sell on this device** and check the planned price and amount with **dry run** (or wait for the daily run).
+4. When the plans look right, turn **dry run** off (asks first). **Sell once now** also asks first and still respects the floor and limits.
+
+Headless host: put `{"key": "...", "secret": "..."}` in a file only you can read and install it; it is copied to `/etc/crypthy/safetrade-key.json` (root, 0600) and passed to the service with systemd `LoadCredential` (systemd 247 or later). Keep the file out of shell history:
+```bash
+install -m 600 /dev/null ~/safetrade-key.json
+nano ~/safetrade-key.json
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --safetrade-key ~/safetrade-key.json
+rm ~/safetrade-key.json
+```
+
+- A remote screen with the write token can switch auto-sell on or off, dry run and the time, and run it once (`POST /v1/autosell/run`, real sales ask for confirmation). Floor, limits and market can only be changed on the host. The key never crosses the remote API.
+- Turn auto-sell on for one device only. With a shared ledger folder a second device skips the day; if the folder is not reachable, real sales are skipped.
+
 ### File locations
 
 | File | Path |
@@ -329,6 +358,8 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 | App log (update and quit steps, rotated at 1 MB) | `%APPDATA%\Crypthy\logs\main.log` |
 | Headless host data and tokens | `/var/lib/crypthy-headless/` (owner only) |
 | Shared ledger | `<folder>\crypthy\` (events per instance, pool baseline, shared settings) |
+| SafeTrade API key | Desktop `%APPDATA%\Crypthy\safetrade-key.json` (encrypted) · headless `/etc/crypthy/safetrade-key.json` (root 0600) |
+| Auto-sell state and history | `%APPDATA%\Crypthy\autosell-state.json` |
 
 <a id="safety-and-privacy"></a>
 
@@ -362,14 +393,15 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 
 ### Privacy and network requests
 
-- No telemetry, no account, no remote control and no write API.
-- It never asks for or stores wallet seeds, passwords or tokens, and never changes security settings such as Windows Defender or the firewall.
+- No telemetry and no account. Remote control only through your own headless host and its write token.
+- It never asks for or stores wallet seeds or passwords, and never changes security settings such as Windows Defender or the firewall. The only secret it stores is the SafeTrade API key you enter for auto-sell, encrypted.
 - It does not download or install miners and does not build miner command lines. It only starts or stops the miner you configured, when you click.
-- Outgoing requests are public reads only:
+- Outgoing requests are public reads, plus SafeTrade API calls signed with your key while auto-sell is set up:
   - CoinGecko prices
   - Kryptex pool statistics and public wallet balance
   - Vast.ai public offers
   - GitHub Releases update checks
+  - SafeTrade order book, balance and limit sell orders (auto-sell only)
 
 ### Unsigned builds
 

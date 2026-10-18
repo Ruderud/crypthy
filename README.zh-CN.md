@@ -76,6 +76,15 @@
 - **手动卖出记录**（可选）：数量、卖出金额、手续费、交易所和备注，仅保存在本地。没有卖出记录时全部视为未实现。
 - 可将每日汇总和事件**导出为 CSV**，并可直接打开日志文件夹。
 
+### SafeTrade 自动卖出与变现路径（v0.5.0）
+
+- **自动卖出**（默认关闭，从模拟运行开始）：每天在设定时间通过 SafeTrade 官方 API 卖出 SafeTrade 上可用的 PRL（扣除保留数量）。只用限价单，绝不用市价单，挂在最优卖价下一档；N 分钟内未成交则撤单并降一档重挂。
+- **绝不低于下限价**：下限价 = max(你的最低价, 参考价 × (1 − X%))，参考价取 SafeTrade 24 小时均价和 CoinGecko 中较高者。真实卖出必须设置最低价。
+- 盘口异常（价差超过 Y%、买盘太薄、API 错误）时当天不卖并发出提醒。有每日最大卖出量和单笔最大金额。
+- 订单 ID、成交、均价、手续费和收到的 USDT 记入 PnL 的已实现卖出和共享账本。每天只在一台设备上运行一次（共享账本文件夹中的按日记录）。卖出中途应用关闭时，下次启动会撤销剩余订单并记录已卖数量。
+- **不自动化**：提现（SafeTrade → 币安）和从 Pearl 钱包转出。只发提醒：“要转到 SafeTrade 的 PRL”和“本周建议提现”。
+- **变现路径备忘**（手续费和测量日期可修改）：Pearl 钱包 → SafeTrade（PRL 充值，无手续费，最少 1 PRL，10 个确认）→ 卖出 PRL/USDT → 币安（USDT BSC，固定手续费 1 USDT，最少 2）→ Upbit/Bithumb（旅行规则）。提现手续费固定，所以每天卖出、每周提现。
+
 ### 主题
 
 默认是交易所仪表盘风格的深色主题（黄色强调色、等宽数字、上涨绿色 / 下跌红色），另有浅色和跟随系统主题。不使用任何交易所的 logo、名称或图标。
@@ -314,6 +323,26 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 - 文件夹不存在（未挂载）时，电力和卖出记录继续保存在本地，文件夹重新出现时再补上；其间不记录矿池增量（避免重复计算），之后从共享基准继续。设置过一次后，没有 `crypthy/` 的文件夹视为未挂载。Linux 服务会等待挂载（`RequiresMountsFor`）。两个实例的电力记录在时间上重叠时会发出警告。
 - 两个系统不能同时基于同一矿池数据运行（双系统本来就不会）。
 
+<a id="auto-sell"></a>
+
+### SafeTrade 自动卖出
+
+1. 在 SafeTrade 创建**只有交易权限**的 API 密钥：**不要给提现权限**，可以的话限制为本机 IP。Crypthy 无法通过 API 检查密钥权限。
+2. 桌面版：在 **SafeTrade 自动卖出（SafeTrade 자동 매도）** 卡片中输入密钥和密钥密文（secret）并保存。它们用操作系统安全存储（Windows DPAPI）加密，不会再次显示，也不会发送到远程画面、日志或状态 API。**删除密钥（키 삭제）** 可将其删除。
+3. 设置**最低价**，保持**模拟运行**开启，打开**在本设备自动卖出**，用**模拟运行（모의 실행）** 按钮（或每日运行）检查计划的价格和数量。
+4. 计划无误后关闭**模拟运行**（会先确认）。**立即真实卖出一次**同样会先确认，并遵守下限价和限额。
+
+无界面主机：把 `{"key": "...", "secret": "..."}` 写入只有你能读的文件后安装；它会被复制到 `/etc/crypthy/safetrade-key.json`（root，0600），并只通过 systemd `LoadCredential`（systemd 247 及以上）交给服务。请用编辑器写入，避免留在 shell 历史中：
+```bash
+install -m 600 /dev/null ~/safetrade-key.json
+nano ~/safetrade-key.json
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --safetrade-key ~/safetrade-key.json
+rm ~/safetrade-key.json
+```
+
+- 有写入令牌的远程画面可以开关自动卖出、模拟运行和时间，并运行一次（`POST /v1/autosell/run`，真实卖出需确认）。下限价、限额和市场只能在主机上修改。密钥不会经过远程 API。
+- 只在一台设备上开启自动卖出。有共享账本文件夹时第二台设备会跳过当天；文件夹不可用时不进行真实卖出。
+
 ### 文件位置
 
 | 文件 | 路径 |
@@ -329,6 +358,8 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 | 应用日志（更新与退出过程，1 MB 轮换） | `%APPDATA%\Crypthy\logs\main.log` |
 | 无界面主机数据与令牌 | `/var/lib/crypthy-headless/`（仅所有者） |
 | 共享账本 | `<文件夹>\crypthy\`（按实例的事件、矿池基准、共享设置） |
+| SafeTrade API 密钥 | 桌面版 `%APPDATA%\Crypthy\safetrade-key.json`（加密）· 无界面主机 `/etc/crypthy/safetrade-key.json`（root 0600） |
+| 自动卖出状态与记录 | `%APPDATA%\Crypthy\autosell-state.json` |
 
 <a id="safety-and-privacy"></a>
 
@@ -362,14 +393,15 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 
 ### 隐私与网络请求
 
-- 没有遥测、没有账号、没有远程控制，也没有写入 API。
-- 不索取或保存钱包助记词、密码和令牌，也不修改 Windows Defender、防火墙等安全设置。
+- 没有遥测，也没有账号。远程控制只通过你自己的无界面主机及其写入令牌。
+- 不索取或保存钱包助记词和密码，也不修改 Windows Defender、防火墙等安全设置。唯一保存的密钥是你为自动卖出输入的 SafeTrade API 密钥，并且加密保存。
 - 不下载或安装挖矿程序，也不生成挖矿程序命令行。只在你点击时启动或停止你配置的挖矿程序。
-- 对外发出的请求仅限公开数据的读取：
+- 对外发出的请求是公开数据的读取，以及设置自动卖出后用你的密钥签名的 SafeTrade API 调用：
   - CoinGecko 币价
   - Kryptex 矿池统计和公开钱包余额
   - Vast.ai 公开报价
   - GitHub Releases 更新检查
+  - SafeTrade 盘口、余额和限价卖单（仅自动卖出）
 
 ### 未签名的构建
 
