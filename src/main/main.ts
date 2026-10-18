@@ -28,7 +28,7 @@ import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetch
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
 import { startStatusServer } from './statusApi';
-import { createNotificationKeeper, updateDialogSpec } from './updatePrompt';
+import { createNotificationKeeper, updateToast } from './updatePrompt';
 import { createUpdateController, DISABLED_UPDATE, MAX_INTERVAL_MIN, MIN_INTERVAL_MIN, mockUpdater, type UpdaterLike } from './updater';
 
 const APP_NAME = 'Crypthy';
@@ -122,9 +122,9 @@ let trayKey = '';
 let updater: ReturnType<typeof createUpdateController> | null = null;
 /** OS 알림 참조 유지 (Windows 에서 GC 되면 클릭이 사라짐) */
 const notifications = createNotificationKeeper();
-let updateDialogOpen = false;
-/** 사용자가 대화상자에서 "받기" 를 눌렀으면, 다 받은 뒤 설치 여부를 바로 묻는다 */
-let askInstallWhenReady = false;
+/** 사용자가 직접 확인한 직후에는 OS 알림 없이 배너만 */
+let manualCheckUntil = 0;
+const MANUAL_CHECK_MS = 60_000;
 
 // ---------- 상태 ----------
 
@@ -786,7 +786,7 @@ function updateTray(st: AppState): void {
     u.status === 'disabled'
       ? []
       : u.prompt || u.status === 'ready' || u.status === 'available'
-        ? [{ label: u.status === 'ready' ? `업데이트 v${u.version} 설치 준비됨…` : `새 버전 v${u.version} 있음…`, click: () => { showWindow(); void showUpdateDialog(); } }]
+        ? [{ label: u.status === 'ready' ? `업데이트 v${u.version} 설치 준비됨…` : `새 버전 v${u.version} 있음…`, click: focusUpdateBanner }]
         : [{ label: '업데이트 확인', click: () => { showWindow(); void checkUpdateNow(); } }];
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -886,10 +886,6 @@ function startUpdater(): void {
       initialDelayMs: UPDATE_FIRST_CHECK_MS,
       intervalMin: settings.updateIntervalMin,
       onChange: (v) => {
-        if (v.status === 'ready' && askInstallWhenReady) {
-          askInstallWhenReady = false;
-          void showUpdateDialog();
-        }
         if (v.status === 'error' && lastStatus !== 'error') {
           alertOnce({ ts: Date.now(), level: 'info', code: 'update_error', message: `업데이트 확인 실패: ${v.error}` }, 6 * 3600_000);
         }
@@ -902,13 +898,9 @@ function startUpdater(): void {
           ? `v${v.version} 를 받아 두었습니다. 재시작하면 설치됩니다 — 채굴은 계속됩니다`
           : `새 버전 v${v.version} 이 있습니다. 앱에서 받기 / 나중에 를 고르세요`;
         pushAlert({ ts: Date.now(), level: 'info', code: v.prompt === 'ready' ? 'update_ready' : 'update_available', message }, false);
-        if (Notification.isSupported()) {
-          // 클릭하면 창을 열고 선택지(받기/나중에 또는 재시작해 설치/나중에)를 대화상자로 띄운다
-          notifications.show(new Notification({ title: `${APP_NAME} 업데이트`, body: message }), () => {
-            showWindow();
-            void showUpdateDialog();
-          });
-        }
+        // 창이 보이면 배너만(중복 방지). 트레이에만 있을 때 1번 알리고, 누르면 창을 열어 배너로 데려간다
+        const toast = updateToast(v, { windowVisible: windowVisible(), manual: Date.now() < manualCheckUntil });
+        if (toast && Notification.isSupported()) notifications.show(new Notification(toast), focusUpdateBanner);
       },
     });
   } catch (e) {
@@ -916,35 +908,24 @@ function startUpdater(): void {
   }
 }
 
-/** 안내할 업데이트가 있으면 네이티브 대화상자로 선택지를 보여 준다 (배너가 안 보이는 상황 대비) */
-async function showUpdateDialog(): Promise<void> {
-  if (!updater || updateDialogOpen) return;
-  const spec = updateDialogSpec(updater.view(), app.getVersion(), APP_NAME);
-  if (!spec) return;
-  updateDialogOpen = true;
-  try {
-    const opts = { type: 'info' as const, title: spec.title, message: spec.message, detail: spec.detail, buttons: spec.buttons, defaultId: 0, cancelId: 1, noLink: true };
-    const r = win && !win.isDestroyed() && win.isVisible() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-    if (r.response !== 0) {
-      updater.dismiss();
-    } else if (spec.action === 'download') {
-      askInstallWhenReady = true;
-      void updater.download();
-    } else {
-      installUpdate();
-    }
-  } finally {
-    updateDialogOpen = false;
-    broadcast();
-  }
+const windowVisible = () => !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized();
+
+/** 창을 열고 맨 위의 업데이트 배너로 스크롤해 강조한다 (OS 알림·트레이에서) */
+function focusUpdateBanner(): void {
+  showWindow();
+  const w = win;
+  if (!w || w.isDestroyed()) return;
+  const send = () => w.webContents.send('update:focus');
+  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send);
+  else send();
 }
 
-/** 사용자가 직접 확인(앱 상단·트레이): 새 버전이 있으면 대화상자까지 띄운다 */
+/** 사용자가 직접 확인(앱 상단·트레이): 결과는 배너로만 보여 준다 */
 async function checkUpdateNow(): Promise<void> {
   if (!updater) return;
+  manualCheckUntil = Date.now() + MANUAL_CHECK_MS;
   await updater.checkNow();
   broadcast();
-  await showUpdateDialog();
 }
 
 /** 받아 둔 업데이트 설치 (사용자가 누를 때만). 채굴기는 앱과 별도 프로세스라 계속 돈다 */

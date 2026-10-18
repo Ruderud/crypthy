@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { UpdateView } from '../shared/types';
 import { DISABLED_UPDATE } from './updater';
-import { createNotificationKeeper, updateDialogSpec } from './updatePrompt';
+import { createNotificationKeeper, updateToast } from './updatePrompt';
 
 const fakeNotification = () => Object.assign(new EventEmitter(), { show: vi.fn() });
 const view = (o: Partial<UpdateView>): UpdateView => ({ ...DISABLED_UPDATE, status: 'idle', ...o });
@@ -32,21 +34,30 @@ describe('notification keeper', () => {
   });
 });
 
-describe('update dialog', () => {
-  it('offers download / later for an available update, with notes', () => {
-    const s = updateDialogSpec(view({ status: 'available', version: '0.3.5', notes: '• fix banner' }), '0.3.4');
-    expect(s).toMatchObject({ action: 'download', buttons: ['받기', '나중에'] });
-    expect(s!.message).toContain('v0.3.5');
-    expect(s!.detail).toContain('• fix banner');
+describe('update toast (banner is the only place with choices)', () => {
+  const avail = view({ status: 'available', version: '0.3.8' });
+  const ready = view({ status: 'ready', version: '0.3.8' });
+
+  it('window visible: no toast, the banner alone shows the notice', () => {
+    expect(updateToast(avail, { windowVisible: true, manual: false })).toBeNull();
+    expect(updateToast(ready, { windowVisible: true, manual: false })).toBeNull();
   });
 
-  it('offers restart to install for a downloaded update and says mining continues', () => {
-    const s = updateDialogSpec(view({ status: 'ready', version: '0.3.5' }), '0.3.4');
-    expect(s).toMatchObject({ action: 'install', buttons: ['지금 재시작해 설치', '나중에'] });
-    expect(s!.detail).toContain('채굴은 계속');
+  it('only in the tray (window hidden): one toast pointing to the in-app notice', () => {
+    expect(updateToast(avail, { windowVisible: false, manual: false })?.body).toContain('받기 / 나중에');
+    expect(updateToast(ready, { windowVisible: false, manual: false })?.body).toContain('재시작해 설치');
   });
 
-  it('nothing to ask while idle, checking, downloading or on error', () => {
-    for (const status of ['idle', 'checking', 'downloading', 'error', 'disabled'] as const) expect(updateDialogSpec(view({ status }), '0.3.4')).toBeNull();
+  it('manual check: banner only, no toast', () => {
+    expect(updateToast(avail, { windowVisible: false, manual: true })).toBeNull();
+  });
+
+  it('nothing to announce while idle, checking, downloading or on error', () => {
+    for (const status of ['idle', 'checking', 'downloading', 'error', 'disabled'] as const) expect(updateToast(view({ status }), { windowVisible: false, manual: false })).toBeNull();
+  });
+
+  it('no native update dialog remains in the main process', () => {
+    const main = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf8');
+    expect(main).not.toMatch(/showUpdateDialog|updateDialogSpec/);
   });
 });
