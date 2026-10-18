@@ -5,7 +5,7 @@ import { parseHeadlessArgs } from './headlessArgs';
 describe('headless arguments', () => {
   it('defaults to loopback, read-only, no consent', () => {
     const o = parseHeadlessArgs([], { CRYPTHY_DATA_DIR: '/var/lib/crypthy-headless' });
-    expect(o).toMatchObject({ dataDir: '/var/lib/crypthy-headless', bind: '127.0.0.1', port: 47321, enableWrite: false, acceptRisk: false });
+    expect(o).toMatchObject({ dataDir: path.resolve('/var/lib/crypthy-headless'), bind: '127.0.0.1', port: 47321, enableWrite: false, acceptRisk: false });
   });
 
   it('flags override the config file', () => {

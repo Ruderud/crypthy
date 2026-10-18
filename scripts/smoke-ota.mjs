@@ -48,5 +48,9 @@ for (let i = 0; i < 120; i++) {
 }
 console.log('downloaded', JSON.stringify(u));
 if (u?.status !== 'ready') throw new Error('download did not finish');
-console.log('install ->', await evalJs('crypthy.installUpdate()'));
+// 설치를 시작하면 앱이 바로 창을 닫으므로 응답을 기다리지 않는다 (이후 버전·실행 여부는 워크플로가 확인)
+ws.send(JSON.stringify({ id: ++id, method: 'Runtime.evaluate', params: { expression: 'crypthy.installUpdate()' } }));
+console.log('install requested');
+await sleep(2000);
 ws.close();
+process.exit(0);
