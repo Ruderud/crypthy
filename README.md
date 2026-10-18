@@ -200,7 +200,7 @@ sudo systemctl daemon-reload
 ### Auto-update
 
 - Windows installer and Linux AppImage only. Checks a few seconds after the window opens and then every hour (30 minutes–24 hours in settings); **check for updates** is in the header and the tray menu.
-- A new version shows a banner and an OS notification (also from the tray; clicking opens the window) with release notes and **download / later**; after downloading, **restart now to install / later**.
+- A new version shows an OS notification (also when only the tray is running) and a banner pinned under the header with release notes. Clicking the notification, **check for updates** or the tray's new-version item opens a dialog with **download / later**; after downloading, **restart now to install / later**. The banner offers the same buttons.
 - **Later** hides the same notice until the next scheduled check; a manual check shows it again.
 - Install happens only when you click. Crypthy does not manage miners, so mining continues through the restart; only the safety watch pauses briefly.
 - Downloads are checked against the sha512 in `latest.yml` / `latest-linux.yml`. Builds are unsigned, so signature verification (`verifyUpdateCodeSignature`) is off; this only proves the file matches the one on GitHub Releases.
