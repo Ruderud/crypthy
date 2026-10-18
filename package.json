@@ -17,6 +17,7 @@
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/copy-static.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run",
+    "check:readme": "node scripts/check-readmes.mjs",
     "start": "npm run build && electron .",
     "start:mock": "npm run build && CRYPTHY_MOCK=1 electron .",
     "icons": "node scripts/make-icons.mjs",
