@@ -50,6 +50,15 @@ export function parseArgs(s: string): string[] {
   return out;
 }
 
+/** 셸·스크립트 인터프리터: 채굴기 이름으로 쓰면 다른 창·스크립트까지 감지·강제 종료하게 된다 */
+const INTERPRETERS = new Set(['cmd', 'powershell', 'pwsh', 'wscript', 'cscript', 'conhost', 'explorer', 'rundll32', 'python', 'python3', 'pythonw', 'node', 'bash', 'sh', 'zsh', 'dash', 'env', 'sudo', 'java', 'javaw', 'wsl', 'start', 'systemctl', 'schtasks']);
+const NAME_RE = /^[\w.+-]{1,100}$/;
+
+/** 감지·정지 대상으로 쓸 수 있는 실행 파일 이름인가 (인터프리터·셸 제외) */
+export function isUsableProcessName(name: string): boolean {
+  return NAME_RE.test(name) && !INTERPRETERS.has(name.toLowerCase().replace(/\.exe$/, ''));
+}
+
 const TASK_RE = /^\\?[^"<>|*?/\\:\0-\x1f-][^"<>|*?:\0-\x1f]{0,229}$/;
 const UNIT_RE = /^[A-Za-z0-9_.@:\\-]{1,250}$/;
 
@@ -71,6 +80,7 @@ export function validateControl(c: MinerControlConfig, platform: Platform): stri
     if (platform === 'windows' && !/\.exe$/i.test(c.exe)) return 'Windows 에서는 .exe 파일만 직접 실행할 수 있습니다 (bat 은 예약 작업으로 등록해 주세요)';
   }
   if (c.exe && CONTROL_CHARS.test(c.exe)) return '채굴기 실행 파일 경로를 확인해 주세요';
+  if (c.exe && !isUsableProcessName(pathOf(c.exe).basename(c.exe))) return '채굴기 실행 파일은 채굴기 자체여야 합니다 (cmd·powershell 같은 셸·인터프리터는 쓸 수 없습니다)';
   try {
     parseArgs(c.args);
   } catch (e) {
@@ -104,7 +114,7 @@ export function stopCommand(c: MinerControlConfig): Command | null {
 export function controlProcessName(c: MinerControlConfig, platform: Platform): string | null {
   if (!c.exe || c.mode === 'none') return null;
   const name = platform === 'windows' ? path.win32.basename(c.exe) : path.posix.basename(c.exe);
-  return name || null;
+  return name && isUsableProcessName(name) ? name : null;
 }
 
 const xmlText = (s: string) =>
@@ -127,12 +137,13 @@ export function decodeConsole(buf: Buffer): string {
 }
 
 /** 켜기를 막는 이유. 위험 정지 뒤 보류가 남아 있으면 자동으로도, 버튼으로도 켜지 않는다 */
-export function startBlocker(o: { config: MinerControlConfig; platform: Platform; running: boolean; holds: string[]; starting: boolean }): string | null {
+export function startBlocker(o: { config: MinerControlConfig; platform: Platform; running: boolean; holds: string[]; starting: boolean; procsUnknown?: boolean }): string | null {
   if (o.config.mode === 'none') return '설정 → 채굴 켜기·끄기에서 방식을 먼저 고르세요';
   const err = validateControl(o.config, o.platform);
   if (err) return err;
   if (o.starting) return '켜는 중입니다';
   if (o.running) return '채굴기가 이미 실행 중입니다 (두 번째 채굴기는 띄우지 않습니다)';
+  if (o.procsUnknown) return '프로세스 목록을 읽지 못해 실행 중인지 확인할 수 없습니다 — 잠시 뒤 다시 시도해 주세요';
   if (o.holds.length) return `안전 보류 중: ${o.holds.join(', ')} — 원인을 해결하고 GPU 카드에서 보류를 해제한 뒤 켜 주세요`;
   return null;
 }
@@ -140,8 +151,8 @@ export function startBlocker(o: { config: MinerControlConfig; platform: Platform
 export interface ControlDeps {
   /** 끝날 때까지 기다리는 명령 (셸 없이) */
   exec(cmd: Command): Promise<void>;
-  /** 앱과 분리해 실행 (셸 없이) */
-  spawnDetached(cmd: Command, cwd: string | undefined): void;
+  /** 앱과 분리해 실행 (셸 없이). 프로세스가 실제로 뜨면 끝나고, 실행 실패면 예외 */
+  spawnDetached(cmd: Command, cwd: string | undefined): Promise<void>;
   /** 알려진 채굴기 프로세스 정지·확인. 실패 사유 또는 null */
   killMiners(): Promise<string | null>;
 }
@@ -153,7 +164,7 @@ export function createMinerControl(deps: ControlDeps) {
       const s = startCommand(c);
       if (!s) return '켜기 방식이 설정되지 않았습니다';
       try {
-        if (s.kind === 'spawn') deps.spawnDetached(s.cmd, s.cwd);
+        if (s.kind === 'spawn') await deps.spawnDetached(s.cmd, s.cwd);
         else await deps.exec(s.cmd);
         return null;
       } catch (e) {

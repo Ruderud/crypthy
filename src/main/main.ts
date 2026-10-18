@@ -8,7 +8,7 @@ import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog }
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
-import { controlProcessName, createMinerControl, decodeConsole, parseTaskXml, startBlocker, validateControl, type Platform } from './minerControl';
+import { controlProcessName, createMinerControl, decodeConsole, isUsableProcessName, parseTaskXml, startBlocker, validateControl, type Platform } from './minerControl';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
   emptyLedger, migrateLedger, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
@@ -46,7 +46,7 @@ const UPDATE_FIRST_CHECK_MS = 5_000;
 const IS_LINUX = process.platform === 'linux';
 const PLATFORM: Platform = IS_LINUX ? 'linux' : process.platform === 'win32' ? 'windows' : 'other';
 const mockHw = MOCK ? mockHardware() : null;
-const hw = mockHw ?? (IS_LINUX ? linuxHardware(() => knownMiners) : windowsHardware);
+const hw = mockHw ?? (IS_LINUX ? linuxHardware(() => knownMiners, () => [...ownMiners]) : windowsHardware);
 /** 전력 제한 백엔드: Windows = UAC 1회 예약 작업, Linux = pkexec 1회 systemd 서비스 + polkit */
 const power = IS_LINUX
   ? linuxPower
@@ -63,6 +63,8 @@ interface Runtime {
 
 let catalog: Catalog;
 let knownMiners: string[] = [];
+/** 켜기·끄기에 지정한(또는 지정했던) 실행 파일 이름. 실행 중이면 설정을 바꿔도 꺼질 때까지 감시·정지 대상에 남긴다 */
+let ownMiners = new Set<string>();
 let links = new Set<string>();
 /** 이 PC 의 GPU 벤더 (시작 시 1회 감지, 실패하면 nvidia-smi 결과로 NVIDIA 만) */
 let vendors: Vendor[] = [];
@@ -391,7 +393,9 @@ async function enforceHolds(newTrips: { id: GpuId; reason: string }[], now: numb
   killing = true;
   lastKillAt = now;
   try {
-    const err = await killKnownMiners();
+    // 예약 작업·systemd 유닛으로 켠 경우 그쪽도 멈춘다 (Restart=always 등으로 감독자가 다시 띄우지 않게)
+    const mc = settings.minerControl;
+    const err = mc.mode === 'task' || mc.mode === 'systemd' ? await minerControl.stop(mc) : await killKnownMiners();
     if (err) alertOnce({ ts: now, level: 'critical', code: 'kill_failed', message: err }, 60_000);
     else if (newTrips.length) {
       const message = `위험 조건 ${labels} → 채굴기를 정지했습니다. 앱은 채굴기를 다시 시작하지 않습니다`;
@@ -425,20 +429,24 @@ const minerControl = createMinerControl({
       : new Promise((resolve, reject) =>
           execFile(cmd.file, cmd.args, { timeout: 15_000, windowsHide: true }, (err, _out, stderr) => (err ? reject(new Error((stderr || err.message).trim())) : resolve())),
         ),
-  spawnDetached: (cmd, cwd) => {
-    if (mockHw) return mockHw.start();
-    // 셸 없이, 앱과 분리해 실행 (앱을 꺼도 채굴기는 계속)
-    const child = spawn(cmd.file, cmd.args, { cwd, detached: true, stdio: 'ignore', shell: false, windowsHide: false });
-    child.on('error', (e) => pushAlert({ ts: Date.now(), level: 'warn', code: 'miner_start_failed', message: `채굴기 실행 실패: ${e.message}` }));
-    child.unref();
-  },
+  spawnDetached: (cmd, cwd) =>
+    new Promise<void>((resolve, reject) => {
+      if (mockHw) return resolve(mockHw.start());
+      // 셸 없이, 앱과 분리해 실행 (앱을 꺼도 채굴기는 계속). 실제로 떴는지(spawn) 실패했는지(error) 기다린다
+      const child = spawn(cmd.file, cmd.args, { cwd, detached: true, stdio: 'ignore', shell: false, windowsHide: false });
+      child.once('spawn', () => {
+        child.unref();
+        resolve();
+      });
+      child.once('error', (e) => reject(e));
+    }),
   killMiners: () => killKnownMiners(),
 });
 
 const holdLabels = () => Object.entries(runtime.holds).map(([id, r]) => `${settings.gpus.find((g) => g.id === id)?.label ?? id}(${r})`);
 
 function controlBlocker(): string | null {
-  return startBlocker({ config: settings.minerControl, platform: MOCK ? 'windows' : PLATFORM, running, holds: holdLabels(), starting: Date.now() < startingUntil });
+  return startBlocker({ config: settings.minerControl, platform: MOCK ? 'windows' : PLATFORM, running, holds: holdLabels(), starting: Date.now() < startingUntil, procsUnknown });
 }
 
 function controlView(): AppState['miner']['control'] {
@@ -457,7 +465,9 @@ function controlView(): AppState['miner']['control'] {
 function refreshKnownMiners(): void {
   const base = knownProcessNames(catalog, IS_LINUX ? 'linux' : 'windows');
   const own = controlProcessName(settings.minerControl, PLATFORM);
-  knownMiners = own && !base.some((b) => b.toLowerCase() === own.toLowerCase()) ? [...base, own] : base;
+  if (!running) ownMiners = new Set();
+  if (own) ownMiners.add(own);
+  knownMiners = [...base, ...[...ownMiners].filter((o) => !base.some((b) => b.toLowerCase() === o.toLowerCase()))];
 }
 
 const parentWin = () => (win && !win.isDestroyed() && win.isVisible() ? win : null);
@@ -470,6 +480,7 @@ async function ask(opts: Electron.MessageBoxOptions): Promise<Electron.MessageBo
 async function startMining(): Promise<string | null> {
   // 최신 상태로 다시 확인 (이미 돌고 있으면 두 번째 채굴기를 띄우지 않는다)
   const procs = await hw.runningMiners(knownMiners).catch(() => null);
+  procsUnknown = procs === null;
   if (procs?.length || (await minerApiAlive())) running = true;
   const blocked = controlBlocker();
   if (blocked) return blocked;
@@ -558,6 +569,9 @@ async function importMinerTask(): Promise<string | null> {
   if (xml instanceof Error) return `예약 작업을 읽지 못했습니다: ${xml.message}`;
   const parsed = parseTaskXml(xml);
   if (!parsed) return '예약 작업에서 실행 파일 동작을 찾지 못했습니다';
+  if (!isUsableProcessName(path.win32.basename(parsed.exe))) {
+    return `예약 작업이 ${path.win32.basename(parsed.exe)} 로 실행됩니다. 채굴기 이름을 알 수 없어 가져오지 않았습니다 — 실행 파일 칸에 채굴기 exe 경로를 직접 입력하세요 (작업 켜기·끄기는 그대로 쓸 수 있습니다)`;
+  }
   return applyPatch({ minerControl: { ...c, exe: parsed.exe, args: parsed.args } });
 }
 
@@ -598,7 +612,10 @@ async function poll(): Promise<void> {
   processes = procs ?? processes;
   running = processes.length > 0 || stats !== null;
   if (running) startingUntil = 0;
-  else if (Date.now() > startingUntil) startedByApp = false;
+  else if (Date.now() > startingUntil) {
+    startedByApp = false;
+    if (ownMiners.size > 1) refreshKnownMiners();
+  }
   discoverGpus();
 
   for (const g of gpuViews()) {

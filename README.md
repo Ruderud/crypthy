@@ -186,7 +186,7 @@ Crypthy starts and stops only a miner you set up yourself; it never downloads or
 - For a scheduled task, **import from scheduled task** reads the task's executable and arguments; the executable name is also added to the processes the app watches and stops.
 - Arguments are split on spaces (use "double quotes" for spaces) and passed as a list, so shell characters such as `&` or `|` have no effect. On Windows only `.exe` files can be run directly; use a scheduled task for a `.bat`.
 - The app runs as a normal user. A miner started as administrator cannot be stopped by it; you are told to stop it in Task Manager.
-- After a danger stop the app does not start the miner again by itself. See [Safety watch](#safety-watch).
+- After a danger stop the app does not start the miner again by itself; with a scheduled task or unit it also ends the task or unit, so Task Scheduler or systemd cannot restart the miner. The executable must be the miner itself, not `cmd` or `powershell`. See [Safety watch](#safety-watch).
 
 ### Power limits — Windows (one UAC prompt)
 

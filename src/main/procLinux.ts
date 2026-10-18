@@ -64,13 +64,16 @@ export function looksLikeMiner(argv: string[]): boolean {
 /** 실행 파일 이름: argv[0] 의 basename (comm 은 15자로 잘리므로 보조로만) */
 export const exeName = (p: ProcInfo) => path.posix.basename(p.argv[0] || p.comm);
 
-/** 알려진 이름 + 채굴기 인자 + 컨테이너 밖 → 정지 후보. 반환: 이름별 PID */
-export function findMiners(procs: ProcInfo[], known: string[]): Map<string, number[]> {
+/**
+ * 알려진 이름 + 채굴기 인자 + 컨테이너 밖 → 정지 후보. 반환: 이름별 PID.
+ * trusted: 사용자가 켜기·끄기에 지정한 실행 파일 이름. 설정 파일로만 실행해 인자 표지가 없어도 잡는다.
+ */
+export function findMiners(procs: ProcInfo[], known: string[], trusted: string[] = []): Map<string, number[]> {
   const byPid = new Map(procs.map((p) => [p.pid, p]));
   const out = new Map<string, number[]>();
   for (const p of procs) {
     const name = known.find((k) => k === exeName(p) || k === p.comm);
-    if (!name || !looksLikeMiner(p.argv) || isContainerized(p, byPid)) continue;
+    if (!name || !(looksLikeMiner(p.argv) || trusted.includes(name)) || isContainerized(p, byPid)) continue;
     out.set(name, [...(out.get(name) ?? []), p.pid]);
   }
   return out;
@@ -116,13 +119,13 @@ export function scanProc(root = '/proc'): ProcInfo[] {
   return procs;
 }
 
-export function runningMinersLinux(known: string[]): string[] {
-  return [...findMiners(scanProc(), known).keys()];
+export function runningMinersLinux(known: string[], trusted: string[] = []): string[] {
+  return [...findMiners(scanProc(), known, trusted).keys()];
 }
 
 /** SIGTERM → 3초 뒤에도 살아 있으면 SIGKILL. 다른 사용자의 프로세스는 EPERM 으로 실패한다 */
-export async function killMinerLinux(name: string, known: string[]): Promise<string | null> {
-  const pids = findMiners(scanProc(), known).get(name) ?? [];
+export async function killMinerLinux(name: string, known: string[], trusted: string[] = []): Promise<string | null> {
+  const pids = findMiners(scanProc(), known, trusted).get(name) ?? [];
   const errors: string[] = [];
   const send = (pid: number, sig: NodeJS.Signals) => {
     try {
@@ -134,7 +137,7 @@ export async function killMinerLinux(name: string, known: string[]): Promise<str
   };
   pids.forEach((pid) => send(pid, 'SIGTERM'));
   await new Promise((r) => setTimeout(r, 3000));
-  const left = findMiners(scanProc(), known).get(name) ?? [];
+  const left = findMiners(scanProc(), known, trusted).get(name) ?? [];
   left.filter((pid) => pids.includes(pid)).forEach((pid) => send(pid, 'SIGKILL'));
   return errors.length ? errors.join(' · ') : null;
 }

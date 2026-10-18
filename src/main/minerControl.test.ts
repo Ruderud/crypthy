@@ -62,6 +62,17 @@ describe('start / stop commands', () => {
   });
 });
 
+describe('process names', () => {
+  it('never uses a shell or interpreter as the miner name (it would match and kill unrelated windows)', () => {
+    for (const exe of ['C:\\Windows\\System32\\cmd.exe', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '/usr/bin/python3', '/bin/bash']) {
+      const c = cfg({ mode: 'task', taskName: 'PearlMiner', exe });
+      expect(controlProcessName(c, exe.startsWith('/') ? 'linux' : 'windows')).toBeNull();
+      expect(validateControl(c, 'windows')).toMatch(/셸·인터프리터/);
+    }
+    expect(controlProcessName(cfg({ mode: 'task', taskName: 'PearlMiner', exe: SRB }), 'windows')).toBe('SRBMiner-MULTI.exe');
+  });
+});
+
 describe('importing a scheduled task', () => {
   it('reads Command and Arguments from schtasks /XML, unescaping XML entities and outer quotes', () => {
     const xml = `<?xml version="1.0" encoding="UTF-16"?>
@@ -85,6 +96,7 @@ describe('start conditions', () => {
     expect(startBlocker({ ...base, config: cfg({}) })).toMatch(/방식/);
     expect(startBlocker({ ...base, running: true })).toMatch(/이미 실행 중/);
     expect(startBlocker({ ...base, starting: true })).toMatch(/켜는 중/);
+    expect(startBlocker({ ...base, procsUnknown: true })).toMatch(/프로세스 목록/);
   });
 
   it('after a danger stop the hold blocks start until the user clears it', () => {
@@ -100,7 +112,7 @@ describe('controller', () => {
         calls.push(`exec ${c.file} ${c.args.join(' ')}`);
         if (execFail) throw new Error('ERROR: The task is not running.');
       },
-      spawnDetached: (c: Command, cwd?: string) => void calls.push(`spawn ${c.file} ${c.args.join(' ')} @${cwd}`),
+      spawnDetached: async (c: Command, cwd?: string) => void calls.push(`spawn ${c.file} ${c.args.join(' ')} @${cwd}`),
       killMiners: async () => {
         calls.push('kill');
         return killErr;

@@ -57,6 +57,14 @@ describe('looksLikeMiner', () => {
 });
 
 describe('findMiners', () => {
+  it('a miner the user configured for on/off is found by name even when started with only a config file', () => {
+    const p = proc({ pid: 7, comm: 'SRBMiner-MULTI', argv: ['/opt/srb/SRBMiner-MULTI', '--config-file', 'pearl.json'] });
+    expect(findMiners([p], KNOWN).size).toBe(0);
+    expect([...findMiners([p], KNOWN, ['SRBMiner-MULTI']).entries()]).toEqual([['SRBMiner-MULTI', [7]]]);
+    // 컨테이너 안이면 지정한 이름이어도 건드리지 않는다
+    expect(findMiners([{ ...p, cgroup: '0::/system.slice/docker-3f2a.scope\n' }], KNOWN, ['SRBMiner-MULTI']).size).toBe(0);
+  });
+
   it('returns host miners only — never Vast/docker customer containers', () => {
     const procs = [
       srb(100),

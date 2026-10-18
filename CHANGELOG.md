@@ -18,7 +18,8 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ### Changed
 - If a miner is already running, start is disabled and the card shows that it was started outside the app; a second miner is never launched.
-- After a danger stop the app still never starts the miner by itself. Start stays disabled until the hold is cleared, and the next start shows the cause again.
+- After a danger stop the app still never starts the miner by itself. With a scheduled task or systemd unit the safety stop also ends the task or unit, so a supervisor (for example `Restart=always`) cannot restart the miner. Start stays disabled until the hold is cleared, and the next start shows the cause again.
+- Shells and interpreters (`cmd`, `powershell`, `python`, …) are refused as the miner executable, so the app never watches or stops unrelated windows. Start is refused while the process list cannot be read.
 - A miner started as administrator that the app cannot stop is reported with instructions to stop it in Task Manager.
 
 ## [0.3.6] - 2026-10-18

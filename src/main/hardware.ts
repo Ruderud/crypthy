@@ -45,7 +45,7 @@ export const windowsHardware: Hardware = {
 };
 
 /** Linux: /proc 스캔(컨테이너 제외), sysfs 벤더 id */
-export function linuxHardware(known: () => string[]): Hardware {
+export function linuxHardware(known: () => string[], trusted: () => string[] = () => []): Hardware {
   return {
     queryGpus: () => queryNvsmi(),
     gpuVendors: async () => {
@@ -60,8 +60,8 @@ export function linuxHardware(known: () => string[]): Hardware {
       return vendorsFromPciIds(ids);
     },
     minerStats: minerStatsVia,
-    runningMiners: async (names) => runningMinersLinux(names),
-    kill: (name) => killMinerLinux(name, known()),
+    runningMiners: async (names) => runningMinersLinux(names, trusted()),
+    kill: (name) => killMinerLinux(name, known(), trusted()),
   };
 }
 
