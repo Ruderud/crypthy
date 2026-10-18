@@ -137,6 +137,58 @@
       </div>
     </section>
 
+    <section class="card wide" id="autoSellCard">
+      <h2>SafeTrade 자동 매도 <span class="muted small">하루 1회 · 지정가만 · 하한가 아래로는 팔지 않음 · 출금·지갑 송금은 하지 않음</span>
+        <span class="spacer"></span>
+        <button id="asDryRun">모의 실행</button><button id="asRealRun" class="danger">지금 한 번 실제 매도 (확인 후)</button><span id="asMsg" class="msg"></span>
+      </h2>
+      <dl class="stats" id="asStatus"></dl>
+      <p class="small" id="asLast"></p>
+      <table class="table" id="asHistory"></table>
+      <form id="autoSellForm" class="grid">
+        <label class="check"><input name="enabled" type="checkbox" /> 이 기기에서 자동 매도 (한 기기에서만 켜세요)</label>
+        <label class="check"><input name="dryRun" type="checkbox" /> 모의 실행 (주문 없이 계획만 · 처음에는 켜 두세요)</label>
+        <label>실행 시각 (이 PC 시간) <input name="time" type="time" /></label>
+        <label>남겨 둘 PRL <input name="reservePrl" type="number" min="0" step="0.0001" /></label>
+        <label>최저가 ($, 0 = 기준가만) <input name="floorUsd" type="number" min="0" step="0.01" /></label>
+        <label>기준가 대비 최대 하락(%) <input name="maxDropPct" type="number" min="0.1" max="50" step="0.1" /></label>
+        <label>최대 스프레드(%) — 넘으면 그날 안 팜 <input name="maxSpreadPct" type="number" min="0.1" max="20" step="0.1" /></label>
+        <label>최소 매수 호가 깊이($) <input name="minBidDepthUsd" type="number" min="0" step="10" /></label>
+        <label>하루 최대 매도(PRL) <input name="dailyMaxPrl" type="number" min="0" step="1" /></label>
+        <label>주문 1건 최대($) <input name="orderMaxUsd" type="number" min="1" step="1" /></label>
+        <label>안 팔리면 몇 분 뒤 값 내림 <input name="repriceMinutes" type="number" min="1" max="240" step="1" /></label>
+        <label>한 번에 내리는 폭(%) <input name="repriceStepPct" type="number" min="0.1" max="5" step="0.1" /></label>
+        <label>값 내림 최대 횟수 <input name="maxReprices" type="number" min="0" max="20" step="1" /></label>
+        <div class="row"><button type="submit" class="primary">자동 매도 설정 저장</button><span id="asSaveMsg" class="msg"></span></div>
+      </form>
+      <p class="muted small">하한가 = max(최저가, 기준가 × (1 − 최대 하락%)). 기준가는 SafeTrade 24시간 평균가와 CoinGecko 시세 중 높은 값입니다. 가장 낮은 매도 호가보다 한 틱 아래에 지정가로 걸고, 안 팔리면 정한 시간마다 조금씩 내리되 하한가 아래로는 내리지 않습니다. 호가가 비정상(스프레드가 넓음, 매수 깊이가 얕음, API 오류)이면 그날은 팔지 않고 알립니다. 판 기록은 PnL 에 "실현 매도"로 남습니다.</p>
+      <form id="keyForm" class="note">
+        <b>SafeTrade API 키 <span class="muted small" id="keyState"></span></b>
+        <div class="row">
+          <label>API 키 <input id="exKey" type="password" autocomplete="off" spellcheck="false" /></label>
+          <label>시크릿 <input id="exSecret" type="password" autocomplete="off" spellcheck="false" /></label>
+          <button type="submit" class="primary">키 저장</button><button type="button" id="exKeyClear">키 삭제</button><span id="keyMsg" class="msg"></span>
+        </div>
+        <p class="small warn">SafeTrade 에서 키를 만들 때 <b>거래(Trade) 권한만</b> 주고 <b>출금 권한은 주지 마세요</b>. 가능하면 이 PC 의 IP 로 제한하세요. SafeTrade API 로는 키의 권한을 확인할 수 없으므로 Crypthy 가 대신 막아 주지 못합니다.</p>
+        <p class="muted small" id="keyHelp">키는 이 PC 의 OS 보안 저장소로 암호화해 저장하고, 화면·원격 화면·로그·상태 API 로 내보내지 않습니다. 헤드리스(Ubuntu)는 install.sh --safetrade-key 파일 (root 0600, systemd LoadCredential) 로 넣습니다.</p>
+      </form>
+    </section>
+
+    <section class="card wide" id="cashoutCard">
+      <h2>현금화 경로 메모 <span class="muted small" id="cashoutSub"></span></h2>
+      <ol class="steps small" id="cashoutSteps"></ol>
+      <form id="cashoutForm" class="grid">
+        <label>PRL 입금 최소 <input name="prlDepositMin" type="number" min="0" step="0.1" /></label>
+        <label>PRL 입금 컨펌 수 <input name="prlConfirmations" type="number" min="0" step="1" /></label>
+        <label>USDT 출금 네트워크 <input name="withdrawNetwork" maxlength="20" spellcheck="false" /></label>
+        <label>USDT 출금 수수료 <input name="withdrawFeeUsdt" type="number" min="0" step="0.1" /></label>
+        <label>USDT 출금 최소 <input name="withdrawMinUsdt" type="number" min="0" step="0.1" /></label>
+        <label>출금 권장 잔고 (USDT, 일요일 알림) <input name="withdrawSuggestUsdt" type="number" min="0" step="1" /></label>
+        <label>측정일 <input name="measuredAt" type="date" /></label>
+        <div class="row"><button type="submit" class="primary">메모 저장</button><span id="cashoutMsg" class="msg"></span></div>
+      </form>
+    </section>
+
     <section class="card wide">
       <h2>GPU별 채굴 vs 대여 <span class="muted small">정보 표시만 — 대여가는 수동값 또는 Vast.ai 공개 오퍼 중앙값</span></h2>
       <table class="table" id="compare"></table>

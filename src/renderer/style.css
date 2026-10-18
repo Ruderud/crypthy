@@ -149,3 +149,5 @@ button:disabled { opacity: 0.5; cursor: default; }
 @media (max-width: 900px) {
   main, .chart-row { grid-template-columns: 1fr; }
 }
+button.danger { border-color: var(--down); color: var(--down); }
+#cashoutSteps { margin-bottom: 10px; }

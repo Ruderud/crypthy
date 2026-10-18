@@ -176,6 +176,74 @@ function renderPnl(st: AppState) {
   }
 }
 
+const AS_STATUS: Record<string, string> = { sold: '매도', partial: '일부 매도', nothing: '안 팔림', skipped: '건너뜀', error: '오류', planned: '계획(모의)' };
+
+function renderAutoSell(st: AppState) {
+  const a = st.autoSell;
+  const c = st.settings.autoSell;
+  const canWrite = !st.remote || st.remote.write;
+  const mode = !c.enabled ? '<span class="muted">꺼짐</span>' : c.dryRun ? '<span class="warn">켜짐 · 모의 실행</span>' : '<span class="good">켜짐 · 실제 매도</span>';
+  const bal = a.balance ? `${n(a.balance.prl, 4)} PRL · ${n(a.balance.usdt, 2)} USDT <span class="muted small">${new Date(a.balance.at).toLocaleString('ko-KR')}</span>` : '<span class="muted">아직 조회 안 함</span>';
+  $('asStatus').innerHTML = [
+    stat('상태', `${mode}${a.running ? ' <span class="warn">진행 중…</span>' : ''}`),
+    stat('다음 실행', a.nextRunAt ? new Date(a.nextRunAt).toLocaleString('ko-KR') : '-'),
+    stat('오늘 판 양', `${n(a.todaySoldPrl, 4)} / ${n(c.dailyMaxPrl)} PRL`),
+    stat('SafeTrade 잔고', bal),
+    stat('API 키', a.keySet ? `저장됨 <span class="muted small">${esc(a.keyStore ?? '')}</span>` : '<span class="warn">없음</span>'),
+  ].join('');
+  const l = a.last;
+  const lastEl = $('asLast');
+  lastEl.className = `small ${l && (l.status === 'error' || l.status === 'skipped') ? 'warn' : 'muted'}`;
+  lastEl.textContent = l
+    ? `마지막 실행 ${new Date(l.at).toLocaleString('ko-KR')}${l.dryRun ? ' (모의)' : ''}: ${AS_STATUS[l.status] ?? l.status}` +
+      (l.plan ? ` · 계획 ${n(l.plan.amount, 4)} PRL @ $${n(l.plan.price, 4)}` : '') +
+      (l.floorUsd !== null ? ` · 하한가 $${n(l.floorUsd, 4)}` : '') +
+      (l.refUsd !== null ? ` · 기준가 $${n(l.refUsd, 4)}` : '') +
+      (l.reason ? ` · ${l.reason}` : '')
+    : '아직 실행한 적 없습니다. 먼저 "모의 실행"으로 계획을 확인하세요.';
+  const rows = a.history.filter((r) => !r.dryRun || r === l).slice(0, 7);
+  $('asHistory').innerHTML = rows.length
+    ? `<tr><th>시각</th><th>결과</th><th>판 양</th><th>평균가</th><th>받은 USDT</th><th>수수료</th></tr>${rows
+        .map((r) => `<tr><td>${new Date(r.at).toLocaleString('ko-KR')}${r.dryRun ? ' <span class="muted small">모의</span>' : ''}</td><td>${esc(AS_STATUS[r.status] ?? r.status)}</td><td>${n(r.soldPrl, 4)}</td><td>${r.soldPrl > 0 ? `$${n(r.proceedsUsdt / r.soldPrl, 4)}` : '-'}</td><td>${n(r.proceedsUsdt, 2)}</td><td>${n(r.feeUsdt, 4)}</td></tr>`)
+        .join('')}`
+    : '';
+  $<HTMLButtonElement>('asDryRun').disabled = !canWrite || a.running || !a.keySet;
+  $<HTMLButtonElement>('asRealRun').disabled = !canWrite || a.running || !a.keySet;
+  // 키는 이 PC 에서만 넣는다 (원격 호스트의 키는 그 호스트에서 install.sh --safetrade-key)
+  $('keyState').textContent = a.keySet ? `· 저장됨 (${a.keyStore ?? ''})` : '· 없음';
+  for (const id of ['exKey', 'exSecret', 'exKeyClear']) ($(id) as HTMLInputElement).disabled = !!st.remote;
+  $('keyForm').querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = !!st.remote;
+  if (st.remote) $('keyHelp').textContent = '원격 호스트에 연결 중입니다. 호스트의 키는 그 호스트에서 install.sh --safetrade-key 로 넣습니다 (키는 원격 API 로 오가지 않습니다).';
+  for (const f of ['autoSellForm', 'cashoutForm']) for (const el of Array.from($<HTMLFormElement>(f).elements) as HTMLInputElement[]) el.disabled = !canWrite;
+
+  const co = st.settings.cashout;
+  $('cashoutSub').textContent = `측정일 ${co.measuredAt} · 수수료·최소 수량은 바뀔 수 있으니 거래소에서 다시 확인하세요`;
+  $('cashoutSteps').innerHTML = [
+    `<b>Pearl 지갑 → SafeTrade</b> PRL 입금 (네트워크 Pearl, prl1… 주소). 수수료 0, 최소 ${esc(co.prlDepositMin)} PRL, ${esc(co.prlConfirmations)} 컨펌(약 30분). 지갑 송금은 직접 합니다.`,
+    `<b>SafeTrade 에서 매도</b> PRL/USDT (주 시장, 스프레드 약 0.5%). PRL/USDC·PRL/BTC 도 있습니다. 자동 매도는 매일 이 단계만 합니다.`,
+    `<b>SafeTrade → 바이낸스</b> USDT 출금 ${esc(co.withdrawNetwork)} (수수료 ${esc(co.withdrawFeeUsdt)} USDT 고정, 최소 ${esc(co.withdrawMinUsdt)} USDT). TRON 도 됩니다. 고정 수수료라 <b>매도는 매일, 출금은 주 1회</b> (잔고 ${esc(co.withdrawSuggestUsdt)} USDT 이상이면 일요일에 알림). 출금은 직접 합니다.`,
+    `<b>바이낸스 → 업비트·빗썸</b> 트래블룰에 따라 이체한 뒤 원화로 매도.`,
+  ].map((t) => `<li>${t}</li>`).join('');
+}
+
+function fillSubForm(id: string, obj: object) {
+  for (const el of Array.from($<HTMLFormElement>(id).elements) as HTMLInputElement[]) {
+    if (!el.name) continue;
+    const v = (obj as Record<string, unknown>)[el.name];
+    if (el.type === 'checkbox') el.checked = Boolean(v);
+    else el.value = String(v ?? '');
+  }
+}
+
+function readSubForm<T extends object>(id: string, base: T): T {
+  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+  for (const el of Array.from($<HTMLFormElement>(id).elements) as HTMLInputElement[]) {
+    if (!el.name) continue;
+    out[el.name] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value.trim();
+  }
+  return out as T;
+}
+
 function renderUpdate(st: AppState) {
   const u = st.update;
   const status: Record<typeof u.status, string> = {
@@ -356,6 +424,7 @@ function render(st: AppState) {
 
   renderHub(st);
   renderPnl(st);
+  renderAutoSell(st);
   renderSetup(st);
 
   $('minerStats').innerHTML = [
@@ -424,6 +493,8 @@ function fillForms(st: AppState) {
   $<HTMLInputElement>('wallet').value = s.wallet;
   $<HTMLInputElement>('pool').value = s.pool;
   renderGpuTable(st);
+  fillSubForm('autoSellForm', s.autoSell);
+  fillSubForm('cashoutForm', s.cashout);
 
   const form = $<HTMLFormElement>('settingsForm');
   for (const el of Array.from(form.elements) as HTMLInputElement[]) {
@@ -567,6 +638,29 @@ $('importTask').addEventListener('click', () => void act('importTaskMsg', () => 
 $('settingsForm').addEventListener('submit', (e) => {
   e.preventDefault();
   void act('settingsMsg', () => crypthy.saveSettings(readSettingsForm()), '저장됨');
+});
+
+$('autoSellForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  void act('asSaveMsg', () => crypthy.saveSettings({ autoSell: readSubForm('autoSellForm', state!.settings.autoSell) }), '저장됨');
+});
+$('cashoutForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  void act('cashoutMsg', () => crypthy.saveSettings({ cashout: readSubForm('cashoutForm', state!.settings.cashout) }), '저장됨');
+});
+$('asDryRun').addEventListener('click', () => void act('asMsg', () => crypthy.runAutoSell(true), '모의 실행 완료 (아래 계획 확인)'));
+$('asRealRun').addEventListener('click', () => void act('asMsg', () => crypthy.runAutoSell(false), '실행 완료'));
+$('keyForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const key = $<HTMLInputElement>('exKey');
+  const secret = $<HTMLInputElement>('exSecret');
+  void act('keyMsg', () => crypthy.setExchangeKey(key.value, secret.value), '키를 저장했습니다').then(() => {
+    key.value = '';
+    secret.value = '';
+  });
+});
+$('exKeyClear').addEventListener('click', () => {
+  if (confirm('저장한 SafeTrade API 키를 이 PC 에서 지울까요? (SafeTrade 에서도 키를 삭제하는 것이 안전합니다)')) void act('keyMsg', () => crypthy.setExchangeKey('', ''), '키를 지웠습니다');
 });
 
 $('checkUpdateBtn').addEventListener('click', () => void crypthy.checkUpdate().then(refresh));
