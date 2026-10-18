@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  addEnergy, addMined, addSale, appendEvent, bootstrap, dailyCsv, emptyBook, eventsCsv, freshPayouts, loadBook, pnlDaily,
-  priceUnpriced, readEvents, rotated, summarizePnl,
+  addEnergy, addMined, addPending, addPoolIncrease, addSale, appendEvent, bootstrap, dailyCsv, emptyBook, estimateBackfillFrom, eventsCsv,
+  freshPayouts, loadBook, pnlDaily, priceUnpriced, readEvents, rotated, separateLegacyBackfill, startTracking, summarizePnl,
 } from './pnl';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'crypthy-pnl-'));
@@ -138,10 +138,117 @@ describe('bootstrap (backfill before tracking started)', () => {
   it('uses daily closes when available', () => {
     const b = emptyBook();
     bootstrap(b, { coin: 'pearl', from, to, qty: 6.081, watts: 0, krwPerKwh: 350, closeKrwByDay: { '2026-10-17': 2000, '2026-10-18': 2500 }, fallbackKrw: null });
-    const d = Object.values(b.days).sort((a, z) => a.day.localeCompare(z.day));
-    expect(d[0].revenueKrw / d[0].mined).toBeCloseTo(2000, 6);
-    expect(d[1].revenueKrw / d[1].mined).toBeCloseTo(2500, 6);
-    expect(d[0].energyKwh).toBe(0);
+    const d = b.backfill!.days;
+    expect(d['2026-10-17'].revenueKrw / d['2026-10-17'].mined).toBeCloseTo(2000, 6);
+    expect(d['2026-10-18'].revenueKrw / d['2026-10-18'].mined).toBeCloseTo(2500, 6);
+    expect(d['2026-10-17'].energyKwh).toBe(0);
+    expect(b.days).toEqual({}); // 소급분은 일별 장부와 따로 둔다
+  });
+});
+
+// RUD 실기(v0.3.6 피드백): 10/17 15:07 채굴 시작, 지급 10/18 01:07 1.2443 · 08:07 1.4030, 잔액 3.4336 @ 10/18 09:45 → 풀 누적 6.0809 PRL.
+// 865W, $1.85 × 1340원 = 2,479원/PRL, 350원/kWh. 앱은 09:45 에 처음 풀 누적치를 받았다.
+describe('today / this month profit (auto backfill, live estimate, midnight split)', () => {
+  const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+  const start = at(17, 15, 7);
+  const track = at(18, 9, 45);
+  const total = 1.2443 + 1.403 + 3.4336;
+  const hours = (track - start) / H; // 18.63h
+  const payouts = [at(18, 1, 7), at(18, 8, 7)];
+
+  const tracked = () => {
+    const b = emptyBook();
+    startTracking(b, 'pearl', track, total);
+    return b;
+  };
+  const autoBackfill = (b: ReturnType<typeof emptyBook>, coinPerHour: number) => {
+    const from = estimateBackfillFrom({ to: track, qty: total, coinPerHour, earliestPayoutAt: Math.min(...payouts) });
+    bootstrap(b, { coin: 'pearl', from: from!, to: track, qty: total, watts: 865, krwPerKwh: 350, closeKrwByDay: {}, fallbackKrw: KRW, auto: true });
+    return from;
+  };
+
+  it('estimates the mining start from pool total ÷ expected rate, never after the earliest payout', () => {
+    expect(estimateBackfillFrom({ to: track, qty: total, coinPerHour: total / hours, earliestPayoutAt: payouts[0] })).toBe(start);
+    // 속도를 크게 잡아도 첫 지급(01:07)보다 늦지는 않는다
+    expect(estimateBackfillFrom({ to: track, qty: total, coinPerHour: 2, earliestPayoutAt: payouts[0] })).toBe(payouts[0]);
+    expect(estimateBackfillFrom({ to: track, qty: total, coinPerHour: null, earliestPayoutAt: payouts[0] })).toBeNull();
+    expect(estimateBackfillFrom({ to: track, qty: total, coinPerHour: 1e-9, earliestPayoutAt: null })).toBe(track - 366 * 86_400_000);
+  });
+
+  it('this month includes the 6.08 PRL mined before the app saw the pool; today gets its time share', () => {
+    const b = tracked();
+    expect(autoBackfill(b, total / hours)).toBe(start);
+    const s = summarizePnl(b, 'pearl', track, KRW);
+    expect(s.month.mined).toBeCloseTo(6.0809, 9);
+    expect(s.month.backfill).toBeCloseTo(6.0809, 9);
+    // 이번 달: 매출 6.0809 × 2,479 = 15,075원, 전력 0.865kW × 18.63h × 350 = 5,641원 → +9,433원
+    expect(Math.round(s.month.revenueKrw)).toBe(15075);
+    expect(Math.round(s.month.energyCostKrw)).toBe(5641);
+    expect(Math.round(s.month.netKrw)).toBe(9433);
+    // 오늘(00:00~09:45 = 9.75h 몫): 3.1818 PRL → 7,888원 − 2,952원 = +4,936원
+    expect(s.today.mined).toBeCloseTo((total * 9.75) / hours, 9);
+    expect(Math.round(s.today.netKrw)).toBe(4936);
+    expect(s.today.estimated).toBe(true);
+    expect(s.holdings).toBeCloseTo(6.0809, 9);
+  });
+
+  it('live estimate counts until the pool confirms it, then is replaced (no double count)', () => {
+    const b = tracked();
+    autoBackfill(b, total / hours);
+    const base = summarizePnl(b, 'pearl', track, KRW).today;
+    for (let m = 1; m <= 60; m++) addPending(b, 'pearl', track + m * 60_000, 0.33 / 60);
+    addEnergy(b, 'pearl', track + H, 0.865, 350);
+    let s = summarizePnl(b, 'pearl', track + H, KRW);
+    expect(s.today.pending).toBeCloseTo(0.33, 9);
+    expect(s.today.mined).toBeCloseTo(base.mined + 0.33, 9);
+    expect(Math.round(s.today.netKrw - base.netKrw)).toBe(Math.round(0.33 * KRW - 0.865 * 350));
+    expect(s.holdings).toBeCloseTo(6.0809, 9); // 아직 풀에 없는 몫은 보유량에 넣지 않는다
+    addPoolIncrease(b, 'pearl', track + H, 0.31, KRW);
+    s = summarizePnl(b, 'pearl', track + H, KRW);
+    expect(s.today.pending).toBe(0);
+    expect(s.today.confirmed).toBeCloseTo(0.31, 9);
+    expect(s.today.mined).toBeCloseTo(base.mined + 0.31, 9);
+  });
+
+  it('splits a pool increase that spans midnight by time', () => {
+    const b = tracked();
+    addPoolIncrease(b, 'pearl', at(18, 23), 0, KRW); // 마지막 증가 23:00
+    addPoolIncrease(b, 'pearl', at(19, 1), 0.6, KRW); // 01:00 에 0.6 증가 → 1시간씩
+    const d = pnlDaily(b, 'pearl', KRW);
+    expect(d.map((x) => x.day)).toEqual(['2026-10-18', '2026-10-19']);
+    expect(summarizePnl(b, 'pearl', at(19, 1), KRW).today.confirmed).toBeCloseTo(0.3, 9);
+    expect(summarizePnl(b, 'pearl', at(18, 23, 59), KRW).today.confirmed).toBeCloseTo(0.3, 9);
+  });
+
+  it('recalculating the backfill by hand replaces the previous one', () => {
+    const b = tracked();
+    autoBackfill(b, total / hours);
+    bootstrap(b, { coin: 'pearl', from: at(17, 21), to: track, qty: total, watts: 700, krwPerKwh: 350, closeKrwByDay: {}, fallbackKrw: KRW });
+    const s = summarizePnl(b, 'pearl', track, KRW);
+    expect(s.all.mined).toBeCloseTo(6.0809, 9);
+    expect(s.all.energyCostKrw).toBeCloseTo(0.7 * ((track - at(17, 21)) / H) * 350, 6);
+    expect(b.backfill!.auto).toBe(false);
+  });
+
+  it('a 0.3.4 backfill merged into the daily book is separated so it can be recalculated', () => {
+    const b = tracked();
+    addMined(b, 'pearl', at(18, 11), 0.5, KRW); // 추적 시작 후 확정분
+    const legacy = emptyBook();
+    bootstrap(legacy, { coin: 'pearl', from: start, to: track, qty: total, watts: 865, krwPerKwh: 350, closeKrwByDay: {}, fallbackKrw: KRW });
+    for (const [day, d] of Object.entries(legacy.backfill!.days)) {
+      const t = new Date(`${day}T06:00:00`).getTime();
+      addMined(b, 'pearl', t, d.mined, KRW);
+      addEnergy(b, 'pearl', t, d.energyKwh, 350);
+    }
+    b.bootstrapped = true;
+    const before = summarizePnl(b, 'pearl', track, KRW).all;
+    expect(separateLegacyBackfill(b, { coin: 'pearl', from: start, to: track, qty: total, watts: 865 })).toBe(true);
+    const after = summarizePnl(b, 'pearl', track, KRW).all;
+    expect(after.confirmed).toBeCloseTo(0.5, 9);
+    expect(after.backfill).toBeCloseTo(total, 9);
+    expect(after.netKrw).toBeCloseTo(before.netKrw, 6);
+    bootstrap(b, { coin: 'pearl', from: start, to: track, qty: total, watts: 865, krwPerKwh: 350, closeKrwByDay: {}, fallbackKrw: KRW });
+    expect(summarizePnl(b, 'pearl', track, KRW).all.mined).toBeCloseTo(total + 0.5, 9);
   });
 });
 
@@ -149,7 +256,9 @@ describe('persistence and export', () => {
   it('loadBook drops junk and round-trips', () => {
     const b = emptyBook();
     addMined(b, 'pearl', Date.now(), 1, 1000);
-    b.trackStart = { at: 1, total: 6.081 };
+    startTracking(b, 'pearl', new Date(2026, 9, 18, 9, 45).getTime(), 6.081);
+    bootstrap(b, { coin: 'pearl', from: new Date(2026, 9, 17, 15, 7).getTime(), to: b.trackStart!.at, qty: 6.081, watts: 865, krwPerKwh: 350, closeKrwByDay: {}, fallbackKrw: 2479, auto: true });
+    addPending(b, 'pearl', new Date(2026, 9, 18, 10).getTime(), 0.1);
     expect(loadBook(JSON.parse(JSON.stringify(b)))).toEqual(b);
     expect(loadBook({ days: { x: { coin: 1 }, y: null } })).toEqual(emptyBook());
   });
@@ -159,6 +268,6 @@ describe('persistence and export', () => {
     expect(csv.split('\n')[1]).toBe(`1970-01-01T00:00:00.000Z,sale,pearl,1,2495,"'=HYPERLINK(""x"") a,b"`);
     const b = emptyBook();
     addMined(b, 'pearl', new Date(2026, 9, 18, 12).getTime(), 1, 1000);
-    expect(dailyCsv(b).split('\n')[1]).toBe('pearl,2026-10-18,1.00000000,1000,0.00000000,0.000,0,1000,0.00000000,0,0,no');
+    expect(dailyCsv(b).split('\n')[1]).toBe('pearl,2026-10-18,1.00000000,1000,0.00000000,0.000,0,1000,0.00000000,0,0,no,0.00000000');
   });
 });
