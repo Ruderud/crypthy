@@ -128,20 +128,30 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
 
     let reprices = 0;
     let lastPrice: number | null = null;
-    let stopped = false;
+    // 중간에 멈춘 이유 (그때까지 판 양은 아래에서 체결 내역으로 정산한다)
+    let stopReason: string | null = null;
     while (remaining >= m.minAmount) {
       if (d.shouldStop?.()) {
-        stopped = true;
+        stopReason = '자동 매도를 꺼서 멈췄습니다';
         break;
       }
       const book = checkBook(await d.client.depth(cfg.market), cfg);
-      if ('skip' in book) return skip(book.skip);
+      if ('skip' in book) {
+        stopReason = book.skip;
+        break;
+      }
       let price = quotePrice(book.ask, floor, m.pricePrecision);
       // 재가격: 직전 가격에서 한 단계 내리되 지금 호가 한 틱 아래보다 높게 걸지 않고, 하한가 밑으로는 내리지 않는다
       if (lastPrice !== null) price = Math.max(floor, Math.min(price, floorTo(lastPrice * (1 - cfg.repriceStepPct / 100), m.pricePrecision)));
-      if (price < floor) return skip(`가격 ${price} 가 하한가 ${floor} 아래`);
+      if (price < floor) {
+        stopReason = `가격 ${price} 가 하한가 ${floor} 아래`;
+        break;
+      }
       const amount = floorTo(Math.min(remaining, cfg.orderMaxUsd / price), m.amountPrecision);
-      if (amount < m.minAmount) return skip(`1회 주문 한도 ${cfg.orderMaxUsd} USDT 로는 최소 수량 ${m.minAmount} PRL 을 살 수 없습니다`);
+      if (amount < m.minAmount) {
+        stopReason = `1회 주문 한도 ${cfg.orderMaxUsd} USDT 로는 최소 수량 ${m.minAmount} PRL 을 살 수 없습니다`;
+        break;
+      }
       if (cfg.dryRun) return { ...r, status: 'planned', plan: { price, amount }, reason: `${amount} PRL 을 ${price} USDT 에 지정가 매도할 계획 (하한가 ${floor}, 기준가 ${r.refUsd})` };
 
       try {
@@ -186,8 +196,8 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
         r.feeUsdt += fills.reduce((s, f) => s + (/prl/i.test(f.feeCurrency) ? f.fee * f.price : f.fee), 0);
       } else r.proceedsUsdt += ord.filled * ord.avgPrice;
     }
-    r.status = r.soldPrl <= 0 ? 'nothing' : remaining >= m.minAmount ? 'partial' : 'sold';
-    if (stopped) r.reason = '자동 매도를 꺼서 멈췄습니다';
+    r.status = r.soldPrl <= 0 ? (stopReason ? 'skipped' : 'nothing') : remaining >= m.minAmount ? 'partial' : 'sold';
+    if (stopReason) r.reason = stopReason;
     else if (r.status !== 'sold') r.reason = r.soldPrl > 0 ? `일부만 체결 (${r.soldPrl} PRL), 남은 ${remaining} PRL 은 하한가·재가격 한도로 중단` : `하한가 ${floor} 이상에서 체결되지 않았습니다`;
     return r;
   } catch (e) {

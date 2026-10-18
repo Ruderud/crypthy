@@ -1296,7 +1296,9 @@ function validatePatch(p: Partial<Settings>): string | null {
   const ctlErr = validateControl(mc, MOCK ? 'windows' : PLATFORM);
   if (ctlErr) return ctlErr;
   if (mc.mode === 'direct' && !MOCK && !fs.existsSync(mc.exe)) return `채굴기 실행 파일이 없습니다: ${mc.exe}`;
-  const asErr = validateAutoSell(next.autoSell);
+  // 자동 매도를 바꾸는 저장만 검사한다 (예전 버전에서 남은 값이 다른 설정 저장이나 "끄기"를 막지 않게 — 실행 때 다시 검사)
+  const turningOff = p.autoSell?.enabled === false && Object.keys(p.autoSell).length === 1;
+  const asErr = p.autoSell !== undefined && !turningOff ? validateAutoSell(next.autoSell) : null;
   if (asErr) return `자동 매도: ${asErr}`;
   const co = next.cashout;
   if (![co.prlDepositMin, co.prlConfirmations, co.withdrawFeeUsdt, co.withdrawMinUsdt, co.withdrawSuggestUsdt].every((v) => Number.isFinite(v) && v >= 0) || typeof co.withdrawNetwork !== 'string' || co.withdrawNetwork.length > 20 || typeof co.measuredAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(co.measuredAt)) {
@@ -1711,10 +1713,12 @@ export async function initCore(e: CoreEnv): Promise<void> {
         const key = env.exchangeKey?.() ?? null;
         if (!key || autoSellBusy) return;
         autoSellBusy = true;
-        void recoverInterrupted(key).finally(() => {
-          autoSellBusy = false;
-          env.onChange();
-        });
+        void recoverInterrupted(key)
+          .catch((e: Error) => env.log.warn(`autosell: recovery failed: ${e.message}`))
+          .finally(() => {
+            autoSellBusy = false;
+            env.onChange();
+          });
       }, 10_000),
     );
   }

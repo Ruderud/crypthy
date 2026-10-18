@@ -107,6 +107,18 @@ describe('auto sell: abnormal order book → no sale that day', () => {
     }
     expect('skip' in checkBook(BOOK, cfg())).toBe(false);
   });
+
+  it('a book that turns bad mid-run stops further orders but records what was sold, with proceeds and fees', async () => {
+    const ex = exchange({ prl: 60 });
+    let calls = 0;
+    ex.client.depth = async () => (++calls === 1 ? BOOK : { asks: [[2.5, 100]], bids: [[1.96, 5000]] });
+    const r = await runAutoSell(cfg({ orderMaxUsd: 20 }), deps(ex.client));
+    expect(r.status).toBe('partial');
+    expect(r.reason).toMatch(/스프레드/);
+    expect(r.soldPrl).toBeCloseTo(10.2040, 4);
+    expect(r.proceedsUsdt).toBeCloseTo(10.204 * 1.96, 3);
+    expect(r.feeUsdt).toBeGreaterThan(0);
+  });
 });
 
 describe('auto sell: orders', () => {
