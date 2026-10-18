@@ -127,6 +127,8 @@ export interface MinerView {
   rejected: number | null;
   totalHashrate: number | null;
   apiOk: boolean;
+  /** GPU 별 채굴 선택을 마지막으로 켤 때 실제로 적용했는지 (null: 선택 없음 = 모든 카드) */
+  gpuSelection: { applied: boolean; via: string | null; reason: string | null } | null;
   control: {
     mode: MinerControlConfig['mode'];
     canStart: boolean;

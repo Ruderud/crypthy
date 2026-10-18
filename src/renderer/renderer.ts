@@ -266,6 +266,13 @@ function renderGpuTable(st: AppState) {
 
 /** 켜기·끄기: 상태에 따라 하나만 활성. 막는 이유는 툴팁과 안내 줄로 */
 function renderControl(m: AppState['miner']) {
+  const sel = m.gpuSelection;
+  const selEl = $('gpuSelInfo');
+  selEl.hidden = !sel || !m.running;
+  if (sel) {
+    selEl.className = `small ${sel.applied ? 'muted' : 'warn'}`;
+    selEl.textContent = sel.applied ? `카드 선택 적용: ${sel.via}` : `카드 선택을 적용할 수 없음 — 모든 카드로 채굴 중 (${sel.reason})`;
+  }
   const c = m.control;
   const start = $<HTMLButtonElement>('minerStart');
   const stop = $<HTMLButtonElement>('minerStop');

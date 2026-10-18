@@ -37,6 +37,7 @@ import {
 import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastStats, type VastStats } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
+import { mapFromApi, mapFromListed, mergeMap, parseListDevices, resolveGpuIds, srbCacheKey, type SrbDeviceCache } from './srbDevices';
 import { DISABLED_UPDATE, MAX_INTERVAL_MIN, MIN_INTERVAL_MIN } from './updater';
 
 import { CONSENT_TEXT, type Confirm } from './confirm';
@@ -393,6 +394,7 @@ export function buildState(): AppState {
       rejected: lastStats?.rejected ?? null,
       totalHashrate: lastStats?.totalHashrate ?? null,
       apiOk: lastStats !== null,
+      gpuSelection: lastSelection,
       control: controlView(),
     },
     gpus,
@@ -573,29 +575,13 @@ export async function startMining(confirm: Confirm): Promise<string | null> {
   if (controlBlocker()) return controlBlocker();
   if (settings.minerControl.mode === 'direct' && !mockHw && !fs.existsSync(settings.minerControl.exe)) return `실행 파일이 없습니다: ${settings.minerControl.exe}`;
   startingUntil = Date.now() + STARTING_MS;
-  // GPU 별 채굴: 고른 GPU 만 채굴기에 보이게 (실행 파일 방식)
-  let mc = settings.minerControl;
-  let gpuEnv: Record<string, string> | undefined;
-  if (selectionActive()) {
-    const present = settings.gpus.flatMap((g) => {
-      const nv = nvOf(g.id);
-      return nv ? [{ index: nv.index, uuid: nv.uuid, mine: g.mine !== false }] : [];
-    });
-    const sel = present.length ? gpuSelectionEnv(present) : null;
-    if (sel === 'none') {
-      startingUntil = 0;
-      return '채굴할 GPU 를 하나 이상 켜 주세요';
-    }
-    if (sel) {
-      gpuEnv = sel;
-      const stripped = stripGpuArgs(mc.args);
-      if (stripped.removed.length) {
-        mc = { ...mc, args: stripped.args };
-        pushAlert({ ts: Date.now(), level: 'info', code: 'gpu_args_removed', message: `GPU 별 채굴 선택을 쓰는 동안 인자 ${stripped.removed.join(', ')} 는 빼고 실행합니다` }, false);
-      }
-    }
+  // GPU 별 채굴: 고른 GPU 로만 (실행 파일 방식)
+  const sel = await prepareGpuSelection(settings.minerControl);
+  if ('error' in sel) {
+    startingUntil = 0;
+    return sel.error;
   }
-  const err = await minerControl.start(mc, gpuEnv);
+  const err = await minerControl.start(sel.mc, sel.env);
   if (err) {
     startingUntil = 0;
     return err;
@@ -630,6 +616,98 @@ export async function setGpuMining(id: string, mine: boolean, confirm: Confirm):
   }
   running = false;
   return startMining(accept);
+}
+
+// ---------- GPU 별 채굴 선택 적용 ----------
+
+let lastSelection: AppState['miner']['gpuSelection'] = null;
+let srbCache: SrbDeviceCache | null = null;
+const srbCacheFile = () => file('srb-devices.json');
+const isSrbMiner = (mc = settings.minerControl) => settings.minerApi.adapter === 'srbminer' || /srbminer/i.test(path.basename(mc.exe));
+const nvCards = () => lastNv.map((n) => ({ busId: n.busId, uuid: n.uuid, driver: n.driver }));
+
+/** 채굴기 통계 API 의 장치 번호·bus 로 매핑을 배우거나 고친다 (돌고 있을 때 가장 확실한 출처) */
+function learnSrbMap(): void {
+  if (!lastStats?.devices.length || !isSrbMiner() || !lastNv.length) return;
+  const add = mapFromApi(lastStats.devices).filter((e) => lastNv.some((n) => n.bus === e.bus));
+  // 모든 NVIDIA 카드로 돌 때만 배운다 (--gpu-id 로 일부만 켰을 때 번호를 다시 매기는 버전이 있을 수 있어서)
+  if (!lastNv.every((n) => add.some((e) => e.bus === n.bus))) return;
+  const key = srbCacheKey(settings.minerControl.exe, nvCards());
+  const base = srbCache?.key === key ? srbCache.map : [];
+  const map = mergeMap(base, add);
+  if (srbCache?.key === key && JSON.stringify(map) === JSON.stringify(srbCache.map)) return;
+  srbCache = { key, map, source: 'api', at: Date.now() };
+  writeJson(srbCacheFile(), srbCache);
+}
+
+/** `--list-devices` 로 매핑 (캐시가 없거나 카드·드라이버·채굴기가 바뀌었을 때). 원문은 logs/srb-list-devices.txt 에 남긴다 */
+async function listSrbDevices(exe: string): Promise<{ map: SrbDeviceCache['map'] } | { error: string }> {
+  if (mockHw) return { map: lastNv.map((n) => ({ srbId: n.index + 1, bus: n.bus ?? -1 })) };
+  const text = await new Promise<string>((resolve, reject) =>
+    execFile(exe, ['--list-devices'], { cwd: path.dirname(exe), timeout: 60_000, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, out, errOut) =>
+      err && !out ? reject(err) : resolve(`${out}\n${errOut}`),
+    ),
+  ).catch((e: Error) => e);
+  if (text instanceof Error) return { error: `--list-devices 실행 실패: ${text.message}` };
+  try {
+    fs.mkdirSync(file('logs'), { recursive: true });
+    fs.writeFileSync(file(path.join('logs', 'srb-list-devices.txt')), text.slice(0, 64_000));
+  } catch {
+    // 진단용 사본은 실패해도 된다
+  }
+  const map = mapFromListed(parseListDevices(text), lastNv.flatMap((n) => (n.bus === null ? [] : [n.bus])));
+  return map.length ? { map } : { error: '--list-devices 출력에서 카드의 장치 번호를 찾지 못했습니다 (logs/srb-list-devices.txt)' };
+}
+
+/**
+ * 켤 때 GPU 선택을 채굴기에 적용한다.
+ *  - SRBMiner: 고른 카드의 SRBMiner 장치 번호로 --gpu-id (사용자 인자의 --gpu-id 는 뺌). 번호는 통계 API·--list-devices 로 매핑
+ *  - 그 밖의 채굴기: CUDA_VISIBLE_DEVICES (보조)
+ * 매핑하지 못하면 막지 않고 모든 카드로 채굴하며 이유를 알린다. 하나도 고르지 않았으면 켜지 않는다.
+ */
+async function prepareGpuSelection(mc: Settings['minerControl']): Promise<{ mc: Settings['minerControl']; env?: Record<string, string> } | { error: string }> {
+  lastSelection = null;
+  if (!selectionActive()) return { mc };
+  const present = settings.gpus.flatMap((g) => {
+    const nv = nvOf(g.id);
+    return nv ? [{ g, nv, mine: g.mine !== false }] : [];
+  });
+  const sel = present.length ? gpuSelectionEnv(present.map((p) => ({ index: p.nv.index, uuid: p.nv.uuid, mine: p.mine }))) : null;
+  if (sel === 'none') return { error: '채굴할 GPU 를 하나 이상 켜 주세요' };
+  if (!sel) return { mc };
+  const chosen = present.filter((p) => p.mine);
+  const label = chosen.map((p) => p.g.label).join(', ');
+  const fallback = (reason: string) => {
+    lastSelection = { applied: false, via: null, reason };
+    pushAlert({ ts: Date.now(), level: 'warn', code: 'gpu_selection_failed', message: `카드 선택을 적용할 수 없음 — 모든 카드로 채굴 중 (${reason})` });
+    env.log.warn(`gpu selection not applied: ${reason}`);
+    return { mc };
+  };
+  if (!isSrbMiner(mc)) {
+    lastSelection = { applied: true, via: 'CUDA_VISIBLE_DEVICES', reason: null };
+    return { mc, env: sel };
+  }
+  const key = srbCacheKey(mc.exe, nvCards());
+  let map = srbCache?.key === key ? srbCache.map : [];
+  const buses = chosen.map((p) => p.nv.bus).filter((b): b is number => b !== null);
+  if (buses.length !== chosen.length) return fallback('카드의 PCI bus 를 읽지 못했습니다');
+  let r = resolveGpuIds(buses, map);
+  if ('error' in r) {
+    const listed = await listSrbDevices(mc.exe);
+    if ('error' in listed) return fallback(listed.error);
+    map = mergeMap(map, listed.map);
+    srbCache = { key, map, source: 'list-devices', at: Date.now() };
+    writeJson(srbCacheFile(), srbCache);
+    r = resolveGpuIds(buses, map);
+    if ('error' in r) return fallback(r.error);
+  }
+  const stripped = stripGpuArgs(mc.args);
+  const args = `${stripped.args} --gpu-id ${r.ids.join(',')}`.trim();
+  lastSelection = { applied: true, via: `SRBMiner --gpu-id ${r.ids.join(',')} (${label})`, reason: null };
+  if (stripped.removed.length) {
+    pushAlert({ ts: Date.now(), level: 'info', code: 'gpu_args_removed', message: `GPU 별 채굴 선택을 쓰는 동안 인자 ${stripped.removed.join(', ')} 대신 --gpu-id ${r.ids.join(',')} 로 실행합니다` }, false);
+  }
+  return { mc: { ...mc, args } };
 }
 
 /** 위험·비용 고지에 동의했는지 */
@@ -829,6 +907,7 @@ export async function poll(): Promise<void> {
   lastNv = nv ?? [];
   lastNv.forEach((n) => seenGpus.add(n.busId));
   lastStats = stats;
+  learnSrbMap();
   procsUnknown = procs === null;
   // tasklist 가 한 번 실패하면 직전 목록을 유지한다 (실행 중이던 채굴기를 놓치지 않게)
   processes = procs ?? processes;
@@ -877,7 +956,7 @@ export async function poll(): Promise<void> {
   for (const g of settings.gpus) {
     const h = mineOff(g) && running ? (deviceOf(g)?.hashrate ?? 0) : 0;
     if (h > 0) {
-      alertOnce({ ts: now, level: 'warn', code: 'gpu_selection_ignored', gpu: g.id, message: `${g.label}: 채굴하지 않기로 골랐는데 채굴 중입니다 — 채굴기가 GPU 선택(CUDA_VISIBLE_DEVICES)을 따르지 않습니다. 채굴기 인자로 GPU 를 지정하세요` }, 6 * 3600_000);
+      alertOnce({ ts: now, level: 'warn', code: 'gpu_selection_ignored', gpu: g.id, message: `${g.label}: 채굴하지 않기로 골랐는데 채굴 중입니다 — 카드 선택이 채굴기에 적용되지 않았습니다${lastSelection?.via ? ` (${lastSelection.via})` : ''}. 채굴을 껐다 켜 보고, 계속되면 채굴기 인자로 GPU 를 지정하세요` }, 6 * 3600_000);
     }
   }
   // 채굴하지 않기로 고른 GPU 의 위험 경보는 2초마다 반복되지 않게 아래의 경고 하나(10분 간격)로 대신한다
@@ -1330,6 +1409,7 @@ export async function initCore(e: CoreEnv): Promise<void> {
   env = e;
   loadState();
   instanceId = ensureInstanceId(env.dataDir, PLATFORM);
+  srbCache = readJson<SrbDeviceCache | null>(srbCacheFile(), null);
   void refreshTaskStatus();
   sync = { poolGen: 0, settingsGen: 0, ...readJson<Partial<SyncState>>(syncFile(), {}) };
   syncShared();
