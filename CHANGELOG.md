@@ -8,6 +8,17 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-10-18
+
+### Changed
+- **Today / this month profit** is one number: (pool-confirmed output + backfilled output + live estimate not yet reflected by the pool) × price − power cost of the same period, with the breakdown under it and in a tooltip. Previously the dashboard showed separate estimate and confirmed rows, and output mined before the app saw the pool was missing from this month until you backfilled by hand.
+- Pool increases are split across days by time since the previous increase, so an increase spanning midnight is shared by both days.
+- The PnL table adds a "this month" row.
+
+### Added
+- Automatic backfill: once hashrate, pool statistics and GPU power are known, output mined before tracking started is backfilled with a start time estimated as pool total ÷ current expected rate (never later than the earliest payout) and the current GPU power. Existing books with a tracking start and no backfill are backfilled the same way after updating.
+- The backfill can be recalculated with a corrected start time and wattage; the previous backfill is replaced, not added. A backfill applied in 0.3.4/0.3.5 is separated from the daily book on first start so it can be recalculated too.
+
 ## [0.3.5] - 2026-10-18
 
 ### Fixed
@@ -90,7 +101,8 @@ Release notes on GitHub are taken from the matching section of this file.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/Ruderud/crypthy/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/Ruderud/crypthy/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/Ruderud/crypthy/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Ruderud/crypthy/compare/v0.3.2...v0.3.3

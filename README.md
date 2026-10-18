@@ -59,8 +59,8 @@ Drawn with [TradingView Lightweight Charts™](https://www.tradingview.com/light
 
 ### Output and profit
 
-- **Live estimate (KRW/h)**: measured hashrate × expected output from pool statistics × price − measured GPU power cost. Hashrate comes from the miner's stats API (SRBMiner-MULTI with `--api-enable --api-port 21550`); pool statistics come from Kryptex and are read even without a wallet. Today/month estimates accumulate output and energy over the same time.
-- **Pool-confirmed**: based on the pool's public cumulative total (unpaid balance + payouts). **Lifetime output** includes mining before the app was started. **Confirmed net profit** pairs each increase in the pool total with the energy used until that increase over **the same period**, and shows "collecting" until 3 paired hours exist, so launch or midnight never shows power cost alone as a negative number.
+- **Live estimate (KRW/h)**: measured hashrate × expected output from pool statistics × price − measured GPU power cost. Hashrate comes from the miner's stats API (SRBMiner-MULTI with `--api-enable --api-port 21550`); pool statistics come from Kryptex and are read even without a wallet. Without a Kryptex pool, today/month estimates accumulate output and energy over the same time.
+- **Today / this month profit** (with a Kryptex pool): (pool-confirmed output + backfilled output + live estimate not yet reflected by the pool) × price − power cost of the same period. Each pool increase is split across days by time since the previous increase, so an increase that spans midnight is shared by both days. The live estimate is replaced by the confirmed amount once the pool shows it. The breakdown is shown under the number and in its tooltip. **Lifetime output** is the pool's public cumulative total (unpaid balance + payouts) and includes mining before the app was started.
 - **Price**: CoinGecko, converted with the exchange rate in settings. On failure the last good price is used with its time (marked stale after 30 minutes); with no price at all, net profit is not calculated and "no price" is shown.
 - **Mining vs rental** (information only): per-GPU mining net vs rental net (listed price × host share − power while rented), with review alerts when renting wins, a per-GPU price threshold is exceeded, or the coin price drops by a set percentage.
 - **Vast rental price**: public search (no login) every 30 minutes for single-GPU offers of the same model. By default only **verified** offers are used (unverified/deverified offers cluster at the low end: on 2026-10-18 all RTX 5090 on-demand offers gave $0.699, verified only $0.869). On-demand or interruptible, optional country filter, offers below 80% of the median DLPerf dropped. Shows median, 25th percentile, sample count and time; fewer than 5 samples shows "insufficient data". A manual per-GPU value takes precedence.
@@ -69,8 +69,8 @@ Drawn with [TradingView Lightweight Charts™](https://www.tradingview.com/light
 
 - Every pool increase, payout, price and 10-minute energy interval is appended to a local event log (`pnl/events.jsonl`, one JSON line per event; corrupt lines are skipped; rotated once at 5 MB). Daily totals are kept in `pnl/daily.json` without a time limit and are the basis for the numbers below.
 - **Definitions**: revenue = mined amount × price at the time it was mined; energy cost = measured GPU energy × electricity price at that time; realized = manual sales − fees; unrealized = holdings (mined − sold) × current price; **total PnL = realized + unrealized − energy cost**.
-- Today / 7 days / 30 days / all, plus a daily net bar chart with a cumulative PnL line. Coins mined while no price was available are valued at the next price and marked estimated; with no current price, unrealized and total PnL show "no price", never 0.
-- **Backfill (one time)**: output mined before tracking started (the pool total when tracking began) is spread over a start time you enter, with energy estimated from a wattage you enter. Backfilled days are marked estimated.
+- Today / this month / 7 days / 30 days / all, plus a daily net bar chart with a cumulative PnL line. Coins mined while no price was available are valued at the next price and marked estimated; with no current price, unrealized and total PnL show "no price", never 0.
+- **Backfill**: output mined before tracking started (the pool total when tracking began) is applied automatically once hashrate, pool statistics and GPU power are known. The start time is estimated as pool total ÷ current expected rate (never later than the earliest payout) and energy from current GPU power. You can correct the start time and wattage and recalculate; the previous backfill is replaced, not added. Backfilled days are marked estimated.
 - **Manual sales** (optional): quantity, proceeds, fee, venue and note, stored locally only. Without sales everything is unrealized.
 - **CSV export** of daily totals and events, and a button to open the log folder.
 
@@ -290,8 +290,8 @@ Builds are not code-signed, so Windows SmartScreen may warn. Every release inclu
 **Does Crypthy mine or take a fee?**
 No. It never runs miners and has no dev fee. Miners you install may charge their own dev fee, shown in the coin hub.
 
-**Why does confirmed profit say "collecting"?**
-The pool balance grows in steps. Confirmed net profit is shown once at least 3 hours of output are paired with the energy of the same period; until then use the live estimate.
+**Why are today and this month marked "estimated"?**
+They include backfilled output (estimated start time and power) and the live estimate that the pool has not reflected yet. Both are replaced or corrected as the pool confirms output or you recalculate the backfill.
 
 **Does a safety stop affect only the hot GPU?**
 No. Crypthy stops the whole miner process, so every GPU it uses stops, and it does not restart it.
