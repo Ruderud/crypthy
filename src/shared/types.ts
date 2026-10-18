@@ -25,6 +25,8 @@ export interface Settings {
   minerApi: { adapter: string; port: number };
   /** 위험 조건에서 실행 중인 알려진 채굴기 프로세스를 정지(재시작은 안 함) */
   safetyKill: boolean;
+  /** 채굴 켜기·끄기 (사용자가 구성한 채굴기만 실행·정지) */
+  minerControl: MinerControlConfig;
   /** 로그인 시 앱 자동 실행 */
   openAtLogin: boolean;
   /** 업데이트 확인 주기(분). 30~1440, 기본 60 */
@@ -32,6 +34,19 @@ export interface Settings {
   gpus: GpuConfig[];
   safety: SafetyConfig;
   profit: ProfitConfig;
+}
+
+export interface MinerControlConfig {
+  /** none: 켜기·끄기 안 씀, task: Windows 예약 작업, systemd: Linux systemd --user 유닛, direct: 실행 파일 직접 실행 */
+  mode: 'none' | 'task' | 'systemd' | 'direct';
+  taskName: string;
+  unit: string;
+  /** direct 의 실행 파일(절대 경로). 다른 방식에서는 감지·정지할 프로세스 이름으로만 쓴다 */
+  exe: string;
+  /** direct 의 인자 (셸 없이 나눔) */
+  args: string;
+  /** 끄기 전에 한 번 확인 */
+  confirmStop: boolean;
 }
 
 export interface SafetyConfig {
@@ -83,8 +98,8 @@ export interface Alert {
   message: string;
 }
 
-/** Crypthy 는 채굴기를 실행하지 않으므로 실행 중인 채굴기는 항상 'external' */
-export type MinerMode = 'external';
+/** external: 앱 밖에서 실행됨, app: 이 앱의 켜기로 실행됨 */
+export type MinerMode = 'external' | 'app';
 
 export interface MinerView {
   running: boolean;
@@ -98,6 +113,15 @@ export interface MinerView {
   rejected: number | null;
   totalHashrate: number | null;
   apiOk: boolean;
+  control: {
+    mode: MinerControlConfig['mode'];
+    canStart: boolean;
+    canStop: boolean;
+    /** 켜기를 막는 이유 (버튼 툴팁·안내) */
+    blocker: string | null;
+    starting: boolean;
+    consented: boolean;
+  };
 }
 
 export interface CompareRow {
@@ -303,4 +327,7 @@ export interface Api {
   bootstrapPnl(fromMs: number, watts: number): Promise<string | null>;
   exportPnl(): Promise<string | null>;
   openPnlFolder(): Promise<void>;
+  startMining(): Promise<string | null>;
+  stopMining(): Promise<string | null>;
+  importMinerTask(): Promise<string | null>;
 }

@@ -21,6 +21,9 @@ const api: Api = {
   bootstrapPnl: (fromMs, watts) => ipcRenderer.invoke('pnl:bootstrap', fromMs, watts),
   exportPnl: () => ipcRenderer.invoke('pnl:export'),
   openPnlFolder: () => ipcRenderer.invoke('pnl:openFolder'),
+  startMining: () => ipcRenderer.invoke('miner:start'),
+  stopMining: () => ipcRenderer.invoke('miner:stop'),
+  importMinerTask: () => ipcRenderer.invoke('miner:importTask'),
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

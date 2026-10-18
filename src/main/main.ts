@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, shell, Tray } from 'electron';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog }
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
+import { controlProcessName, createMinerControl, decodeConsole, parseTaskXml, startBlocker, validateControl, type Platform } from './minerControl';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
   emptyLedger, migrateLedger, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
@@ -42,7 +44,9 @@ const REVIEW_REPEAT_MS = 6 * 3600_000;
 const UPDATE_FIRST_CHECK_MS = 5_000;
 
 const IS_LINUX = process.platform === 'linux';
-const hw = MOCK ? mockHardware() : IS_LINUX ? linuxHardware(() => knownMiners) : windowsHardware;
+const PLATFORM: Platform = IS_LINUX ? 'linux' : process.platform === 'win32' ? 'windows' : 'other';
+const mockHw = MOCK ? mockHardware() : null;
+const hw = mockHw ?? (IS_LINUX ? linuxHardware(() => knownMiners) : windowsHardware);
 /** 전력 제한 백엔드: Windows = UAC 1회 예약 작업, Linux = pkexec 1회 systemd 서비스 + polkit */
 const power = IS_LINUX
   ? linuxPower
@@ -53,6 +57,8 @@ const file = (name: string) => path.join(app.getPath('userData'), name);
 interface Runtime {
   /** 안전 보류 GPU → 사유. 사용자가 해제하기 전까지 유지(앱 재시작·재부팅 후에도) */
   holds: Record<GpuId, string>;
+  /** 채굴 켜기 전 위험·비용 고지에 동의한 시각 (처음 켤 때 1회) */
+  minerConsentAt: number | null;
 }
 
 let catalog: Catalog;
@@ -69,6 +75,12 @@ let lastNv: NvGpu[] = [];
 let lastStats: MinerStats | null = null;
 let processes: string[] = [];
 let running = false;
+/** 켜기 직후 채굴기가 잡히기 전까지 (두 번 누름 방지) */
+let startingUntil = 0;
+/** 이번 실행이 앱의 켜기로 시작됐는지 (꺼지면 해제) */
+let startedByApp = false;
+/** 마지막 위험 정지(시각·내용). 켜기 전에 경고로 보여 준다 */
+let lastDangerStop: { at: number; message: string } | null = null;
 /** tasklist 가 실패해 프로세스 목록을 모르는 상태 */
 let procsUnknown = false;
 /** 이번 세션에 nvidia-smi 로 한 번이라도 보인 GPU (빠진 GPU 를 채굴 중으로 오판하지 않기 위해) */
@@ -306,7 +318,7 @@ function buildState(): AppState {
     setup: setupView(),
     miner: {
       running,
-      mode: running ? 'external' : null,
+      mode: running ? (startedByApp ? 'app' : 'external') : null,
       processes,
       pool: lastStats?.pool ?? null,
       latencyMs: lastStats?.latencyMs ?? null,
@@ -315,6 +327,7 @@ function buildState(): AppState {
       rejected: lastStats?.rejected ?? null,
       totalHashrate: lastStats?.totalHashrate ?? null,
       apiOk: lastStats !== null,
+      control: controlView(),
     },
     gpus,
     alerts,
@@ -322,7 +335,7 @@ function buildState(): AppState {
     power: { registered: powerRegistered, lastLog: powerLog },
     update: updater?.view() ?? DISABLED_UPDATE,
     appVersion: app.getVersion(),
-    platform: IS_LINUX ? 'linux' : process.platform === 'win32' ? 'windows' : 'other',
+    platform: PLATFORM,
     settings,
     coins: catalog.coins.map((c) => ({ id: c.id, name: c.name, symbol: c.symbol, algorithm: c.algorithm })),
     poolExamples: coin().pools.flatMap((p) => p.examples),
@@ -380,7 +393,11 @@ async function enforceHolds(newTrips: { id: GpuId; reason: string }[], now: numb
   try {
     const err = await killKnownMiners();
     if (err) alertOnce({ ts: now, level: 'critical', code: 'kill_failed', message: err }, 60_000);
-    else if (newTrips.length) pushAlert({ ts: now, level: 'critical', code: 'miner_killed', message: `위험 조건 ${labels} → 채굴기를 정지했습니다. 앱은 채굴기를 다시 시작하지 않습니다` });
+    else if (newTrips.length) {
+      const message = `위험 조건 ${labels} → 채굴기를 정지했습니다. 앱은 채굴기를 다시 시작하지 않습니다`;
+      lastDangerStop = { at: now, message };
+      pushAlert({ ts: now, level: 'critical', code: 'miner_killed', message });
+    }
     else alertOnce({ ts: now, level: 'critical', code: 'miner_killed_again', message: `안전 보류 중(${labels})인데 채굴기가 다시 실행되어 정지했습니다. 원인 해결 후 보류를 해제해 주세요` }, 60_000);
   } finally {
     killing = false;
@@ -393,6 +410,155 @@ function clearHold(id: GpuId): void {
   saveRuntime();
   const label = settings.gpus.find((g) => g.id === id)?.label ?? id;
   pushAlert({ ts: Date.now(), level: 'info', code: 'hold_cleared', gpu: id, message: `${label} 안전 보류 해제 (사용자). 채굴기는 사용자가 직접 시작합니다` }, false);
+}
+
+// ---------- 채굴 켜기·끄기 (사용자가 구성한 채굴기만, 자동 재시작 없음) ----------
+
+const STARTING_MS = 30_000;
+/** 켜기 직후 위험 정지가 이 시간 안에 있었으면 원인을 다시 보여 준다 */
+const DANGER_WARN_MS = 6 * 3600_000;
+
+const minerControl = createMinerControl({
+  exec: (cmd) =>
+    mockHw
+      ? Promise.resolve(cmd.args.includes('/End') || cmd.args.includes('stop') ? undefined : mockHw.start())
+      : new Promise((resolve, reject) =>
+          execFile(cmd.file, cmd.args, { timeout: 15_000, windowsHide: true }, (err, _out, stderr) => (err ? reject(new Error((stderr || err.message).trim())) : resolve())),
+        ),
+  spawnDetached: (cmd, cwd) => {
+    if (mockHw) return mockHw.start();
+    // 셸 없이, 앱과 분리해 실행 (앱을 꺼도 채굴기는 계속)
+    const child = spawn(cmd.file, cmd.args, { cwd, detached: true, stdio: 'ignore', shell: false, windowsHide: false });
+    child.on('error', (e) => pushAlert({ ts: Date.now(), level: 'warn', code: 'miner_start_failed', message: `채굴기 실행 실패: ${e.message}` }));
+    child.unref();
+  },
+  killMiners: () => killKnownMiners(),
+});
+
+const holdLabels = () => Object.entries(runtime.holds).map(([id, r]) => `${settings.gpus.find((g) => g.id === id)?.label ?? id}(${r})`);
+
+function controlBlocker(): string | null {
+  return startBlocker({ config: settings.minerControl, platform: MOCK ? 'windows' : PLATFORM, running, holds: holdLabels(), starting: Date.now() < startingUntil });
+}
+
+function controlView(): AppState['miner']['control'] {
+  const blocker = controlBlocker();
+  return {
+    mode: settings.minerControl.mode,
+    canStart: blocker === null,
+    canStop: running && !killing,
+    blocker,
+    starting: Date.now() < startingUntil,
+    consented: runtime.minerConsentAt !== null,
+  };
+}
+
+/** 감지·정지 대상: 카탈로그의 알려진 이름 + 사용자가 지정한 채굴기 실행 파일 */
+function refreshKnownMiners(): void {
+  const base = knownProcessNames(catalog, IS_LINUX ? 'linux' : 'windows');
+  const own = controlProcessName(settings.minerControl, PLATFORM);
+  knownMiners = own && !base.some((b) => b.toLowerCase() === own.toLowerCase()) ? [...base, own] : base;
+}
+
+const parentWin = () => (win && !win.isDestroyed() && win.isVisible() ? win : null);
+async function ask(opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const w = parentWin();
+  return w ? dialog.showMessageBox(w, opts) : dialog.showMessageBox(opts);
+}
+
+/** 켜기: 조건 확인 → (처음이면) 위험·비용 고지 동의 → (최근 위험 정지가 있으면) 원인 확인 → 실행 */
+async function startMining(): Promise<string | null> {
+  // 최신 상태로 다시 확인 (이미 돌고 있으면 두 번째 채굴기를 띄우지 않는다)
+  const procs = await hw.runningMiners(knownMiners).catch(() => null);
+  if (procs?.length || (await minerApiAlive())) running = true;
+  const blocked = controlBlocker();
+  if (blocked) return blocked;
+  if (runtime.minerConsentAt === null) {
+    const r = await ask({
+      type: 'warning',
+      title: '채굴 위험·비용 고지',
+      message: '채굴을 켜기 전에 확인해 주세요',
+      detail: [
+        '· 채굴은 전기 요금이 들고, GPU 발열·팬·커넥터 수명에 부담을 줍니다. 수익은 코인 시세·난이도에 따라 손실이 될 수 있습니다.',
+        '· Crypthy 는 채굴기를 내려받거나 설치하지 않습니다. 직접 구성한 채굴기(예약 작업·유닛·실행 파일)를 켜고 끌 뿐이며, 채굴기와 그 수수료(dev fee)는 채굴기 배포처의 책임입니다.',
+        '· 채굴 수익은 채굴기에 설정한 지갑으로만 지급됩니다. 앱은 수수료를 떼지 않습니다.',
+        '· 안전 감시는 보조 수단입니다. 위험 조건이면 채굴기를 정지하고 다시 켜지 않습니다. 하드웨어 상태는 직접 확인해야 합니다.',
+      ].join('\n'),
+      checkboxLabel: '위 내용을 이해했고 내 책임으로 채굴합니다',
+      buttons: ['동의하고 켜기', '취소'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (r.response !== 0) return '취소됨';
+    if (!r.checkboxChecked) return '고지 내용에 체크해야 켤 수 있습니다';
+    runtime.minerConsentAt = Date.now();
+    saveRuntime();
+  }
+  if (lastDangerStop && Date.now() - lastDangerStop.at < DANGER_WARN_MS) {
+    const r = await ask({
+      type: 'warning',
+      title: '최근 위험 정지',
+      message: '최근에 위험 조건으로 채굴기를 정지했습니다',
+      detail: `${new Date(lastDangerStop.at).toLocaleString('ko-KR')} — ${lastDangerStop.message}\n\n원인(팬·온도·전력)을 해결했는지 확인한 뒤 켜 주세요.`,
+      buttons: ['그래도 켜기', '취소'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (r.response !== 0) return '취소됨';
+  }
+  if (controlBlocker()) return controlBlocker();
+  if (settings.minerControl.mode === 'direct' && !mockHw && !fs.existsSync(settings.minerControl.exe)) return `실행 파일이 없습니다: ${settings.minerControl.exe}`;
+  startingUntil = Date.now() + STARTING_MS;
+  const err = await minerControl.start(settings.minerControl);
+  if (err) {
+    startingUntil = 0;
+    return err;
+  }
+  startedByApp = true;
+  pushAlert({ ts: Date.now(), level: 'info', code: 'miner_started', message: '채굴 켜기 (사용자)' }, false);
+  broadcast();
+  return null;
+}
+
+/** 끄기: (설정 시) 확인 1회 → 정지 명령 → 프로세스 정지 확인. 관리자 권한 채굴기는 끌 수 없으면 안내 */
+async function stopMining(): Promise<string | null> {
+  if (!running) return '실행 중인 채굴기가 없습니다';
+  if (settings.minerControl.confirmStop) {
+    const r = await ask({ type: 'question', title: APP_NAME, message: '채굴을 끌까요?', buttons: ['끄기', '취소'], defaultId: 0, cancelId: 1, noLink: true });
+    if (r.response !== 0) return '취소됨';
+  }
+  if (killing) return '정지하는 중입니다';
+  killing = true;
+  try {
+    const err = await minerControl.stop(settings.minerControl);
+    startingUntil = 0;
+    if (!err) {
+      startedByApp = false;
+      pushAlert({ ts: Date.now(), level: 'info', code: 'miner_stopped', message: '채굴 끄기 (사용자)' }, false);
+    }
+    return err;
+  } finally {
+    killing = false;
+    broadcast();
+  }
+}
+
+/** Windows 예약 작업의 실행 파일·인자를 읽어 설정에 채운다 (작업 이름은 설정에서) */
+async function importMinerTask(): Promise<string | null> {
+  if (PLATFORM !== 'windows' || MOCK) return 'Windows 에서만 가져올 수 있습니다';
+  const c = settings.minerControl;
+  if (validateControl({ ...c, mode: 'task' }, 'windows')) return '예약 작업 이름을 먼저 입력·저장해 주세요';
+  const xml = await new Promise<string>((resolve, reject) =>
+    execFile('schtasks.exe', ['/Query', '/TN', c.taskName, '/XML'], { timeout: 10_000, windowsHide: true, encoding: 'buffer' }, (err, out, stderr) =>
+      err ? reject(new Error(decodeConsole(stderr).trim() || err.message)) : resolve(decodeConsole(out)),
+    ),
+  ).catch((e: Error) => e);
+  if (xml instanceof Error) return `예약 작업을 읽지 못했습니다: ${xml.message}`;
+  const parsed = parseTaskXml(xml);
+  if (!parsed) return '예약 작업에서 실행 파일 동작을 찾지 못했습니다';
+  return applyPatch({ minerControl: { ...c, exe: parsed.exe, args: parsed.args } });
 }
 
 // ---------- 폴링 ----------
@@ -431,6 +597,8 @@ async function poll(): Promise<void> {
   // tasklist 가 한 번 실패하면 직전 목록을 유지한다 (실행 중이던 채굴기를 놓치지 않게)
   processes = procs ?? processes;
   running = processes.length > 0 || stats !== null;
+  if (running) startingUntil = 0;
+  else if (Date.now() > startingUntil) startedByApp = false;
   discoverGpus();
 
   for (const g of gpuViews()) {
@@ -593,7 +761,8 @@ function updateTray(st: AppState): void {
   const temps = st.gpus.filter((g) => g.present).map((g) => `${g.label} ${g.tempC ?? '-'}°C${g.hold ? ' 보류' : ''}`).join(' / ');
   tray.setToolTip(`${APP_NAME}\n${status}\n${temps}`.slice(0, 127));
   const u = st.update;
-  const key = `${status}|${u.status}|${u.version}|${u.prompt}`;
+  const ctl = st.miner.control;
+  const key = `${status}|${u.status}|${u.version}|${u.prompt}|${ctl.mode}|${ctl.canStart}|${ctl.canStop}`;
   if (key === trayKey) return;
   trayKey = key;
   const updateItem =
@@ -607,11 +776,21 @@ function updateTray(st: AppState): void {
       { label: status, enabled: false },
       { type: 'separator' },
       { label: '대시보드 열기', click: showWindow },
+      ...(ctl.mode === 'none'
+        ? []
+        : [
+            { label: '채굴 켜기', enabled: ctl.canStart, click: () => void startMining().then((e) => e && e !== '취소됨' && trayNotice(e)) },
+            { label: '채굴 끄기', enabled: ctl.canStop, click: () => void stopMining().then((e) => e && e !== '취소됨' && trayNotice(e)) },
+          ]),
       ...updateItem,
       { type: 'separator' },
       { label: '종료', click: () => { quitting = true; app.quit(); } },
     ]),
   );
+}
+
+function trayNotice(message: string): void {
+  pushAlert({ ts: Date.now(), level: 'warn', code: 'miner_control', message });
 }
 
 // ---------- IPC ----------
@@ -623,6 +802,11 @@ function validatePatch(p: Partial<Settings>): string | null {
   if (!catalog.coins.some((c) => c.id === next.coin)) return '알 수 없는 코인입니다';
   if (next.minerApi.adapter !== 'none' && !Object.hasOwn(MINER_APIS, next.minerApi.adapter)) return '지원하지 않는 채굴기 API 입니다';
   if (!Number.isInteger(next.minerApi.port) || next.minerApi.port < 1024 || next.minerApi.port > 65535) return '채굴기 API 포트는 1024~65535 정수여야 합니다';
+  const mc = next.minerControl;
+  if (!['none', 'task', 'systemd', 'direct'].includes(mc.mode) || ![mc.taskName, mc.unit, mc.exe, mc.args].every((v) => typeof v === 'string')) return '채굴 켜기·끄기 설정이 올바르지 않습니다';
+  const ctlErr = validateControl(mc, MOCK ? 'windows' : PLATFORM);
+  if (ctlErr) return ctlErr;
+  if (mc.mode === 'direct' && !MOCK && !fs.existsSync(mc.exe)) return `채굴기 실행 파일이 없습니다: ${mc.exe}`;
   if (!Number.isInteger(next.updateIntervalMin) || next.updateIntervalMin < MIN_INTERVAL_MIN || next.updateIntervalMin > MAX_INTERVAL_MIN) {
     return `업데이트 확인 주기는 ${MIN_INTERVAL_MIN}~${MAX_INTERVAL_MIN}분 정수여야 합니다`;
   }
@@ -653,6 +837,7 @@ function applyPatch(p: Partial<Settings>): string | null {
   const vastKey = (x: Settings) => `${x.profit.vastVerifiedOnly}|${x.profit.vastType}|${x.profit.vastRegions}`;
   const vastChanged = vastKey(mergeSettings(settings, p)) !== vastKey(settings);
   settings = mergeSettings(settings, p);
+  refreshKnownMiners();
   if (coinChanged) {
     // 코인이 바뀌면 시세 기준가·장부 기준점을 새로 잡는다
     settings.profit.baselinePrlUsd = 0;
@@ -798,6 +983,9 @@ function registerIpc(): void {
     await shell.openPath(pnlDir());
   });
   ipcMain.handle('safety:clearHold', (_e, id: unknown) => clearHold(String(id)));
+  ipcMain.handle('miner:start', () => startMining());
+  ipcMain.handle('miner:stop', () => stopMining());
+  ipcMain.handle('miner:importTask', () => importMinerTask());
   ipcMain.handle('settings:save', (_e, patch: Partial<Settings>) => {
     const err = applyPatch(patch);
     if (!err) void refreshRemote(false);
@@ -863,7 +1051,6 @@ function applyLoginItem(): void {
 
 function loadState(): void {
   catalog = loadCatalog(path.join(__dirname, '..', 'catalog.json'));
-  knownMiners = knownProcessNames(catalog, IS_LINUX ? 'linux' : 'windows');
   links = allowedLinks(catalog);
   // 차트 라이브러리 라이선스 고지 링크
   links.add('https://www.tradingview.com/');
@@ -895,8 +1082,9 @@ function loadState(): void {
     }
   }
   // 0.1.x 의 안전 제외(excluded)는 보류(holds)로 이어받는다
-  const saved = readJson<{ holds?: Record<string, string>; excluded?: Record<string, string> }>(file('runtime.json'), {});
-  runtime = { holds: saved.holds ?? saved.excluded ?? {} };
+  const saved = readJson<{ holds?: Record<string, string>; excluded?: Record<string, string>; minerConsentAt?: unknown }>(file('runtime.json'), {});
+  runtime = { holds: saved.holds ?? saved.excluded ?? {}, minerConsentAt: Number.isFinite(saved.minerConsentAt) ? (saved.minerConsentAt as number) : null };
+  refreshKnownMiners();
 }
 
 if (!app.requestSingleInstanceLock()) {

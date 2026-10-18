@@ -65,7 +65,8 @@ export function linuxHardware(known: () => string[]): Hardware {
   };
 }
 
-export function mockHardware(): Hardware {
+/** 모의 모드의 start 는 채굴 켜기(예약 작업·직접 실행)를 흉내 낸다 */
+export function mockHardware(): Hardware & { start(): void } {
   const t0 = Date.now();
   let mining = process.env.CRYPTHY_MOCK_IDLE !== '1';
   let startedAt = Date.now();
@@ -123,6 +124,10 @@ export function mockHardware(): Hardware {
       mining = false;
       startedAt = Date.now();
       return null;
+    },
+    start() {
+      mining = true;
+      startedAt = Date.now();
     },
   };
 }
