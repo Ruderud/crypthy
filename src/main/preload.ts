@@ -34,6 +34,8 @@ const api: Api = {
   setGpuMining: (id, mine) => ipcRenderer.invoke('miner:gpu', id, mine),
   minerLog: () => ipcRenderer.invoke('miner:log'),
   pickPath: (kind, current) => ipcRenderer.invoke('dialog:pickPath', kind, current),
+  setExchangeKey: (key, secret) => ipcRenderer.invoke('autosell:setKey', key, secret),
+  runAutoSell: (dryRun) => ipcRenderer.invoke('autosell:run', dryRun),
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

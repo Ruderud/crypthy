@@ -21,7 +21,7 @@ cpSync('LICENSE', path.join(root, 'LICENSE'));
 cpSync('resources/linux/headless/README.md', path.join(root, 'README-headless.md'));
 // 실행에 필요한 것만 남긴 package.json (버전 표시용)
 writeFileSync(path.join(root, 'package.json'), `${JSON.stringify({ name: 'crypthy-headless', version: pkg.version, private: true, license: pkg.license, main: 'dist/main/headless.js' }, null, 2)}\n`);
-writeFileSync(path.join(root, 'install.sh'), '#!/bin/sh\n# sudo ./install.sh --user <name> [--bind <Tailscale IP>] [--enable-write] [--accept-risk] [--power-limits]\nexec sh "$(dirname -- "$0")/resources/linux/headless/install.sh" "$@"\n', { mode: 0o755 });
+writeFileSync(path.join(root, 'install.sh'), '#!/bin/sh\n# sudo ./install.sh --user <name> [--bind <Tailscale IP>] [--enable-write] [--accept-risk] [--power-limits] [--shared-ledger DIR] [--safetrade-key FILE]\nexec sh "$(dirname -- "$0")/resources/linux/headless/install.sh" "$@"\n', { mode: 0o755 });
 
 const out = path.join('release', `${name}.tar.gz`);
 execFileSync('tar', ['-czf', out, '-C', stage, name], { stdio: 'inherit', env: { ...process.env, COPYFILE_DISABLE: '1' } });

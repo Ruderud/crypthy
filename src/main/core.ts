@@ -16,7 +16,7 @@ import {
 } from './minerControl';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
-  emptyLedger, migrateLedger, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
+  dateKey, emptyLedger, migrateLedger, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
   rentalNetKrwPerHour, reviewAlerts, summarize, type Ledger, type Payout, type PoolStats,
 } from './profit';
 import {
@@ -31,12 +31,14 @@ import {
   type PnlBook, type PnlEvent,
 } from './pnl';
 import {
-  adoptPoolState, createMirror, createTailReader, ensureInstanceId, poolStateOf, readPoolState, readSharedEvents, readSharedSettings,
+  adoptPoolState, claimAutoSellDay, createMirror, createTailReader, ensureInstanceId, poolStateOf, readPoolState, readSharedEvents, readSharedSettings,
   SHARED_SETTING_KEYS, sharedEventsFile, sharedEventsStamp, sharedRoot, sharedSettingsOf, writePoolState, writeSharedSettings, type SyncState,
 } from './shared';
 import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastStats, type VastStats } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
+import { nextRunAt, runAutoSell, validateAutoSell, type SellResult } from './autosell';
+import { createSafeTrade, type ExchangeKey, type Order } from './safetrade';
 import { mapFromApi, mapFromListed, mergeMap, parseListDevices, resolveGpuIds, srbCacheKey, type SrbDeviceCache } from './srbDevices';
 import { DISABLED_UPDATE, MAX_INTERVAL_MIN, MIN_INTERVAL_MIN } from './updater';
 
@@ -60,6 +62,10 @@ export interface CoreEnv {
   onSettings?(s: Settings): void;
   /** 공유 장부 폴더를 설정 대신 지정 (헤드리스 --shared-ledger) */
   sharedLedgerDir?: string;
+  /** SafeTrade API 키 (데스크톱: OS 보안 저장소, 헤드리스: 0600 파일·systemd credential). 코어는 이 함수로만 받는다 */
+  exchangeKey?(): ExchangeKey | null;
+  /** 키 보관 방식 (화면 표시용) */
+  exchangeKeyStore?(): string | null;
 }
 
 let env: CoreEnv;
@@ -411,6 +417,7 @@ export function buildState(): AppState {
     pnl: pnlView(),
     sharedLedger: sharedStatus,
     minerTask: taskStatus,
+    autoSell: autoSellView(),
   };
 }
 
@@ -708,6 +715,188 @@ async function prepareGpuSelection(mc: Settings['minerControl']): Promise<{ mc: 
     pushAlert({ ts: Date.now(), level: 'info', code: 'gpu_args_removed', message: `GPU 별 채굴 선택을 쓰는 동안 인자 ${stripped.removed.join(', ')} 대신 --gpu-id ${r.ids.join(',')} 로 실행합니다` }, false);
   }
   return { mc: { ...mc, args } };
+}
+
+// ---------- SafeTrade 자동 매도 (하루 1회, 한 기기에서만) ----------
+
+interface AutoSellState {
+  history: SellResult[];
+  /** 실제 매도를 마지막으로 실행한 날 / 모의 실행한 날 */
+  lastRealDay: string | null;
+  lastDryDay: string | null;
+  /** 걸어 둔 주문 (앱이 중간에 꺼지면 다음 시작 때 취소·기록) */
+  open: { id: number; price: number; amount: number; day: string } | null;
+  balance: { prl: number; usdt: number; at: number } | null;
+  /** 주 1회 출금 권장 알림을 보낸 주 (YYYY-MM-DD, 그 주 일요일) */
+  withdrawHintDay: string | null;
+}
+
+const autoSellFile = () => file('autosell-state.json');
+let autoSell: AutoSellState = { history: [], lastRealDay: null, lastDryDay: null, open: null, balance: null, withdrawHintDay: null };
+let autoSellBusy = false;
+const saveAutoSell = () => writeJson(autoSellFile(), autoSell);
+
+/** 오늘 실행 시각 (지났으면 내일) */
+function nextAutoSellAt(now = Date.now()): number | null {
+  const c = settings.autoSell;
+  return c.enabled ? nextRunAt(c.time, (c.dryRun ? autoSell.lastDryDay : autoSell.lastRealDay) === dateKey(now), now) : null;
+}
+
+const todaySoldPrl = () =>
+  autoSell.history.filter((r) => !r.dryRun && r.day === dateKey(Date.now())).reduce((a, r) => a + r.soldPrl, 0);
+
+function autoSellView(): AppState['autoSell'] {
+  return {
+    keySet: !!env.exchangeKey?.(),
+    keyStore: env.exchangeKeyStore?.() ?? null,
+    running: autoSellBusy,
+    nextRunAt: nextAutoSellAt(),
+    todaySoldPrl: todaySoldPrl(),
+    last: autoSell.history[0] ?? null,
+    history: autoSell.history.slice(0, 10),
+    balance: autoSell.balance,
+  };
+}
+
+function sellClient(key: ExchangeKey) {
+  return createSafeTrade(key);
+}
+
+/** 매도 결과를 PnL 장부에 "실현 매도" 로 (USDT → 원은 설정 환율). 공유 장부면 이벤트로 다른 OS 에도 */
+function recordSale(r: SellResult): void {
+  if (r.dryRun || !(r.soldPrl > 0)) return;
+  const fx = settings.profit.krwPerUsd;
+  const avg = r.proceedsUsdt / r.soldPrl;
+  const now = Date.now();
+  addSale(pnl, settings.coin, now, r.soldPrl, r.proceedsUsdt * fx, r.feeUsdt * fx);
+  logEvent({
+    t: now, type: 'sale', coin: settings.coin, qty: r.soldPrl, proceedsKrw: r.proceedsUsdt * fx, feeKrw: r.feeUsdt * fx, venue: 'SafeTrade (자동)',
+    note: `${r.soldPrl.toFixed(4)} PRL @ ${avg.toFixed(4)} = ${r.proceedsUsdt.toFixed(2)} USDT, 수수료 ${r.feeUsdt.toFixed(4)} USDT, 주문 ${r.orders.map((o) => o.id).join(',')}`,
+  });
+  savePnl();
+  if (sharedBook) syncShared();
+}
+
+function noteResult(r: SellResult): void {
+  autoSell.history = [r, ...autoSell.history].slice(0, 30);
+  if (r.dryRun) autoSell.lastDryDay = r.day;
+  else autoSell.lastRealDay = r.day;
+  saveAutoSell();
+  recordSale(r);
+  const level: Alert['level'] = r.status === 'error' || r.status === 'skipped' ? 'warn' : 'info';
+  const head = r.dryRun ? '자동 매도(모의)' : '자동 매도';
+  const msg =
+    r.status === 'planned' ? `${head}: ${r.reason}`
+    : r.status === 'sold' || r.status === 'partial' ? `${head}: ${r.soldPrl.toFixed(4)} PRL → ${r.proceedsUsdt.toFixed(2)} USDT (평균 ${(r.proceedsUsdt / r.soldPrl).toFixed(4)})${r.reason ? ` · ${r.reason}` : ''}`
+    : `${head} 안 함: ${r.reason ?? r.status}`;
+  pushAlert({ ts: Date.now(), level, code: `autosell_${r.status}`, message: msg }, level !== 'info');
+  // 팔 PRL 이 없으면: 풀 지급분을 SafeTrade 로 보내라는 안내
+  if (r.status === 'nothing' && /팔 수 있는 PRL/.test(r.reason ?? '')) {
+    alertOnce({ ts: Date.now(), level: 'info', code: 'autosell_send_prl', message: `SafeTrade 에 팔 PRL 이 없습니다 — 지갑의 PRL 을 SafeTrade 로 보내세요 (입금 최소 ${settings.cashout.prlDepositMin} PRL, ${settings.cashout.prlConfirmations} 컨펌)` }, 20 * 3600_000);
+  }
+}
+
+/** 실행 전 잔고·주 1회 출금 권장 */
+async function refreshExchangeBalance(key: ExchangeKey): Promise<void> {
+  const b = await sellClient(key).balances().catch(() => null);
+  if (!b) return;
+  autoSell.balance = { prl: b.prl?.available ?? 0, usdt: b.usdt?.available ?? 0, at: Date.now() };
+  const now = new Date();
+  const c = settings.cashout;
+  if (now.getDay() === 0 && autoSell.balance.usdt >= c.withdrawSuggestUsdt && autoSell.withdrawHintDay !== dateKey(now.getTime())) {
+    autoSell.withdrawHintDay = dateKey(now.getTime());
+    pushAlert({ ts: Date.now(), level: 'info', code: 'cashout_withdraw', message: `SafeTrade USDT ${autoSell.balance.usdt.toFixed(2)} — 이번 주 바이낸스로 출금 권장 (${c.withdrawNetwork}, 수수료 ${c.withdrawFeeUsdt} USDT, 최소 ${c.withdrawMinUsdt})` }, false);
+  }
+  saveAutoSell();
+}
+
+/** 지난 실행에서 걸어 둔 채 남은 주문: 취소하고 체결분은 기록 (앱이 매도 중에 꺼졌을 때) */
+async function recoverOpenOrder(key: ExchangeKey): Promise<void> {
+  const o = autoSell.open;
+  if (!o) return;
+  const c = sellClient(key);
+  try {
+    await c.cancel(o.id).catch(() => undefined);
+    const st = await c.order(o.id);
+    autoSell.open = null;
+    saveAutoSell();
+    if (st.filledAmount > 0) {
+      noteResult({ day: o.day, at: Date.now(), dryRun: false, status: 'partial', reason: '앱이 매도 중에 꺼져 남은 주문을 취소했습니다', floorUsd: null, refUsd: null, plan: { price: o.price, amount: o.amount }, orders: [{ id: o.id, price: o.price, amount: o.amount, filled: st.filledAmount, avgPrice: st.avgPrice }], soldPrl: st.filledAmount, proceedsUsdt: st.filledAmount * st.avgPrice, feeUsdt: 0 });
+    }
+  } catch (e) {
+    env.log.warn(`autosell: cannot recover open order ${o.id}: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * 자동 매도 1회. manual 이면 시각과 무관하게 (실제 매도는 confirm 으로 확인). 같은 날 실제 매도는 한 번만,
+ * 공유 장부를 쓰면 다른 기기가 이미 실행했는지 공유 폴더의 그날 기록으로 확인한다.
+ */
+export async function runAutoSellOnce(o: { dryRun: boolean; manual: boolean; confirm?: Confirm }): Promise<string | null> {
+  const cfg = { ...settings.autoSell, dryRun: o.dryRun };
+  const err = validateAutoSell(cfg);
+  if (err) return err;
+  if (autoSellBusy) return '자동 매도가 이미 진행 중입니다';
+  const key = env.exchangeKey?.() ?? null;
+  if (!key) return 'SafeTrade API 키가 없습니다 (이 PC 의 자동 매도 카드에서 입력)';
+  const day = dateKey(Date.now());
+  if (!o.dryRun) {
+    if (autoSell.lastRealDay === day) return '오늘은 이미 자동 매도를 실행했습니다';
+    if (o.manual && o.confirm && !(await o.confirm('sell', `SafeTrade 에서 지금 실제로 매도합니다 (지정가, 하한가 아래로는 팔지 않음, 하루 최대 ${cfg.dailyMaxPrl} PRL, 1회 최대 ${cfg.orderMaxUsd} USDT).`))) return '취소됨';
+    // 확인을 기다리는 동안 예약 실행이 먼저 돌았을 수 있다
+    if (autoSellBusy) return '자동 매도가 이미 진행 중입니다';
+    if (autoSell.lastRealDay === day) return '오늘은 이미 자동 매도를 실행했습니다';
+    const dir = sharedDir();
+    if (dir) {
+      if (!sharedStatus?.ok) return '공유 장부 폴더가 보이지 않아 다른 기기의 실행 여부를 확인할 수 없습니다 — 오늘은 팔지 않습니다';
+      const claim = claimAutoSellDay(sharedRoot(dir), day, instanceId);
+      if (!claim.ok) {
+        autoSell.lastRealDay = day;
+        saveAutoSell();
+        return claim.by === instanceId ? '오늘은 이미 자동 매도를 실행했습니다' : `오늘은 다른 기기(${claim.by})가 이미 자동 매도를 실행했습니다`;
+      }
+    }
+  }
+  autoSellBusy = true;
+  env.onChange();
+  try {
+    await recoverOpenOrder(key);
+    await refreshExchangeBalance(key);
+    const r = await runAutoSell(cfg, {
+      client: sellClient(key),
+      sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
+      now: Date.now,
+      refPriceUsd: () => (remote.prlUsd !== null && remote.priceAt !== null && Date.now() - remote.priceAt < 3 * 3600_000 ? remote.prlUsd : null),
+      soldTodayPrl: todaySoldPrl(),
+      day,
+      onOpen: (ord: Order | null) => {
+        autoSell.open = ord ? { id: ord.id, price: ord.price, amount: ord.originAmount, day } : null;
+        saveAutoSell();
+      },
+    });
+    noteResult(r);
+    await refreshExchangeBalance(key);
+    return r.status === 'error' ? r.reason : null;
+  } finally {
+    autoSellBusy = false;
+    env.onChange();
+  }
+}
+
+/** 1분마다: 켜져 있고 실행 시각이 지났고 오늘 아직이면 실행 */
+async function maybeAutoSell(): Promise<void> {
+  const c = settings.autoSell;
+  if (!c.enabled || autoSellBusy) return;
+  const next = nextAutoSellAt();
+  if (next === null || Date.now() < next) return;
+  const err = await runAutoSellOnce({ dryRun: c.dryRun, manual: false });
+  if (err) {
+    // 같은 이유로 매분 다시 시도하지 않게 오늘은 실행한 것으로 둔다
+    if (c.dryRun) autoSell.lastDryDay = dateKey(Date.now());
+    else autoSell.lastRealDay = dateKey(Date.now());
+    saveAutoSell();
+    alertOnce({ ts: Date.now(), level: 'warn', code: 'autosell_skipped', message: `자동 매도 안 함: ${err}` }, 20 * 3600_000);
+  }
 }
 
 /** 위험·비용 고지에 동의했는지 */
@@ -1062,6 +1251,12 @@ function validatePatch(p: Partial<Settings>): string | null {
   const ctlErr = validateControl(mc, MOCK ? 'windows' : PLATFORM);
   if (ctlErr) return ctlErr;
   if (mc.mode === 'direct' && !MOCK && !fs.existsSync(mc.exe)) return `채굴기 실행 파일이 없습니다: ${mc.exe}`;
+  const asErr = validateAutoSell(next.autoSell);
+  if (asErr) return `자동 매도: ${asErr}`;
+  const co = next.cashout;
+  if (![co.prlDepositMin, co.prlConfirmations, co.withdrawFeeUsdt, co.withdrawMinUsdt, co.withdrawSuggestUsdt].every((v) => Number.isFinite(v) && v >= 0) || typeof co.withdrawNetwork !== 'string' || co.withdrawNetwork.length > 20 || !/^\d{4}-\d{2}-\d{2}$/.test(co.measuredAt)) {
+    return '현금화 경로 값이 올바르지 않습니다';
+  }
   if (typeof next.sharedLedgerDir !== 'string' || (next.sharedLedgerDir && !path.isAbsolute(next.sharedLedgerDir)) || /[\0\r\n]/.test(next.sharedLedgerDir)) {
     return '공유 장부 폴더는 절대 경로여야 합니다 (예: U:\\ 또는 /mnt/crypthy)';
   }
@@ -1138,6 +1333,23 @@ export function saveSettingsPatch(patch: Partial<Settings>): string | null {
   const err = applyPatch(patch);
   if (!err) void refreshRemote(false);
   return err;
+}
+
+export const REAL_SELL_TEXT =
+  '자동 매도를 실제 매도로 전환합니다. 매일 정한 시각에 SafeTrade 에서 지정가로 PRL 을 팝니다 (하한가 아래로는 팔지 않음). 먼저 모의 실행 결과를 확인했는지 다시 보세요.';
+
+/** 이 변경이 실제 자동 매도를 새로 켜는가 (켜짐 + 모의 실행 끔) */
+export function turnsOnRealSell(patch: Partial<Settings>): boolean {
+  if (!patch.autoSell) return false;
+  const cur = settings.autoSell;
+  const next = { ...cur, ...patch.autoSell };
+  return next.enabled && !next.dryRun && !(cur.enabled && !cur.dryRun);
+}
+
+/** 설정 저장 — 실제 자동 매도를 켜는 변경은 먼저 확인을 받는다 (화면·원격 모두) */
+export async function saveSettingsConfirmed(patch: Partial<Settings>, confirm: Confirm): Promise<string | null> {
+  if (turnsOnRealSell(patch) && !(await confirm('sell', REAL_SELL_TEXT))) return '취소됨';
+  return saveSettingsPatch(patch);
 }
 
 export function addSaleRecord(raw: SaleInput): string | null {
@@ -1410,6 +1622,7 @@ export async function initCore(e: CoreEnv): Promise<void> {
   loadState();
   instanceId = ensureInstanceId(env.dataDir, PLATFORM);
   srbCache = readJson<SrbDeviceCache | null>(srbCacheFile(), null);
+  autoSell = { ...autoSell, ...readJson<Partial<AutoSellState>>(autoSellFile(), {}) };
   void refreshTaskStatus();
   sync = { poolGen: 0, settingsGen: 0, ...readJson<Partial<SyncState>>(syncFile(), {}) };
   syncShared();
@@ -1434,6 +1647,7 @@ export async function initCore(e: CoreEnv): Promise<void> {
     env.onChange();
   }, SHARED_SYNC_MS));
   if (settings.autoStartMining) timers.push(setTimeout(() => void autoStartMining(), AUTO_START_DELAY_MS));
+  timers.push(setInterval(() => void maybeAutoSell(), 60_000));
 }
 
 /** 장부·기록 저장. final 이면 남은 전력 구간도 바로 기록 (종료·업데이트 설치 전) */

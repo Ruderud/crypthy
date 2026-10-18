@@ -1,11 +1,14 @@
 #!/bin/sh
 # Crypthy 헤드리스 설치 (Ubuntu Server 등 화면 없는 Linux). root 로 1회 실행한다:
 #   sudo ./install.sh [--user NAME] [--bind IP] [--port N] [--enable-write] [--accept-risk] [--power-limits] [--shared-ledger DIR]
+#                   [--safetrade-key FILE]
 #
 #  - 앱 파일은 /opt/crypthy-headless (root 소유), 데이터·토큰은 /var/lib/crypthy-headless (실행 사용자만 읽기)
 #  - systemd 시스템 유닛 crypthy-headless.service 를 지정한 사용자 권한으로 돌린다 (root 아님)
 #  - 원격 API 는 기본 127.0.0.1. 다른 PC 에서 보려면 --bind 에 Tailscale IP 처럼 이 PC 의 특정 IP 를 준다
 #  - --power-limits: GPU 전력 제한 서비스(crypthy-power-limit)도 설치 (pkexec 대신 지금 sudo 권한으로)
+#  - --safetrade-key: 자동 매도용 SafeTrade API 키 파일 {"key": "...", "secret": "..."} 을 /etc/crypthy 에 root 0600 으로
+#    복사하고 systemd LoadCredential 로만 서비스에 넘긴다 (원본 파일은 지워도 된다). 다시 설치해도 유지된다
 #  - 자동 업데이트는 없다. 새 버전은 같은 방법으로 다시 설치한다 (데이터는 유지)
 set -eu
 
@@ -19,6 +22,9 @@ PORT=47321
 EXTRA=""
 POWER=0
 SHARED=""
+KEY_SRC=""
+KEY_DIR=/etc/crypthy
+KEY_FILE=$KEY_DIR/safetrade-key.json
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,7 +35,8 @@ while [ $# -gt 0 ]; do
     --accept-risk) EXTRA="$EXTRA --accept-risk"; shift ;;
     --power-limits) POWER=1; shift ;;
     --shared-ledger) SHARED="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --safetrade-key) KEY_SRC="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -50,6 +57,15 @@ if [ -n "$SHARED" ]; then
   case "$SHARED" in /*) ;; *) echo "--shared-ledger must be an absolute path" >&2; exit 2 ;; esac
   case "$SHARED" in *[!A-Za-z0-9._/@+-]*) echo "--shared-ledger: unsupported characters" >&2; exit 2 ;; esac
   EXTRA="$EXTRA --shared-ledger $SHARED"
+fi
+
+# SafeTrade API 키: 내용은 출력하지 않는다
+if [ -n "$KEY_SRC" ]; then
+  if [ -L "$KEY_SRC" ] || [ ! -f "$KEY_SRC" ]; then echo "--safetrade-key: not a regular file" >&2; exit 2; fi
+  if [ -L "$KEY_DIR" ]; then echo "$KEY_DIR is a symlink, refusing" >&2; exit 1; fi
+  install -d -o root -g root -m 0700 "$KEY_DIR"
+  install -o root -g root -m 0600 "$KEY_SRC" "$KEY_FILE"
+  echo "SafeTrade key installed to $KEY_FILE (root 0600). You can delete $KEY_SRC now."
 fi
 
 NODE=$(command -v node || true)
@@ -101,6 +117,7 @@ NoNewPrivileges=yes
 ProtectSystem=full
 ReadWritePaths=$DATA${SHARED:+ $SHARED}
 PrivateTmp=yes
+$( [ -f "$KEY_FILE" ] && echo "LoadCredential=safetrade-key.json:$KEY_FILE" )
 
 [Install]
 WantedBy=multi-user.target

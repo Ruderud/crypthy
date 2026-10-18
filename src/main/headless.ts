@@ -9,6 +9,7 @@ import * as core from './core';
 import { readJson } from './config';
 import { HEADLESS_USAGE, parseHeadlessArgs, type HeadlessFileConfig } from './headlessArgs';
 import { createFileLogger, type Logger } from './log';
+import { loadKeyFile } from './exchangeKey';
 import { ensureToken, startRemoteApi, validateBind } from './remoteApi';
 
 /** 원격 요청에 담긴 확인만 받는다. 없으면 클라이언트가 사용자에게 묻도록 409 로 돌려보낸다 */
@@ -60,7 +61,14 @@ async function main(): Promise<void> {
   process.on('unhandledRejection', (e) => log.error('unhandledRejection', e));
   log.info(`Crypthy headless v${version} — data ${opts.dataDir}`);
 
+  // SafeTrade API 키: systemd credential 또는 0600 파일. 값은 로그에 남기지 않는다
+  const ex = loadKeyFile(opts.dataDir);
+  if (ex.error) log.warn(`autosell: ${ex.error}`);
+  else if (ex.key) log.info(`autosell: SafeTrade API key loaded (${ex.store})`);
+
   await core.initCore({
+    exchangeKey: () => ex.key,
+    exchangeKeyStore: () => (ex.key ? ex.store : null),
     dataDir: opts.dataDir,
     version,
     resourcesDir: path.join(__dirname, '..', '..', 'resources'),
@@ -82,7 +90,8 @@ async function main(): Promise<void> {
       start: (accept) => core.startMining(acceptFrom(accept)),
       stop: (accept) => core.stopMining(acceptFrom(accept)),
       setGpu: (id, mine, accept) => core.setGpuMining(id, mine, acceptFrom(accept)),
-      saveSettings: core.saveSettingsPatch,
+      saveSettings: (patch, accept) => core.saveSettingsConfirmed(patch, acceptFrom(accept)),
+      runAutoSell: (dryRun, accept) => core.runAutoSellOnce({ dryRun, manual: true, confirm: acceptFrom(accept) }),
       clearHold: core.clearHold,
       addSale: core.addSaleRecord,
       backfill: core.backfillPnl,

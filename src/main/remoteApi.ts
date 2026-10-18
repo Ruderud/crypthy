@@ -32,7 +32,10 @@ export interface RemoteHandlers {
   /** GPU 별 채굴 켜기·끄기 (채굴 중이면 다시 시작) */
   setGpu(id: string, mine: boolean, accept: ConfirmKind[]): Promise<string | null>;
   stop(accept: ConfirmKind[]): Promise<string | null>;
-  saveSettings(patch: Partial<Settings>): string | null;
+  /** 실제 자동 매도를 켜는 변경은 accept 에 'sell' 이 있어야 (없으면 409) */
+  saveSettings(patch: Partial<Settings>, accept: ConfirmKind[]): Promise<string | null> | string | null;
+  /** 자동 매도 한 번 실행 (실제 매도는 accept 에 'sell'). 키는 호스트에만 있고 API 로 오가지 않는다 */
+  runAutoSell(dryRun: boolean, accept: ConfirmKind[]): Promise<string | null>;
   clearHold(id: string): void;
   addSale(sale: SaleInput): string | null;
   backfill(fromMs: unknown, watts: unknown): string | null;
@@ -85,7 +88,7 @@ export function sanitizeState(st: AppState): AppState {
  * 원격에서 바꿀 수 있는 설정 (허용 목록). 채굴 켜기·끄기 방식(실행 파일·인자·작업·유닛), 안전 정지 설정,
  * 로그인 시 실행은 호스트에서만 바꾼다 — 쓰기 토큰만으로 호스트에서 임의 프로그램을 실행하거나 안전 정지를 끄지 못하게.
  */
-export const REMOTE_SETTING_KEYS = new Set<keyof Settings>(['coin', 'wallet', 'pool', 'minerApi', 'updateIntervalMin', 'gpus', 'profit']);
+export const REMOTE_SETTING_KEYS = new Set<keyof Settings>(['coin', 'wallet', 'pool', 'minerApi', 'updateIntervalMin', 'gpus', 'profit', 'autoSell', 'cashout']);
 
 /** 원격에서 온 설정 변경: 허용한 항목만, 가려진 지갑(… 포함)은 바꾸지 않는다 */
 export function sanitizePatch(patch: unknown): Partial<Settings> {
@@ -146,7 +149,7 @@ function readBody(req: http.IncomingMessage): Promise<unknown> {
 }
 
 const acceptOf = (b: unknown): ConfirmKind[] =>
-  Array.isArray((b as { accept?: unknown })?.accept) ? ((b as { accept: unknown[] }).accept.filter((k) => k === 'consent' || k === 'danger' || k === 'stop') as ConfirmKind[]) : [];
+  Array.isArray((b as { accept?: unknown })?.accept) ? ((b as { accept: unknown[] }).accept.filter((k) => k === 'consent' || k === 'danger' || k === 'stop' || k === 'sell') as ConfirmKind[]) : [];
 
 export function createRemoteApiHandler(cfg: RemoteApiConfig, h: RemoteHandlers): http.RequestListener {
   const hosts = allowedHosts(cfg.bind, cfg.port);
@@ -190,7 +193,12 @@ export function createRemoteApiHandler(cfg: RemoteApiConfig, h: RemoteHandlers):
           return result(await h.setGpu(b.id, b.mine, acceptOf(body)));
         }
         case '/v1/settings':
-          return result(h.saveSettings(sanitizePatch((body as { patch?: unknown })?.patch)));
+          return result(await h.saveSettings(sanitizePatch((body as { patch?: unknown })?.patch), acceptOf(body)));
+        case '/v1/autosell/run': {
+          const dryRun = (body as { dryRun?: unknown })?.dryRun;
+          if (typeof dryRun !== 'boolean') return send(400, { error: 'bad_request' });
+          return result(await h.runAutoSell(dryRun, acceptOf(body)));
+        }
         case '/v1/holds/clear': {
           const id = (body as { id?: unknown })?.id;
           if (typeof id !== 'string' || !id) return send(400, { error: 'bad_request' });

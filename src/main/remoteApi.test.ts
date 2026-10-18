@@ -40,6 +40,11 @@ function handlers(log: string[] = []): RemoteHandlers {
       log.push(`settings ${JSON.stringify(patch)}`);
       return null;
     },
+    async runAutoSell(dryRun, accept) {
+      log.push(`autosell ${dryRun} ${accept.join(',')}`);
+      if (!dryRun && !accept.includes('sell')) throw new NeedConfirm('sell', 'real sale');
+      return null;
+    },
     clearHold: (id) => void log.push(`clear ${id}`),
     addSale: () => null,
     backfill: () => null,
@@ -140,6 +145,26 @@ describe('remote API: writing', () => {
     expect(first.json).toMatchObject({ needs: 'consent', detail: 'notice' });
     expect((await call('POST', '/v1/miner/start', { token: WRITE, body: { accept: ['consent', 'bogus'] } })).status).toBe(200);
     expect(log).toEqual(['start ', 'start consent']);
+  });
+
+  it('auto-sell runs need the write token, a boolean and a sell confirmation for real sales', async () => {
+    const log: string[] = [];
+    const { call } = await serve(WRITE, log);
+    expect((await call('POST', '/v1/autosell/run', { token: READ, body: { dryRun: true } })).status).toBe(401);
+    expect((await call('POST', '/v1/autosell/run', { token: WRITE, body: { dryRun: 'yes' } })).status).toBe(400);
+    expect((await call('POST', '/v1/autosell/run', { token: WRITE, body: { dryRun: true } })).status).toBe(200);
+    const real = await call('POST', '/v1/autosell/run', { token: WRITE, body: { dryRun: false } });
+    expect(real.status).toBe(409);
+    expect(real.json).toMatchObject({ needs: 'sell' });
+    expect((await call('POST', '/v1/autosell/run', { token: WRITE, body: { dryRun: false, accept: ['sell'] } })).status).toBe(200);
+    expect(log).toEqual(['autosell true ', 'autosell false ', 'autosell false sell']);
+  });
+
+  it('auto-sell settings can be changed remotely, but an API key field is never accepted', async () => {
+    const log: string[] = [];
+    const { call } = await serve(WRITE, log);
+    await call('POST', '/v1/settings', { token: WRITE, body: { patch: { autoSell: { dryRun: true }, safetradeKey: 'abc', exchangeKey: { key: 'k', secret: 's' } } } });
+    expect(log).toEqual(['settings {"autoSell":{"dryRun":true}}']);
   });
 
   it('a masked wallet sent back from a remote screen does not overwrite the real one', async () => {

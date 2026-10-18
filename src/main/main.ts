@@ -6,7 +6,9 @@ import type { Alert, AppState, ChartsView, RemoteSettingsView, Settings } from '
 import * as core from './core';
 import { setLinuxAutostart } from './autostart';
 import { readJson, writeJson } from './config';
+import { parseKeyInput } from './exchangeKey';
 import { createFileLogger, type Logger } from './log';
+import type { ExchangeKey } from './safetrade';
 import { createRemoteClient, normalizeRemoteUrl, postWithConfirm, type RemoteTarget } from './remoteClient';
 import { startStatusServer } from './statusApi';
 import { createNotificationKeeper, updateToast } from './updatePrompt';
@@ -159,6 +161,54 @@ function disconnectRemote(): void {
   broadcast();
 }
 
+// ---------- SafeTrade API 키 (자동 매도) ----------
+//
+// 사용자가 이 PC 화면에서 직접 넣는다. OS 보안 저장소(safeStorage)로 암호화해 safetrade-key.json 에 두고,
+// 화면·원격·로그로는 내보내지 않는다 (화면에는 "저장됨" 여부만). 암호화할 수 없는 환경이면 저장하지 않는다.
+
+const exchangeKeyFile = () => file('safetrade-key.json');
+let exchangeKey: ExchangeKey | null = null;
+
+function loadExchangeKey(): void {
+  const raw = readJson<{ key?: unknown; secret?: unknown } | null>(exchangeKeyFile(), null);
+  if (!raw) return;
+  try {
+    if (!canEncrypt() || typeof raw.key !== 'string' || typeof raw.secret !== 'string') throw new Error('unreadable');
+    const k = parseKeyInput(unseal(raw.key, true), unseal(raw.secret, true));
+    exchangeKey = typeof k === 'string' ? null : k;
+    if (!exchangeKey) throw new Error('invalid');
+  } catch {
+    exchangeKey = null;
+    log.warn('autosell: saved SafeTrade key cannot be read — enter it again');
+  }
+}
+
+/** 키 저장 (둘 다 비우면 삭제). 오류 문장에는 키 값을 넣지 않는다 */
+function setExchangeKey(keyRaw: unknown, secretRaw: unknown): string | null {
+  if (remote) return LOCAL_ONLY;
+  const empty = (v: unknown) => typeof v !== 'string' || !v.trim();
+  if (empty(keyRaw) && empty(secretRaw)) {
+    exchangeKey = null;
+    fs.rmSync(exchangeKeyFile(), { force: true });
+    log.info('autosell: SafeTrade key removed');
+    broadcast();
+    return null;
+  }
+  if (!canEncrypt()) return '이 PC 에서는 OS 보안 저장소를 쓸 수 없어 키를 저장하지 않습니다';
+  const k = parseKeyInput(keyRaw, secretRaw);
+  if (typeof k === 'string') return k;
+  writeJson(exchangeKeyFile(), { enc: true, key: seal(k.key, true), secret: seal(k.secret, true) });
+  try {
+    fs.chmodSync(exchangeKeyFile(), 0o600);
+  } catch {
+    // Windows 는 사용자 프로필 폴더 권한을 따른다
+  }
+  exchangeKey = k;
+  log.info('autosell: SafeTrade key saved (OS secure storage)');
+  broadcast();
+  return null;
+}
+
 const remoteSettingsView = (): RemoteSettingsView => ({
   url: remoteSaved.url,
   enabled: !!remote,
@@ -211,6 +261,10 @@ export const dialogConfirm: core.Confirm = async (kind, detail) => {
       noLink: true,
     });
     return r.response === 0 && r.checkboxChecked;
+  }
+  if (kind === 'sell') {
+    const r = await ask({ type: 'warning', title: 'SafeTrade 자동 매도', message: '실제로 매도합니다', detail, buttons: ['매도 진행', '취소'], defaultId: 1, cancelId: 1, noLink: true });
+    return r.response === 0;
   }
   if (kind === 'danger') {
     const r = await ask({ type: 'warning', title: '최근 위험 정지', message: '최근에 위험 조건으로 채굴기를 정지했습니다', detail, buttons: ['그래도 켜기', '취소'], defaultId: 1, cancelId: 1, noLink: true });
@@ -425,6 +479,11 @@ function registerIpc(): void {
   ipcMain.handle('safety:clearHold', routed((id) => core.clearHold(String(id)), '/v1/holds/clear', (id) => ({ id: String(id) })));
   ipcMain.handle('miner:start', routed(() => core.startMining(dialogConfirm), '/v1/miner/start', () => ({})));
   ipcMain.handle('miner:stop', routed(() => core.stopMining(dialogConfirm), '/v1/miner/stop', () => ({})));
+  ipcMain.handle('autosell:setKey', (_e, key: unknown, secret: unknown) => setExchangeKey(key, secret));
+  ipcMain.handle(
+    'autosell:run',
+    routed((dryRun) => core.runAutoSellOnce({ dryRun: dryRun !== false, manual: true, confirm: dialogConfirm }), '/v1/autosell/run', (dryRun) => ({ dryRun: dryRun !== false })),
+  );
   ipcMain.handle('miner:importTask', () => (remote ? LOCAL_ONLY : core.importMinerTask()));
   ipcMain.handle('miner:gpu', routed((id, mine) => core.setGpuMining(String(id), mine === true, dialogConfirm), '/v1/miner/gpu', (id, mine) => ({ id: String(id), mine: mine === true })));
   // 예약 작업 끄기: 실행 파일 방식으로 바꾼 뒤 그 작업이 채굴기를 하나 더 띄우지 않게 (사용자 확인 후)
@@ -467,7 +526,7 @@ function registerIpc(): void {
         if (!(await dialogConfirm('consent', core.CONSENT_TEXT))) return '채굴 자동 시작은 위험·비용 고지에 동의해야 켤 수 있습니다';
         core.acceptRisk();
       }
-      return core.saveSettingsPatch(p);
+      return core.saveSettingsConfirmed(p, dialogConfirm);
     }, '/v1/settings', (patch) => ({ patch })),
   );
   ipcMain.handle('setup:importBat', async () => {
@@ -518,7 +577,10 @@ if (!app.requestSingleInstanceLock()) {
     process.on('unhandledRejection', (e) => log.error('unhandledRejection', e));
     registerIpc();
 
+    loadExchangeKey();
     await core.initCore({
+      exchangeKey: () => exchangeKey,
+      exchangeKeyStore: () => (exchangeKey ? (process.platform === 'win32' ? 'Windows 보안 저장소' : 'OS 보안 저장소') : null),
       dataDir: app.getPath('userData'),
       version: app.getVersion(),
       resourcesDir: app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'resources'),
