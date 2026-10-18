@@ -86,7 +86,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "artifactName": "Crypthy-${version}-setup-${arch}.${ext}",
-      "license": "LICENSE"
+      "license": "LICENSE",
+      "include": "resources/nsis/installer.nsh"
     },
     "linux": {
       "target": [
