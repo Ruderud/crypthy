@@ -8,6 +8,12 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-10-18
+
+### Changed
+- Update notices appear once. The native update dialog added in 0.3.5 is removed; **download / later** and **restart now to install / later** are only in the in-app banner.
+- An OS notification is shown only when the window is hidden or minimized (tray). Clicking it opens the window, scrolls to the top and highlights the banner; the tray's new-version item does the same. A manual check shows the banner only.
+
 ## [0.3.7] - 2026-10-18
 
 ### Added
@@ -115,7 +121,8 @@ Release notes on GitHub are taken from the matching section of this file.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/Ruderud/crypthy/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/Ruderud/crypthy/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/Ruderud/crypthy/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/Ruderud/crypthy/compare/v0.3.4...v0.3.5
