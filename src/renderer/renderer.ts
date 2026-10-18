@@ -81,13 +81,17 @@ function renderHub(st: AppState) {
 
 const signCls = (v: number | null) => (v === null ? '' : v < 0 ? 'crit' : 'good');
 
-function periodNet(v: AppState['profit']['today']): string {
-  if (v.status === 'noPrice') return '<span class="muted">시세 없음</span>';
-  if (v.status === 'collecting') return `<span class="muted">집계 중 (확정 구간 ${n(v.matchedHours, 1)}h / 3h)</span>`;
-  return `<span class="${signCls(v.confirmedNetKrw)}">${krw(v.confirmedNetKrw)}</span> <span class="muted small">${n(v.matchedHours, 1)}h 구간</span>`;
+/** 오늘·이번 달 수익 = (풀 확정 + 소급 + 실시간 추정) × 시세 − 같은 기간 전력비. 세부는 보조 줄과 툴팁으로 */
+function periodProfit(v: AppState['pnl']['month'], sym: string): string {
+  const parts = `확정 ${n(v.confirmed, 4)} · 소급 ${n(v.backfill, 4)} · 실시간 추정 ${n(v.pending, 4)} ${sym}`;
+  const tip = esc(`${parts}\n매출 ${krw(v.revenueKrw)} − 전력비 ${krw(v.energyCostKrw)}\n소급·실시간 추정분은 추정값이고, 실시간 추정분은 풀에 반영되면 확정분으로 바뀝니다.`);
+  const net = v.revenueKrw === 0 && v.unpriced > 0
+    ? '<span class="muted">시세 없음</span>'
+    : `<span class="${signCls(v.netKrw)} big-num">${krw(v.netKrw)}</span>${v.estimated ? ' <span class="warn small">추정 포함</span>' : ''}`;
+  return `<div title="${tip}">${net}<div class="muted small">${n(v.mined, 4)} ${sym} (${parts}) · 전력비 ${krw(v.energyCostKrw)}</div></div>`;
 }
 
-function renderProfit(p: AppState['profit']): string {
+function renderProfit(p: AppState['profit'], pnl: AppState['pnl']): string {
   const sym = esc(p.symbol);
   const price = p.price
     ? `$${esc(p.price.usd)} <span class="${(p.change24hPct ?? 0) < 0 ? 'crit' : 'good'} small">${n(p.change24hPct, 1, '%')} 24h</span>` +
@@ -98,23 +102,20 @@ function renderProfit(p: AppState['profit']): string {
     : `<span class="${signCls(p.liveKrwPerH)} big-num">${krw(p.liveKrwPerH)}/h</span> <span class="muted small">${n(p.liveCoinPerH, 3)} ${sym}/h</span>`;
   const est = (v: AppState['profit']['today']) =>
     v.estNetKrw === null ? '<span class="muted">-</span>' : `<span class="${signCls(v.estNetKrw)}">${krw(v.estNetKrw)}</span> <span class="muted small">${n(v.estCoin, 3)} ${sym} · ${n(v.kwh, 2)} kWh</span>`;
-  const rows = [
-    stat('실시간 추정 순수익', live),
-    stat(`${p.symbol} 시세`, price),
-    stat('오늘 추정 순수익', est(p.today)),
-    stat('이번 달 추정 순수익', est(p.month)),
-  ];
+  const rows = [stat('실시간 추정 순수익', live), stat(`${p.symbol} 시세`, price)];
   if (p.supported) {
     rows.push(
+      stat('오늘 수익', periodProfit(pnl.today, sym)),
+      stat('이번 달 수익', periodProfit(pnl.month, sym)),
       stat('풀 누적 채굴량', `${n(p.lifetimeCoin, 4)} ${sym}`),
       stat('미지급 잔액 / 최근 지급', `${n(p.balanceCoin, 3)} / ${n(p.paidCoin, 3)} ${sym}`),
-      stat('오늘 확정 채굴량', `${n(p.today.confirmedCoin, 4)} ${sym}`),
-      stat('오늘 확정 순수익', periodNet(p.today)),
-      stat('이번 달 확정 채굴량', `${n(p.month.confirmedCoin, 4)} ${sym}`),
-      stat('이번 달 확정 순수익', periodNet(p.month)),
     );
   } else {
-    rows.push(stat('풀 확정 채굴량', '지갑과 Kryptex 풀(*.kryptex.network)을 입력하면 표시합니다'));
+    rows.push(
+      stat('오늘 추정 순수익', est(p.today)),
+      stat('이번 달 추정 순수익', est(p.month)),
+      stat('풀 확정 채굴량', '지갑과 Kryptex 풀(*.kryptex.network)을 입력하면 표시합니다'),
+    );
   }
   return rows.join('');
 }
@@ -134,12 +135,29 @@ function renderPnl(st: AppState) {
   ].join('');
   const row = (name: string, v: AppState['pnl']['all']) =>
     `<tr><td>${name}</td><td>${n(v.mined, 4)} ${sym}</td><td>${krw(v.revenueKrw)}</td><td>${krw(v.energyCostKrw)}</td><td class="${signCls(v.netKrw)}">${krw(v.netKrw)}${est(v.estimated)}</td></tr>`;
-  $('pnlTable').innerHTML = `<tr><th>기간</th><th>채굴량</th><th>매출(채굴 시점)</th><th>전력비</th><th>순익</th></tr>${row('오늘', p.today)}${row('최근 7일', p.d7)}${row('최근 30일', p.d30)}${row('전체', p.all)}`;
-  const canBootstrap = !p.bootstrapped && p.trackStart !== null;
+  $('pnlTable').innerHTML = `<tr><th>기간</th><th>채굴량</th><th>매출(채굴 시점)</th><th>전력비</th><th>순익</th></tr>${row('오늘', p.today)}${row('이번 달', p.month)}${row('최근 7일', p.d7)}${row('최근 30일', p.d30)}${row('전체', p.all)}`;
+  // 0.3.4 에서 적용해 떼어 내지 못한 소급분은 다시 계산할 수 없다
+  const canBootstrap = p.trackStart !== null && !(p.bootstrapped && !p.backfill);
   $('bootstrapForm').hidden = !canBootstrap;
   if (canBootstrap) {
-    $('bootstrapInfo').textContent = `앱 기록 전 채굴분 ${n(p.trackStart!.total, 4)} ${p.symbol} 를 채굴 시작~${new Date(p.trackStart!.at).toLocaleString('ko-KR')} 에 시간 비율로 나누고, 전력비는 W×시간으로 추정합니다 (모두 "추정" 표시).`;
+    const span = `채굴 시작~${new Date(p.trackStart!.at).toLocaleString('ko-KR')}`;
+    const b = p.backfill;
+    $('bootstrapInfo').textContent = b
+      ? `앱 기록 전 채굴분 ${n(b.qty, 4)} ${p.symbol} 를 ${b.auto ? '자동 추정한' : '입력한'} 시작 ${new Date(b.from).toLocaleString('ko-KR')} · ${n(b.watts)}W 로 소급했습니다(추정). 시작 시각·전력을 고쳐 다시 계산할 수 있습니다.`
+      : `앱 기록 전 채굴분 ${n(p.trackStart!.total, 4)} ${p.symbol} 를 ${span} 에 시간 비율로 나누고, 전력비는 W×시간으로 추정합니다 (모두 "추정" 표시). 해시레이트·풀 통계가 잡히면 자동으로 적용합니다.`;
+    $('bootstrapSubmit').textContent = b ? '다시 계산' : '소급 적용';
+    const from = $<HTMLInputElement>('bootstrapFrom');
     const w = $<HTMLInputElement>('bootstrapWatts');
+    const key = b ? `${b.from}|${b.watts}` : '';
+    // 적용된 값이 바뀌면(자동 소급 등) 입력칸도 맞춘다. 입력 중이면 건드리지 않는다
+    if (from.dataset.applied !== key && document.activeElement !== from && document.activeElement !== w) {
+      from.dataset.applied = key;
+      if (b) {
+        const d = new Date(b.from - new Date(b.from).getTimezoneOffset() * 60_000);
+        from.value = d.toISOString().slice(0, 16);
+        w.value = String(Math.round(b.watts));
+      }
+    }
     if (!w.value && document.activeElement !== w) w.value = String(p.currentWatts || '');
   }
 }
@@ -258,7 +276,7 @@ function render(st: AppState) {
 
   const p = st.profit;
   $('profitSub').textContent = `${p.symbol} · 추정 = 실측 해시레이트 × 풀 통계, 확정 = 풀 누적(잔액+지급)`;
-  $('profit').innerHTML = renderProfit(p);
+  $('profit').innerHTML = renderProfit(p, st.pnl);
   $('profitErr').textContent = p.error ?? '';
 
   const pr = st.settings.profit;
@@ -415,7 +433,7 @@ $('bootstrapForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const from = new Date($<HTMLInputElement>('bootstrapFrom').value).getTime();
   const watts = Number($<HTMLInputElement>('bootstrapWatts').value);
-  if (!confirm('앱 기록 전 채굴분을 추정값으로 소급 적용합니다. 한 번만 할 수 있습니다. 진행할까요?')) return;
+  if (!confirm('앱 기록 전 채굴분을 추정값으로 소급합니다. 이미 소급한 값은 새 값으로 바뀝니다. 진행할까요?')) return;
   void act('bootstrapMsg', () => crypthy.bootstrapPnl(from, watts), '소급 적용됨').then(refreshCharts);
 });
 $('pnlExport').addEventListener('click', () => void crypthy.exportPnl());
@@ -473,7 +491,9 @@ let chartsAt: string | null = null;
 crypthy.onState((st) => {
   render(st);
   // 시세·풀 갱신이나 PnL 변화(채굴 증가·소급·매도)가 있으면 차트를 다시 받는다
-  const key = `${st.profit.updatedAt}|${st.pnl.all.mined.toFixed(6)}|${st.pnl.bootstrapped}|${st.pnl.soldQty}`;
+  // 실시간 추정분은 몇 초마다 바뀌므로 키에서 뺀다 (1분 주기 갱신으로 반영)
+  const pb = st.pnl.backfill;
+  const key = `${st.profit.updatedAt}|${(st.pnl.all.confirmed + st.pnl.all.backfill).toFixed(6)}|${pb ? `${pb.from}|${pb.watts}` : st.pnl.bootstrapped}|${st.pnl.soldQty}`;
   if (key !== chartsAt) {
     chartsAt = key;
     void refreshCharts();
