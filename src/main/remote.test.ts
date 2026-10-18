@@ -13,8 +13,16 @@ describe('kryptex', () => {
       { value: '2.5', timestamp: 1792150800000 },
       { foo: 1 },
     ] });
-    expect(p).toEqual([{ key: 'abc', amount: 1.01 }, { key: '1792150800000:2.5', amount: 2.5 }]);
+    expect(p).toEqual([
+      { key: 'abc', amount: 1.01, at: Date.parse('2026-10-17T10:00:00Z') },
+      { key: '1792150800000:2.5', amount: 2.5, at: 1792150800000 },
+    ]);
     expect(parseKryptexPayouts({ count: 0, results: [] })).toEqual([]);
+  });
+
+  it('parses the real Kryptex payout shape (date = unix seconds string, amount string)', () => {
+    const real = { count: 1, results: [{ date: '1792278460', address: 'x', status: 'FINISHED', amount: '1.403018290000000000', received: 1.40301829, fee: '0.00000002', txid: 't1' }] };
+    expect(parseKryptexPayouts(real)).toEqual([{ key: 't1', amount: 1.40301829, at: 1792278460000 }]);
   });
 
   it('pool stats', () => {

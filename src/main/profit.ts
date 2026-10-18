@@ -113,6 +113,8 @@ export interface Ledger {
 export interface Payout {
   key: string;
   amount: number;
+  /** 지급 시각(ms). 응답에 없으면 null */
+  at?: number | null;
 }
 
 const KEEP_DAYS = 62;

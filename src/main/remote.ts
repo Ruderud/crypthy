@@ -23,6 +23,17 @@ export function parseKryptexBalance(json: unknown): number | null {
   return isObj(json) ? num(json.total) : null;
 }
 
+/** 유닉스 초·밀리초(숫자·문자열) 또는 ISO 문자열 → ms */
+export function parseTime(v: unknown): number | null {
+  if (typeof v === 'string' && /^\d+$/.test(v)) v = Number(v);
+  if (typeof v === 'number' && Number.isFinite(v)) return v < 1e11 ? v * 1000 : v;
+  if (typeof v === 'string') {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  }
+  return null;
+}
+
 export function parseKryptexPayouts(json: unknown): Payout[] {
   const results = isObj(json) && Array.isArray(json.results) ? json.results.filter(isObj) : [];
   const out: Payout[] = [];
@@ -31,7 +42,7 @@ export function parseKryptexPayouts(json: unknown): Payout[] {
     if (amount === null) continue;
     const id = r.txid ?? r.tx_hash ?? r.hash ?? r.id;
     const time = r.created ?? r.timestamp ?? r.time ?? r.date;
-    out.push({ key: String(id ?? `${String(time)}:${amount}`), amount });
+    out.push({ key: String(id ?? `${String(time)}:${amount}`), amount, at: parseTime(time) });
   }
   return out;
 }
