@@ -18,14 +18,25 @@ import { dateKey } from './profit';
 
 export const EVENTS_MAX_BYTES = 5 * 1024 * 1024;
 
-export type PnlEvent =
-  | { t: number; type: 'pool'; coin: string; total: number }
-  | { t: number; type: 'payout'; coin: string; key: string; amount: number; at: number | null }
-  | { t: number; type: 'mined'; coin: string; qty: number; krwPerCoin: number | null; from?: number }
-  | { t: number; type: 'energy'; start: number; end: number; avgW: number; kwh: number; krwPerKwh: number }
-  | { t: number; type: 'price'; coin: string; usd: number; krwPerUsd: number }
-  | { t: number; type: 'sale'; coin: string; qty: number; proceedsKrw: number; feeKrw: number; venue: string; note: string }
-  | { t: number; type: 'bootstrap'; coin: string; from: number; to: number; qty: number; watts: number; kwh: number; auto?: boolean };
+/** 모든 이벤트 공통: id 는 0.4.1 부터 (공유 장부에서 중복 제거용, 없으면 내용으로 비교) */
+type EventBase = { t: number; id?: string };
+
+export type PnlEvent = EventBase & (
+  | { type: 'pool'; coin: string; total: number }
+  | { type: 'payout'; coin: string; key: string; amount: number; at: number | null }
+  | { type: 'mined'; coin: string; qty: number; krwPerCoin: number | null; from?: number }
+  | { type: 'energy'; start: number; end: number; avgW: number; kwh: number; krwPerKwh: number }
+  | { type: 'price'; coin: string; usd: number; krwPerUsd: number }
+  | { type: 'sale'; coin: string; qty: number; proceedsKrw: number; feeKrw: number; venue: string; note: string }
+  | { type: 'bootstrap'; coin: string; from: number; to: number; qty: number; watts: number; kwh: number; auto?: boolean; days?: Record<string, BackfillDay> }
+);
+
+/** 같은 이벤트인지 판단하는 키: id 가 있으면 id, 없으면(0.4.0 이전) 키를 정렬한 내용 */
+export function eventKey(ev: PnlEvent): string {
+  if (ev.id) return `id:${ev.id}`;
+  const o = ev as unknown as Record<string, unknown>;
+  return `c:${JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]))}`;
+}
 
 const EVENT_TYPES = new Set(['pool', 'payout', 'mined', 'energy', 'price', 'sale', 'bootstrap']);
 
@@ -497,6 +508,120 @@ export function pnlDaily(b: PnlBook, coin: string, priceKrw: number | null = nul
     cum += net;
     return { day: d.day, netKrw: Math.round(net), cumulativeKrw: Math.round(cum), estimated: d.estimated };
   });
+}
+
+// ---- 이벤트 재생 (공유 장부: 여러 인스턴스의 이벤트를 합쳐 장부를 다시 만든다) ----
+
+/** 전력 구간을 날짜 경계로 나눠 더한다 (재생용) */
+export function addEnergySpan(b: PnlBook, coin: string, start: number, end: number, kwh: number, krwPerKwh: number): void {
+  if (!(kwh > 0)) return;
+  if (!(end > start)) return addEnergy(b, coin, end, kwh, krwPerKwh);
+  const total = end - start;
+  for (const p of splitByDay(start, end)) addEnergy(b, coin, p.start, (kwh * p.span) / total, krwPerKwh);
+}
+
+/** 풀 증가분을 from~t 에 시간 비율로 나눠 더한다 (재생용, lastMinedAt 과 무관) */
+function addMinedSpan(b: PnlBook, coin: string, from: number | undefined, t: number, qty: number, krwPerCoin: number | null): void {
+  if (!(qty > 0)) return;
+  if (from === undefined || !(from < t)) return addMined(b, coin, t, qty, krwPerCoin);
+  const total = t - from;
+  for (const p of splitByDay(from, t)) addMined(b, coin, p.start, (qty * p.span) / total, krwPerCoin);
+}
+
+export interface ReplayResult {
+  book: PnlBook;
+  /** 서로 다른 인스턴스의 전력 기록이 시간상 겹친 구간 수 (동시 실행 의심) */
+  overlaps: number;
+}
+
+/**
+ * 이벤트들(중복 제거·시간순 정렬된 상태)로 장부를 다시 만든다.
+ *  - 추적 시작: 소급(bootstrap) 이벤트가 있으면 그 기준점(to, qty), 없으면 첫 풀 누적 이벤트
+ *  - 채굴: mined 이벤트 (from~t 시간 비율), 시세가 없던 몫은 다음 price 이벤트로 평가
+ *  - 전력: energy 이벤트 (구간을 날짜로 나눔). src 가 다른 구간이 겹치면 overlaps 로 센다
+ *  - 소급: 가장 나중의 bootstrap 이벤트 하나 (days 가 있으면 그대로, 없으면 그 시점 시세로 다시 계산)
+ */
+export function replayEvents(events: (PnlEvent & { src?: string })[], coin: string): ReplayResult {
+  const b = emptyBook();
+  let lastBoot: Extract<PnlEvent, { type: 'bootstrap' }> | null = null;
+  let firstPool: { at: number; total: number } | null = null;
+  let lastPriceKrw: number | null = null;
+  const spans: { start: number; end: number; src: string }[] = [];
+  for (const ev of events) {
+    switch (ev.type) {
+      case 'pool':
+        if (ev.coin === coin && !firstPool) firstPool = { at: ev.t, total: ev.total };
+        break;
+      case 'mined':
+        if (ev.coin !== coin) break;
+        addMinedSpan(b, coin, ev.from, ev.t, ev.qty, ev.krwPerCoin);
+        b.lastMinedAt = Math.max(b.lastMinedAt ?? 0, ev.t);
+        break;
+      case 'energy':
+        addEnergySpan(b, coin, ev.start, ev.end, ev.kwh, ev.krwPerKwh);
+        spans.push({ start: ev.start, end: ev.end, src: ev.src ?? '' });
+        break;
+      case 'price':
+        if (ev.coin !== coin) break;
+        lastPriceKrw = ev.usd * ev.krwPerUsd;
+        priceUnpriced(b, coin, lastPriceKrw);
+        break;
+      case 'sale':
+        if (ev.coin === coin) addSale(b, coin, ev.t, ev.qty, ev.proceedsKrw, ev.feeKrw);
+        break;
+      case 'bootstrap':
+        if (ev.coin === coin && (!lastBoot || ev.t >= lastBoot.t)) lastBoot = ev;
+        break;
+      default:
+        break;
+    }
+  }
+  if (lastBoot) {
+    b.trackStart = { at: lastBoot.to, total: lastBoot.qty };
+    if (lastBoot.days) {
+      b.backfill = { coin, from: lastBoot.from, to: lastBoot.to, qty: lastBoot.qty, watts: lastBoot.watts, auto: lastBoot.auto === true, days: structuredClone(lastBoot.days) };
+      b.bootstrapped = true;
+    } else {
+      // 0.4.0 이전 소급 이벤트에는 날짜별 금액이 없다: 마지막 시세와 첫 전력 기록의 단가로 다시 계산 (추정 표시는 그대로)
+      const unit = (events.find((e) => e.type === 'energy') as Extract<PnlEvent, { type: 'energy' }> | undefined)?.krwPerKwh ?? 0;
+      bootstrap(b, { coin, from: lastBoot.from, to: lastBoot.to, qty: lastBoot.qty, watts: lastBoot.watts, krwPerKwh: unit, closeKrwByDay: {}, fallbackKrw: lastPriceKrw, auto: lastBoot.auto });
+    }
+  } else if (firstPool) {
+    b.trackStart = firstPool;
+  }
+  // 겹침: 인스턴스가 다른 전력 구간이 시간상 겹치면 (같은 PC 에서 동시에 돌 수 없으므로 시계·설정 문제 신호)
+  spans.sort((a, z) => a.start - z.start);
+  let overlaps = 0;
+  for (let i = 1; i < spans.length; i++) {
+    const prev = spans[i - 1];
+    if (spans[i].src !== prev.src && spans[i].start < prev.end - 60_000) overlaps++;
+  }
+  return { book: b, overlaps };
+}
+
+/** 이벤트 목록들을 합쳐 중복을 없애고 시간순으로 (같은 시각은 원래 순서 유지) */
+export function mergeEvents(lists: { src: string; events: PnlEvent[] }[]): (PnlEvent & { src: string })[] {
+  const seen = new Set<string>();
+  const out: (PnlEvent & { src: string })[] = [];
+  for (const l of lists) {
+    for (const ev of l.events) {
+      const k = eventKey(ev);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ ...ev, src: l.src });
+    }
+  }
+  return out.map((e, i) => [e, i] as const).sort((a, z) => a[0].t - z[0].t || a[1] - z[1]).map(([e]) => e);
+}
+
+/** 차트(일별 채굴량·순수익)를 장부에서: 공유 장부일 때 인스턴스별 ledger 대신 쓴다 */
+export function bookDailyPoints(b: PnlBook, coin: string): { day: string; coin: number; kwh: number; netKrw: number | null }[] {
+  return rows(b, coin).map((d) => ({
+    day: d.day,
+    coin: Math.round((d.confirmed + d.backfill) * 1e6) / 1e6,
+    kwh: Math.round(d.energyKwh * 1000) / 1000,
+    netKrw: d.revenueKrw === 0 && d.unpriced > 0 ? null : Math.round(d.revenueKrw - d.energyCostKrw),
+  }));
 }
 
 // ---- CSV ----
