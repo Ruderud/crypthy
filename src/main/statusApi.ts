@@ -7,6 +7,7 @@ const MAX_ALERTS = 20;
 const MAX_STR = 120;
 
 const s = (v: string | null | undefined) => (v == null ? null : v.slice(0, MAX_STR));
+const round = (v: number, digits: number) => (Number.isFinite(v) ? Math.round(v * 10 ** digits) / 10 ** digits : null);
 
 /** GET /v1/status 응답 (크기 제한된 JSON) */
 export function buildStatus(st: AppState) {
@@ -30,6 +31,21 @@ export function buildStatus(st: AppState) {
       util_pct: g.utilPct,
       hashrate: g.hashrate,
     })),
+    // 누적 손익 집계값만 (원시 로그·지갑 주소 없음)
+    pnl: st.pnl
+      ? {
+          currency: 'KRW',
+          coin: s(st.pnl.symbol),
+          mined_coin: round(st.pnl.all.mined, 8),
+          holdings_coin: round(st.pnl.holdings, 8),
+          revenue_krw: round(st.pnl.all.revenueKrw, 0),
+          energy_cost_krw: round(st.pnl.all.energyCostKrw, 0),
+          realized_krw: round(st.pnl.realizedKrw, 0),
+          unrealized_krw: st.pnl.unrealizedKrw === null ? null : round(st.pnl.unrealizedKrw, 0),
+          total_pnl_krw: st.pnl.totalPnlKrw === null ? null : round(st.pnl.totalPnlKrw, 0),
+          estimated: st.pnl.estimated,
+        }
+      : null,
     alerts: st.alerts.slice(0, MAX_ALERTS).map((a) => ({
       ts: a.ts,
       level: a.level,

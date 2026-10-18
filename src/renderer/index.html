@@ -95,6 +95,39 @@
     </section>
 
     <section class="card wide">
+      <h2>누적 손익 (PnL) <span class="muted small" id="pnlSub"></span>
+        <span class="spacer"></span>
+        <button id="pnlExport">CSV 내보내기</button><button id="pnlFolder">로그 폴더 열기</button>
+      </h2>
+      <dl class="stats" id="pnlSummary"></dl>
+      <table class="table" id="pnlTable"></table>
+      <h3>일별 순익 <span class="muted small">(막대, 왼쪽 · 흐린 막대 = 추정)</span> · 누적 PnL <span class="muted small">(선, 오른쪽)</span></h3>
+      <div class="chart small-chart" id="pnlChart"></div>
+      <div class="pnl-forms">
+        <form id="bootstrapForm" class="note" hidden>
+          <b>소급 적용</b>
+          <span class="muted small" id="bootstrapInfo"></span>
+          <div class="row">
+            <label>채굴 시작 <input type="datetime-local" id="bootstrapFrom" /></label>
+            <label>추정 GPU 전력(W) <input type="number" id="bootstrapWatts" min="0" step="10" /></label>
+            <button type="submit">소급 적용</button><span id="bootstrapMsg" class="msg"></span>
+          </div>
+        </form>
+        <form id="saleForm" class="note">
+          <b>매도 기록 <span class="muted small">(선택 — 실현 손익 계산용, 로컬에만 저장)</span></b>
+          <div class="row">
+            <label>수량 <input type="number" id="saleQty" step="0.0001" min="0" /></label>
+            <label>매도 대금(원) <input type="number" id="saleProceeds" step="1" min="0" /></label>
+            <label>수수료(원) <input type="number" id="saleFee" step="1" min="0" value="0" /></label>
+            <label>거래소 <input id="saleVenue" maxlength="60" /></label>
+            <label>메모 <input id="saleNote" maxlength="200" /></label>
+            <button type="submit">기록</button><span id="saleMsg" class="msg"></span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section class="card wide">
       <h2>GPU별 채굴 vs 대여 <span class="muted small">정보 표시만 — 대여가는 수동값 또는 Vast.ai 공개 오퍼 중앙값</span></h2>
       <table class="table" id="compare"></table>
     </section>

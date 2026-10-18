@@ -212,10 +212,48 @@ export interface DailyPoint {
   netKrw: number | null;
 }
 
+export interface PnlPeriodView {
+  mined: number;
+  revenueKrw: number;
+  energyCostKrw: number;
+  netKrw: number;
+  estimated: boolean;
+}
+
+/** 누적 손익. 매출은 채굴 시점 시세, 미실현은 현재가 기준 */
+export interface PnlView {
+  symbol: string;
+  today: PnlPeriodView;
+  d7: PnlPeriodView;
+  d30: PnlPeriodView;
+  all: PnlPeriodView;
+  holdings: number;
+  soldQty: number;
+  realizedKrw: number;
+  unrealizedKrw: number | null;
+  totalPnlKrw: number | null;
+  estimated: boolean;
+  /** 추적 시작(이전 채굴분은 소급 대상) */
+  trackStart: { at: number; total: number } | null;
+  bootstrapped: boolean;
+  /** 소급 전력 추정 기본값(현재 GPU 전력 합) */
+  currentWatts: number;
+  logDir: string;
+}
+
+export interface SaleInput {
+  qty: number;
+  proceedsKrw: number;
+  feeKrw: number;
+  venue: string;
+  note: string;
+}
+
 export interface ChartsView {
   gpus: { id: GpuId; label: string; points: ChartPoint[] }[];
   price: { t: number; usd: number }[];
   daily: DailyPoint[];
+  pnl: { day: string; netKrw: number; cumulativeKrw: number; estimated: boolean }[];
   symbol: string;
 }
 
@@ -236,6 +274,7 @@ export interface AppState {
   coins: { id: string; name: string; symbol: string; algorithm: string }[];
   poolExamples: string[];
   hub: HubView;
+  pnl: PnlView;
 }
 
 export interface Api {
@@ -252,4 +291,8 @@ export interface Api {
   installUpdate(): Promise<string | null>;
   openLink(url: string): Promise<void>;
   getCharts(): Promise<ChartsView>;
+  addSale(sale: SaleInput): Promise<string | null>;
+  bootstrapPnl(fromMs: number, watts: number): Promise<string | null>;
+  exportPnl(): Promise<string | null>;
+  openPnlFolder(): Promise<void>;
 }

@@ -17,6 +17,10 @@ const api: Api = {
   installUpdate: () => ipcRenderer.invoke('update:install'),
   openLink: (url) => ipcRenderer.invoke('hub:openLink', url),
   getCharts: () => ipcRenderer.invoke('charts:get'),
+  addSale: (sale) => ipcRenderer.invoke('pnl:sale', sale),
+  bootstrapPnl: (fromMs, watts) => ipcRenderer.invoke('pnl:bootstrap', fromMs, watts),
+  exportPnl: () => ipcRenderer.invoke('pnl:export'),
+  openPnlFolder: () => ipcRenderer.invoke('pnl:openFolder'),
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

@@ -119,6 +119,31 @@ function renderProfit(p: AppState['profit']): string {
   return rows.join('');
 }
 
+function renderPnl(st: AppState) {
+  const p = st.pnl;
+  const sym = esc(p.symbol);
+  const est = (on: boolean) => (on ? ' <span class="warn small">추정</span>' : '');
+  $('pnlSub').textContent = '매출 = 채굴 시점 시세, 미실현 = 보유량 × 현재가, 총 PnL = 실현 + 미실현 − 전력비';
+  $('pnlSummary').innerHTML = [
+    stat('총 PnL', p.totalPnlKrw === null ? '<span class="muted">시세 없음</span>' : `<span class="${signCls(p.totalPnlKrw)} big-num">${krw(p.totalPnlKrw)}</span>${est(p.estimated)}`),
+    stat('누적 채굴량', `${n(p.all.mined, 4)} ${sym}`),
+    stat('보유 / 매도', `${n(p.holdings, 4)} / ${n(p.soldQty, 4)} ${sym}`),
+    stat('실현 손익', krw(p.realizedKrw)),
+    stat('미실현 손익', p.unrealizedKrw === null ? '<span class="muted">시세 없음</span>' : krw(p.unrealizedKrw)),
+    stat('누적 전력비', krw(p.all.energyCostKrw)),
+  ].join('');
+  const row = (name: string, v: AppState['pnl']['all']) =>
+    `<tr><td>${name}</td><td>${n(v.mined, 4)} ${sym}</td><td>${krw(v.revenueKrw)}</td><td>${krw(v.energyCostKrw)}</td><td class="${signCls(v.netKrw)}">${krw(v.netKrw)}${est(v.estimated)}</td></tr>`;
+  $('pnlTable').innerHTML = `<tr><th>기간</th><th>채굴량</th><th>매출(채굴 시점)</th><th>전력비</th><th>순익</th></tr>${row('오늘', p.today)}${row('최근 7일', p.d7)}${row('최근 30일', p.d30)}${row('전체', p.all)}`;
+  const canBootstrap = !p.bootstrapped && p.trackStart !== null;
+  $('bootstrapForm').hidden = !canBootstrap;
+  if (canBootstrap) {
+    $('bootstrapInfo').textContent = `앱 기록 전 채굴분 ${n(p.trackStart!.total, 4)} ${p.symbol} 를 채굴 시작~${new Date(p.trackStart!.at).toLocaleString('ko-KR')} 에 시간 비율로 나누고, 전력비는 W×시간으로 추정합니다 (모두 "추정" 표시).`;
+    const w = $<HTMLInputElement>('bootstrapWatts');
+    if (!w.value && document.activeElement !== w) w.value = String(p.currentWatts || '');
+  }
+}
+
 function renderUpdate(st: AppState) {
   const u = st.update;
   const status: Record<typeof u.status, string> = {
@@ -212,6 +237,7 @@ function render(st: AppState) {
   renderUpdate(st);
 
   renderHub(st);
+  renderPnl(st);
   renderSetup(st);
 
   $('minerStats').innerHTML = [
@@ -380,6 +406,20 @@ $('updatePrimary').addEventListener('click', async () => {
   }
   await refresh();
 });
+$('saleForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = (id: string) => $<HTMLInputElement>(id).value.trim();
+  void act('saleMsg', () => crypthy.addSale({ qty: Number(v('saleQty')), proceedsKrw: Number(v('saleProceeds')), feeKrw: Number(v('saleFee') || 0), venue: v('saleVenue'), note: v('saleNote') }), '기록됨').then(refreshCharts);
+});
+$('bootstrapForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const from = new Date($<HTMLInputElement>('bootstrapFrom').value).getTime();
+  const watts = Number($<HTMLInputElement>('bootstrapWatts').value);
+  if (!confirm('앱 기록 전 채굴분을 추정값으로 소급 적용합니다. 한 번만 할 수 있습니다. 진행할까요?')) return;
+  void act('bootstrapMsg', () => crypthy.bootstrapPnl(from, watts), '소급 적용됨').then(refreshCharts);
+});
+$('pnlExport').addEventListener('click', () => void crypthy.exportPnl());
+$('pnlFolder').addEventListener('click', () => void crypthy.openPnlFolder());
 $('updateLater').addEventListener('click', () => void crypthy.dismissUpdate().then(refresh));
 
 // 테마: 화면별 편의 설정이라 localStorage 에만 둔다 (dark → light → system)
@@ -404,7 +444,7 @@ function applyTheme(t: (typeof THEMES)[number]) {
 }
 applyTheme(readTheme());
 
-const charts = createCharts({ gpu: $('gpuChart'), price: $('priceChart'), daily: $('dailyChart'), legend: $('chartLegend') });
+const charts = createCharts({ gpu: $('gpuChart'), price: $('priceChart'), daily: $('dailyChart'), pnl: $('pnlChart'), legend: $('chartLegend') });
 async function refreshCharts() {
   const v = await crypthy.getCharts();
   $('priceTitle').textContent = `${v.symbol} 시세 (USD, 30일)`;
@@ -429,11 +469,13 @@ document.querySelector('footer')!.addEventListener('click', (e) => {
 });
 
 // 시세·풀 데이터가 새로 들어오면(updatedAt 변경) 차트도 다시 받는다
-let chartsAt: number | null = null;
+let chartsAt: string | null = null;
 crypthy.onState((st) => {
   render(st);
-  if (st.profit.updatedAt !== chartsAt) {
-    chartsAt = st.profit.updatedAt;
+  // 시세·풀 갱신이나 PnL 변화(채굴 증가·소급·매도)가 있으면 차트를 다시 받는다
+  const key = `${st.profit.updatedAt}|${st.pnl.all.mined.toFixed(6)}|${st.pnl.bootstrapped}|${st.pnl.soldQty}`;
+  if (key !== chartsAt) {
+    chartsAt = key;
     void refreshCharts();
   }
 });

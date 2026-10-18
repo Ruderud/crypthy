@@ -30,10 +30,29 @@ describe('buildStatus', () => {
     expect(b.gpus).toHaveLength(8);
     expect(b.alerts).toHaveLength(20);
     expect(b.gpus[0].name).toHaveLength(120);
-    expect(Object.keys(b)).toEqual(['ts', 'miner', 'gpus', 'alerts']);
+    expect(Object.keys(b)).toEqual(['ts', 'miner', 'gpus', 'pnl', 'alerts']);
     expect(Object.keys(b.miner)).toEqual(['running', 'mode', 'pool', 'uptime_s', 'accepted', 'rejected']);
     expect(Object.keys(b.gpus[0])).toEqual(['index', 'name', 'temp_c', 'fan_pct', 'power_w', 'power_limit_w', 'util_pct', 'hashrate']);
     expect(JSON.stringify(b)).not.toContain('prl1');
+  });
+});
+
+describe('pnl aggregate', () => {
+  it('exposes rounded totals only (no raw log, no wallet)', () => {
+    const period = { mined: 6.0811234567, revenueKrw: 15075.4, energyCostKrw: 4602.2, netKrw: 10473.2, estimated: true };
+    const b = buildStatus({
+      ...state,
+      pnl: {
+        symbol: 'PRL', today: period, d7: period, d30: period, all: period, holdings: 6.0811234567, soldQty: 0, realizedKrw: 0,
+        unrealizedKrw: 15075.4, totalPnlKrw: 10473.2, estimated: true, trackStart: { at: 1, total: 6.081 }, bootstrapped: true,
+        currentWatts: 865, logDir: '/home/u/.config/Crypthy/pnl',
+      },
+    });
+    expect(b.pnl).toEqual({
+      currency: 'KRW', coin: 'PRL', mined_coin: 6.08112346, holdings_coin: 6.08112346, revenue_krw: 15075, energy_cost_krw: 4602,
+      realized_krw: 0, unrealized_krw: 15075, total_pnl_krw: 10473, estimated: true,
+    });
+    expect(JSON.stringify(b)).not.toMatch(/logDir|\/home\/|prl1/);
   });
 });
 

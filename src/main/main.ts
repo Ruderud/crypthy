@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, s
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Alert, AppState, ChartsView, CompareRow, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
+import type { Alert, AppState, ChartsView, CompareRow, PnlView, SaleInput, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, Vendor } from '../shared/types';
 import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog } from './catalog';
 import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
@@ -17,6 +17,10 @@ import {
 } from './powerLimit';
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
+import {
+  addEnergy, addMined, addSale, appendEvent, bootstrap, dailyCsv, emptyBook, eventsCsv, freshPayouts, loadBook, pnlDaily,
+  priceUnpriced, readEvents, summarizePnl, type PnlBook, type PnlEvent,
+} from './pnl';
 import { setLinuxAutostart } from './autostart';
 import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastStats, type VastStats } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
@@ -72,6 +76,14 @@ let lastPollAt = 0;
 let lastKillAt = 0;
 let killing = false;
 let history: History = emptyHistory();
+/** 누적 손익 장부 (pnl/daily.json) 와 이벤트 로그 (pnl/events.jsonl) */
+let pnl: PnlBook = emptyBook();
+const pnlDir = () => file('pnl');
+const pnlEvents = () => path.join(pnlDir(), 'events.jsonl');
+const logEvent = (ev: PnlEvent) => appendEvent(pnlEvents(), ev);
+/** 전력 이벤트는 10분 단위로 묶어 기록 */
+let energyBuf: { start: number; end: number; wms: number; kwh: number } | null = null;
+const ENERGY_EVENT_MS = 10 * 60_000;
 let priceSeries: { t: number; usd: number }[] = [];
 let powerRegistered = false;
 let powerLog: string | null = null;
@@ -213,11 +225,40 @@ function hubView(): HubView {
   };
 }
 
+function flushEnergy(): void {
+  if (!energyBuf || energyBuf.kwh <= 0) return;
+  const span = Math.max(1, energyBuf.end - energyBuf.start);
+  logEvent({ t: energyBuf.end, type: 'energy', start: energyBuf.start, end: energyBuf.end, avgW: energyBuf.wms / span, kwh: energyBuf.kwh, krwPerKwh: settings.profit.krwPerKwh });
+  energyBuf = null;
+}
+
+const priceKrw = () => (remote.prlUsd === null ? null : remote.prlUsd * settings.profit.krwPerUsd);
+
+function pnlView(): PnlView {
+  const stale = remote.priceAt !== null && Date.now() - remote.priceAt > PRICE_STALE_MS;
+  const s = summarizePnl(pnl, settings.coin, Date.now(), priceKrw(), stale);
+  return {
+    symbol: coin().symbol,
+    ...s,
+    trackStart: pnl.trackStart,
+    bootstrapped: pnl.bootstrapped,
+    currentWatts: Math.round(lastNv.reduce((a, g) => a + (g.powerW ?? 0), 0)),
+    logDir: pnlDir(),
+  };
+}
+
+/** 일별 장부 저장. 전력 이벤트는 10분 단위로만 기록하고, 종료·업데이트 때(final)만 남은 구간을 바로 기록 */
+function savePnl(final = false): void {
+  if (final) flushEnergy();
+  writeJson(path.join(pnlDir(), 'daily.json'), pnl);
+}
+
 function chartsView(): ChartsView {
   return {
     gpus: settings.gpus.filter((g) => history.series[g.id] || history.acc[g.id]).map((g) => ({ id: g.id, label: g.label, points: seriesOf(history, g.id) })),
     price: priceSeries,
     daily: dailySeries(ledger, dailyClose(priceSeries), remote.prlUsd, settings.profit),
+    pnl: pnlDaily(pnl, settings.coin),
     symbol: coin().symbol,
   };
 }
@@ -255,6 +296,7 @@ function buildState(): AppState {
     coins: catalog.coins.map((c) => ({ id: c.id, name: c.name, symbol: c.symbol, algorithm: c.algorithm })),
     poolExamples: coin().pools.flatMap((p) => p.examples),
     hub: hubView(),
+    pnl: pnlView(),
   };
 }
 
@@ -370,6 +412,15 @@ async function poll(): Promise<void> {
     // 같은 시간의 해시레이트 기반 추정 채굴량 (풀 통계·채굴기 API 가 있을 때만)
     const est = lastStats?.totalHashrate && remote.pool ? (prlPerHour(lastStats.totalHashrate, remote.pool) * dt) / 3_600_000 : 0;
     ledger = recordEnergy(ledger, watts, dt, now, est);
+    const kwh = (watts * dt) / 3_600_000 / 1000;
+    addEnergy(pnl, settings.coin, now, kwh, settings.profit.krwPerKwh);
+    if (kwh > 0) {
+      energyBuf ??= { start: now - dt, end: now, wms: 0, kwh: 0 };
+      energyBuf.end = now;
+      energyBuf.wms += watts * dt;
+      energyBuf.kwh += kwh;
+      if (energyBuf.end - energyBuf.start >= ENERGY_EVENT_MS) flushEnergy();
+    }
   }
   lastPollAt = now;
 
@@ -400,6 +451,8 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
       remote.priceAt = now;
       remote.change24h = r.change24h;
       ledger = recordPrice(ledger, r.usd, now);
+      logEvent({ t: now, type: 'price', coin: c.id, usd: r.usd, krwPerUsd: settings.profit.krwPerUsd });
+      priceUnpriced(pnl, c.id, r.usd * settings.profit.krwPerUsd);
       if (settings.profit.baselinePrlUsd <= 0) {
         settings.profit.baselinePrlUsd = r.usd;
         saveSettings();
@@ -414,7 +467,21 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
           remote.payouts = k.payouts;
           if (k.balance !== null) {
             remote.balance = k.balance;
+            const prevTotal = ledger.lastTotal;
+            const fresh = freshPayouts(new Set(ledger.seenPayouts), k.payouts);
             ledger = recordEarnings(ledger, k.balance, k.payouts, now);
+            for (const p of fresh) logEvent({ t: now, type: 'payout', coin: c.id, key: p.key, amount: p.amount, at: p.at });
+            if (ledger.lastTotal !== null && ledger.lastTotal !== prevTotal) {
+              logEvent({ t: now, type: 'pool', coin: c.id, total: ledger.lastTotal });
+              if (prevTotal === null) {
+                // 처음 잡은 누적치 = 추적 시작 이전 채굴분 (소급 대상)
+                pnl.trackStart ??= { at: now, total: ledger.lastTotal };
+              } else if (ledger.lastTotal > prevTotal) {
+                const qty = ledger.lastTotal - prevTotal;
+                addMined(pnl, c.id, now, qty, priceKrw());
+                logEvent({ t: now, type: 'mined', coin: c.id, qty, krwPerCoin: priceKrw() });
+              }
+            }
           }
         }).catch((e) => errors.push(`풀: ${(e as Error).message}`))
       : null,
@@ -432,6 +499,7 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
   remote.updatedAt = now;
   remote.error = errors.length ? errors.join(' · ') : null;
   writeJson(file('ledger.json'), ledger);
+  savePnl();
 
   const rows = compareRows(gpuViews()).map((r) => ({ ...r, reviewRentalUsd: settings.gpus.find((g) => g.id === r.id)?.reviewRentalUsd ?? 0 }));
   for (const a of reviewAlerts(rows, remote.prlUsd, settings.profit, now)) alertOnce(a, REVIEW_REPEAT_MS);
@@ -609,6 +677,7 @@ function installUpdate(): string | null {
   saveRuntime();
   writeJson(file('ledger.json'), ledger);
   writeJson(file('history.json'), historyToJson(history));
+  savePnl(true);
   quitting = true;
   updater.install();
   return null;
@@ -617,6 +686,46 @@ function installUpdate(): string | null {
 function registerIpc(): void {
   ipcMain.handle('state:get', () => buildState());
   ipcMain.handle('charts:get', () => chartsView());
+  ipcMain.handle('pnl:sale', (_e, raw: SaleInput) => {
+    const qty = Number(raw?.qty);
+    const proceeds = Number(raw?.proceedsKrw);
+    const fee = Number(raw?.feeKrw ?? 0);
+    if (!(qty > 0) || !(proceeds >= 0) || !(fee >= 0) || ![qty, proceeds, fee].every(Number.isFinite)) return '수량·매도 대금·수수료를 확인해 주세요';
+    const venue = String(raw?.venue ?? '').slice(0, 60);
+    const note = String(raw?.note ?? '').slice(0, 200);
+    const now = Date.now();
+    addSale(pnl, settings.coin, now, qty, proceeds, fee);
+    logEvent({ t: now, type: 'sale', coin: settings.coin, qty, proceedsKrw: proceeds, feeKrw: fee, venue, note });
+    savePnl();
+    return null;
+  });
+  ipcMain.handle('pnl:bootstrap', (_e, fromMs: unknown, watts: unknown) => {
+    const from = Number(fromMs);
+    const w = Number(watts);
+    if (pnl.bootstrapped) return '이미 소급 적용했습니다';
+    if (!pnl.trackStart) return '풀 누적치를 아직 받지 못했습니다 (지갑·Kryptex 풀 설정 후 다시 시도)';
+    if (!Number.isFinite(from) || from >= pnl.trackStart.at || from < pnl.trackStart.at - 366 * 86_400_000) return '채굴 시작 시각은 추적 시작 이전, 1년 이내여야 합니다';
+    if (!(w >= 0 && w <= 20_000)) return '추정 전력(W)을 확인해 주세요';
+    const fx = settings.profit.krwPerUsd;
+    const closeKrw = Object.fromEntries(Object.entries(dailyClose(priceSeries)).map(([d, usd]) => [d, usd * fx]));
+    const r = bootstrap(pnl, { coin: settings.coin, from, to: pnl.trackStart.at, qty: pnl.trackStart.total, watts: w, krwPerKwh: settings.profit.krwPerKwh, closeKrwByDay: closeKrw, fallbackKrw: priceKrw() });
+    logEvent({ t: Date.now(), type: 'bootstrap', coin: settings.coin, from, to: pnl.trackStart.at, qty: pnl.trackStart.total, watts: w, kwh: r.kwh });
+    savePnl();
+    return null;
+  });
+  ipcMain.handle('pnl:export', async () => {
+    const r = await dialog.showOpenDialog({ title: 'CSV 저장 폴더 선택', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return '취소됨';
+    savePnl(true);
+    const stamp = new Date().toISOString().slice(0, 10);
+    fs.writeFileSync(path.join(r.filePaths[0], `crypthy-pnl-daily-${stamp}.csv`), dailyCsv(pnl));
+    fs.writeFileSync(path.join(r.filePaths[0], `crypthy-pnl-events-${stamp}.csv`), eventsCsv(readEvents(pnlEvents())));
+    return null;
+  });
+  ipcMain.handle('pnl:openFolder', async () => {
+    fs.mkdirSync(pnlDir(), { recursive: true });
+    await shell.openPath(pnlDir());
+  });
   ipcMain.handle('safety:clearHold', (_e, id: unknown) => clearHold(String(id)));
   ipcMain.handle('settings:save', (_e, patch: Partial<Settings>) => {
     const err = applyPatch(patch);
@@ -699,6 +808,9 @@ function loadState(): void {
     remote.priceAt = ledger.lastPrice.at;
   }
   history = loadHistory(readJson<unknown>(file('history.json'), null));
+  pnl = loadBook(readJson<unknown>(path.join(pnlDir(), 'daily.json'), null));
+  // 0.3.3 이하에서 업데이트: 이미 잡힌 풀 누적치를 추적 시작점으로 (그 이전 채굴분은 소급으로 채움)
+  if (!pnl.trackStart && ledger.lastTotal !== null) pnl.trackStart = { at: Date.now(), total: ledger.lastTotal };
   if (MOCK && Object.keys(history.series).length === 0) {
     const seed = mockSeed(Date.now());
     for (const g of seed.gpus) history.series[g.id] = g.points;
@@ -745,6 +857,7 @@ if (!app.requestSingleInstanceLock()) {
     setInterval(() => {
       writeJson(file('ledger.json'), ledger);
       writeJson(file('history.json'), historyToJson(history));
+      savePnl();
     }, 60_000);
 
     if (!process.argv.includes('--hidden')) showWindow();
@@ -759,6 +872,7 @@ if (!app.requestSingleInstanceLock()) {
     try {
       writeJson(file('ledger.json'), ledger);
       writeJson(file('history.json'), historyToJson(history));
+      savePnl(true);
     } catch {
       // 종료 중 저장 실패는 무시
     }

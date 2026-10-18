@@ -32,13 +32,17 @@ function baseOptions(): LWC.DeepPartial<LWC.ChartOptions> {
   };
 }
 
-export function createCharts(els: { gpu: HTMLElement; price: HTMLElement; daily: HTMLElement; legend: HTMLElement }) {
+export function createCharts(els: { gpu: HTMLElement; price: HTMLElement; daily: HTMLElement; pnl: HTMLElement; legend: HTMLElement }) {
   let metric: Metric = 'hash';
   let last: ChartsView | null = null;
 
   const gpuChart = LightweightCharts.createChart(els.gpu, baseOptions());
   const priceChart = LightweightCharts.createChart(els.price, baseOptions());
   const dailyChart = LightweightCharts.createChart(els.daily, { ...baseOptions(), timeScale: { borderColor: cssVar('--line'), timeVisible: false } });
+  const pnlChart = LightweightCharts.createChart(els.pnl, { ...baseOptions(), timeScale: { borderColor: cssVar('--line'), timeVisible: false } });
+  // 일별 순익(왼쪽 막대) + 누적 PnL(오른쪽 선)
+  const pnlBars = pnlChart.addSeries(LightweightCharts.HistogramSeries, { priceScaleId: 'left', priceFormat: { type: 'price', precision: 0, minMove: 1 } });
+  const pnlLine = pnlChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 2, priceFormat: { type: 'price', precision: 0, minMove: 1 } });
 
   let gpuSeries: LWC.ISeriesApi<'Line'>[] = [];
   const priceSeries = priceChart.addSeries(LightweightCharts.AreaSeries, { lineWidth: 2, priceFormat: { type: 'price', precision: 4, minMove: 0.0001 } });
@@ -47,8 +51,9 @@ export function createCharts(els: { gpu: HTMLElement; price: HTMLElement; daily:
   dailyChart.applyOptions({ leftPriceScale: { visible: true, borderColor: cssVar('--line') } });
 
   function applyTheme() {
-    for (const c of [gpuChart, priceChart, dailyChart]) c.applyOptions(baseOptions());
-    dailyChart.applyOptions({ leftPriceScale: { visible: true, borderColor: cssVar('--line') }, timeScale: { timeVisible: false } });
+    for (const c of [gpuChart, priceChart, dailyChart, pnlChart]) c.applyOptions(baseOptions());
+    for (const c of [dailyChart, pnlChart]) c.applyOptions({ leftPriceScale: { visible: true, borderColor: cssVar('--line') }, timeScale: { timeVisible: false } });
+    pnlLine.applyOptions({ color: cssVar('--accent') });
     priceSeries.applyOptions({ lineColor: cssVar('--accent'), topColor: `${cssVar('--accent')}55`, bottomColor: `${cssVar('--accent')}05` });
     coinSeries.applyOptions({ color: cssVar('--accent') });
     netSeries.applyOptions({ color: cssVar('--up') });
@@ -76,8 +81,13 @@ export function createCharts(els: { gpu: HTMLElement; price: HTMLElement; daily:
     priceSeries.setData(v.price.map((p) => ({ time: toTime(p.t), value: p.usd })));
     coinSeries.setData(v.daily.map((d) => ({ time: d.day as LWC.Time, value: d.coin })));
     netSeries.setData(v.daily.filter((d) => d.netKrw !== null).map((d) => ({ time: d.day as LWC.Time, value: d.netKrw as number })));
+    // 추정(소급·나중 시세 평가) 날은 흐린 색
+    const bar = (v: number, est: boolean) => `${v >= 0 ? cssVar('--up') : cssVar('--down')}${est ? '66' : ''}`;
+    pnlBars.setData(v.pnl.map((d) => ({ time: d.day as LWC.Time, value: d.netKrw, color: bar(d.netKrw, d.estimated) })));
+    pnlLine.setData(v.pnl.map((d) => ({ time: d.day as LWC.Time, value: d.cumulativeKrw })));
     priceChart.timeScale().fitContent();
     dailyChart.timeScale().fitContent();
+    pnlChart.timeScale().fitContent();
   }
 
   applyTheme();
