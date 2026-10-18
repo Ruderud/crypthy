@@ -106,6 +106,7 @@
         <span class="spacer"></span>
         <button id="pnlExport">CSV 내보내기</button><button id="pnlFolder">로그 폴더 열기</button>
       </h2>
+      <p class="small" id="sharedInfo" hidden></p>
       <dl class="stats" id="pnlSummary"></dl>
       <table class="table" id="pnlTable"></table>
       <h3>일별 순익 <span class="muted small">(막대, 왼쪽 · 흐린 막대 = 추정)</span> · 누적 PnL <span class="muted small">(선, 오른쪽)</span></h3>
@@ -181,6 +182,7 @@
         <label class="check" data-ctl="task systemd direct"><input name="minerControl.confirmStop" type="checkbox" /> 끄기 전에 확인</label>
         <div class="row" data-ctl="task"><button type="button" id="importTask">예약 작업에서 실행 파일·인자 가져오기</button><span id="importTaskMsg" class="msg"></span></div>
         <label class="check"><input name="openAtLogin" type="checkbox" /> 로그인 시 앱 실행</label>
+        <label>공유 장부 폴더 (듀얼부팅 다른 OS 와 같은 PnL, 비우면 이 PC 만) <input name="sharedLedgerDir" placeholder="U:\ 또는 /mnt/crypthy" spellcheck="false" /></label>
         <label>업데이트 확인 주기(분, 30~1440) <input name="updateIntervalMin" type="number" min="30" max="1440" step="30" /></label>
         <label>팬 정지 판정 전력(W) <input name="safety.fanStopPowerW" type="number" /></label>
         <label>팬 정지 판정 시간(초) <input name="safety.fanStopSeconds" type="number" /></label>

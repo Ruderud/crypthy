@@ -120,7 +120,21 @@ function renderProfit(p: AppState['profit'], pnl: AppState['pnl']): string {
   return rows.join('');
 }
 
+/** 공유 장부 상태: 폴더·인스턴스·마지막 동기화, 쓸 수 없으면 경고 */
+function renderShared(st: AppState) {
+  const sh = st.sharedLedger;
+  const el = $('sharedInfo');
+  el.hidden = !sh;
+  if (!sh) return;
+  const others = sh.instances.filter((i) => i !== sh.instanceId);
+  el.className = `small ${sh.ok && !sh.overlaps ? 'muted' : 'warn'}`;
+  el.textContent = sh.ok
+    ? `공유 장부 ${sh.dir} · 이 PC ${sh.instanceId}${others.length ? ` + ${others.join(', ')}` : ' (다른 OS 기록 아직 없음)'} · ${sh.at ? new Date(sh.at).toLocaleTimeString('ko-KR') : '-'} 동기화${sh.overlaps ? ` · 전력 기록 시간 겹침 ${sh.overlaps}곳` : ''}`
+    : `공유 장부 ${sh.dir} 를 쓸 수 없어 이 PC 에만 기록 중 (${sh.error ?? ''}). 폴더가 다시 보이면 밀린 기록을 옮깁니다.`;
+}
+
 function renderPnl(st: AppState) {
+  renderShared(st);
   const p = st.pnl;
   const sym = esc(p.symbol);
   const est = (on: boolean) => (on ? ' <span class="warn small">추정</span>' : '');
@@ -386,7 +400,7 @@ function fillForms(st: AppState) {
   showControlFields();
   // 원격 호스트 화면: 채굴기 실행 방식·안전 설정·로그인 시 실행은 호스트에서만 바꾼다 (원격 쓰기 토큰으로 임의 프로그램 실행 방지)
   for (const el of Array.from(form.elements) as HTMLInputElement[]) {
-    const hostOnly = !!st.remote && /^(minerControl\.|safety|openAtLogin)/.test(el.name);
+    const hostOnly = !!st.remote && /^(minerControl\.|safety|openAtLogin|sharedLedgerDir)/.test(el.name);
     el.disabled = hostOnly;
     el.title = hostOnly ? '원격 호스트에서만 바꿀 수 있습니다' : '';
   }
