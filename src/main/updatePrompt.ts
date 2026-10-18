@@ -42,7 +42,7 @@ export function updateDialogSpec(v: UpdateView, appVersion: string, appName = 'C
       action: 'install',
       title: `${appName} 업데이트`,
       message: `v${v.version} 를 받아 두었습니다. 지금 재시작해 설치할까요?`,
-      detail: `현재 v${appVersion}. 재시작하면 몇 초 뒤 새 버전으로 다시 열립니다. Crypthy 는 채굴기를 관리하지 않으므로 채굴은 계속되고, 재시작하는 동안 안전 감시만 잠시 멈춥니다.${notes}`,
+      detail: `현재 v${appVersion}. 재시작하면 몇 초 뒤 새 버전으로 다시 열립니다. 채굴기는 앱과 따로 실행되므로 채굴은 계속되고, 재시작하는 동안 안전 감시만 잠시 멈춥니다.${notes}`,
       buttons: ['지금 재시작해 설치', '나중에'],
     };
   }

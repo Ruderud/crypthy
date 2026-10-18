@@ -41,7 +41,7 @@
         <span id="hubMsg" class="msg"></span>
       </div>
       <table class="table" id="hubTable"></table>
-      <p class="muted small">Crypthy 는 채굴기를 내려받거나 실행하지 않습니다. 저장소 링크를 열어 직접 확인·설치하세요. dev fee 는 각 출처에서 확인한 값이며, 확인하지 못한 값은 "미확인"으로 표시합니다. 채굴기 바이너리는 보안 프로그램에 탐지될 수 있으니 출처와 해시를 직접 확인하세요.</p>
+      <p class="muted small">Crypthy 는 채굴기를 내려받거나 설치하지 않습니다. 저장소 링크를 열어 직접 확인·설치하세요. dev fee 는 각 출처에서 확인한 값이며, 확인하지 못한 값은 "미확인"으로 표시합니다. 채굴기 바이너리는 보안 프로그램에 탐지될 수 있으니 출처와 해시를 직접 확인하세요.</p>
     </section>
 
     <section class="card wide">
@@ -59,7 +59,7 @@
     </section>
 
     <section class="card wide setup" id="setupCard" hidden>
-      <h2>처음 설정 <span class="muted small">Crypthy 는 채굴기를 설치·실행하지 않습니다. 채굴기는 직접 설치·실행하고, 여기서는 감시·수익 확인만 합니다</span></h2>
+      <h2>처음 설정 <span class="muted small">Crypthy 는 채굴기를 설치하지 않습니다. 채굴기는 직접 설치·구성하고, 여기서는 감시·수익 확인과 켜기·끄기를 합니다</span></h2>
       <ol class="steps">
         <li id="stepWallet">
           <b>지갑·풀</b> <span class="state"></span>
@@ -79,7 +79,11 @@
     </section>
 
     <section class="card wide">
-      <h2>채굴기 상태 <span class="muted small">감시만 합니다 — 시작·정지는 채굴기에서 직접</span></h2>
+      <h2>채굴기 상태 <span class="muted small">켜기·끄기는 설정한 방식으로만 · 위험 정지 뒤 자동으로 다시 켜지 않음</span>
+        <span class="spacer"></span>
+        <button id="minerStart" class="primary">켜기</button><button id="minerStop">끄기</button><span id="minerMsg" class="msg"></span>
+      </h2>
+      <p class="muted small" id="minerControlInfo"></p>
       <dl class="stats" id="minerStats"></dl>
     </section>
 
@@ -154,6 +158,16 @@
         <label>채굴기 통계 API <select name="minerApi.adapter"><option value="srbminer">SRBMiner-MULTI</option><option value="none">사용 안 함</option></select></label>
         <label>채굴기 API 포트 <input name="minerApi.port" type="number" /></label>
         <label class="check"><input name="safetyKill" type="checkbox" /> 위험 조건에서 실행 중인 채굴기 자동 정지 (재시작 안 함)</label>
+        <label>채굴 켜기·끄기 방식 <select name="minerControl.mode" id="controlMode">
+          <option value="none">사용 안 함</option><option value="task">Windows 예약 작업</option>
+          <option value="systemd">Linux systemd --user 유닛</option><option value="direct">실행 파일 직접 실행</option>
+        </select></label>
+        <label data-ctl="task">예약 작업 이름 <input name="minerControl.taskName" placeholder="PearlMiner" spellcheck="false" /></label>
+        <label data-ctl="systemd">systemd 유닛 <input name="minerControl.unit" placeholder="srbminer.service" spellcheck="false" /></label>
+        <label data-ctl="task systemd direct">채굴기 실행 파일 (절대 경로 · 직접 실행은 필수, 그 외는 감지용) <input name="minerControl.exe" placeholder="C:\Mining\SRBMiner\SRBMiner-MULTI.exe" spellcheck="false" /></label>
+        <label data-ctl="direct">인자 (셸 없이 실행, 공백 구분 · 공백 포함은 "따옴표") <input name="minerControl.args" placeholder="--algorithm pearlhash --pool host:port --wallet 주소.워커 --api-enable --api-port 21550" spellcheck="false" /></label>
+        <label class="check" data-ctl="task systemd direct"><input name="minerControl.confirmStop" type="checkbox" /> 끄기 전에 확인</label>
+        <div class="row" data-ctl="task"><button type="button" id="importTask">예약 작업에서 실행 파일·인자 가져오기</button><span id="importTaskMsg" class="msg"></span></div>
         <label class="check"><input name="openAtLogin" type="checkbox" /> 로그인 시 앱 실행</label>
         <label>업데이트 확인 주기(분, 30~1440) <input name="updateIntervalMin" type="number" min="30" max="1440" step="30" /></label>
         <label>팬 정지 판정 전력(W) <input name="safety.fanStopPowerW" type="number" /></label>

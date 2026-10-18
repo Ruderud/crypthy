@@ -1,4 +1,4 @@
-// 실행 중인 채굴기 프로세스 감지·정지 (Windows). Crypthy 는 채굴기를 시작하지 않는다.
+// 실행 중인 채굴기 프로세스 감지·정지 (Windows). 켜기는 minerControl(사용자가 구성한 작업·실행 파일)만, 자동 재시작은 없다.
 import { execFile } from 'node:child_process';
 
 /** `tasklist /fo csv /nh` 출력에서 이미지 이름·PID */

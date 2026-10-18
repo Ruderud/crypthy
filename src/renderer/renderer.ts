@@ -195,7 +195,7 @@ function renderUpdate(st: AppState) {
   } else if (u.prompt === 'ready') {
     $('updateTitle').textContent = `v${u.version} 설치 준비됨`;
     $('updateDetail').textContent =
-      '재시작하면 몇 초 뒤 새 버전으로 다시 열립니다. Crypthy 는 채굴기를 관리하지 않으므로 재시작해도 채굴은 계속됩니다 (재시작하는 동안 안전 감시만 잠시 멈춥니다).';
+      '재시작하면 몇 초 뒤 새 버전으로 다시 열립니다. 채굴기는 앱과 따로 실행되므로 재시작해도 채굴은 계속됩니다 (재시작하는 동안 안전 감시만 잠시 멈춥니다).';
     primary.textContent = '지금 재시작해 설치';
     primary.hidden = later.hidden = false;
   } else {
@@ -243,12 +243,40 @@ function renderGpuTable(st: AppState) {
   $('gpuTable').innerHTML = `<tr><th>이름</th><th>nvidia-smi #</th><th>PCI bus id</th><th>전력 제한(W)</th><th>대여가 수동($/h, 0=Vast)</th><th>재검토 대여가($/h, 0=끔)</th></tr>${rows.join('') || '<tr><td colspan="6" class="muted">인식된 GPU 없음</td></tr>'}`;
 }
 
+/** 켜기·끄기: 상태에 따라 하나만 활성. 막는 이유는 툴팁과 안내 줄로 */
+function renderControl(m: AppState['miner']) {
+  const c = m.control;
+  const start = $<HTMLButtonElement>('minerStart');
+  const stop = $<HTMLButtonElement>('minerStop');
+  start.disabled = !c.canStart;
+  stop.disabled = !c.canStop;
+  start.title = c.blocker ?? (c.consented ? '채굴 켜기' : '처음 켤 때 위험·비용 고지에 동의합니다');
+  stop.title = m.running ? '채굴 끄기 (정지 명령 + 채굴기 프로세스 정지)' : '실행 중인 채굴기가 없습니다';
+  $('minerControlInfo').textContent =
+    c.mode === 'none'
+      ? '설정 → 채굴 켜기·끄기에서 방식(예약 작업·systemd 유닛·실행 파일)을 고르면 여기와 트레이에서 켜고 끌 수 있습니다.'
+      : c.starting
+        ? '켜는 중… 채굴기가 감지되면 상태가 바뀝니다.'
+        : m.running
+          ? m.mode === 'external' ? '외부에서 실행한 채굴기가 돌고 있습니다. 끌 수는 있고, 켜기는 꺼진 뒤에 됩니다.' : '이 앱에서 켠 채굴기가 실행 중입니다.'
+          : c.blocker ?? '';
+}
+
+/** 설정의 켜기·끄기 방식에 맞는 입력칸만 보이기 */
+function showControlFields() {
+  const mode = $<HTMLSelectElement>('controlMode').value;
+  document.querySelectorAll<HTMLElement>('[data-ctl]').forEach((el) => {
+    el.hidden = !(el.dataset.ctl ?? '').split(' ').includes(mode);
+  });
+}
+
 function render(st: AppState) {
   state = st;
   const m = st.miner;
   $('mock').hidden = !st.mock;
   const badge = $('minerBadge');
-  badge.textContent = m.running ? `채굴기 실행 중${m.processes.length ? ` · ${m.processes.join(', ')}` : ''}` : '채굴기 없음';
+  badge.textContent = m.running ? `채굴기 실행 중${m.mode === 'external' ? '(외부 실행)' : ''}${m.processes.length ? ` · ${m.processes.join(', ')}` : ''}` : '채굴기 없음';
+  renderControl(m);
   badge.className = `badge ${m.running ? 'ok' : ''}`;
   $('updated').textContent = new Date(st.ts).toLocaleTimeString('ko-KR');
 
@@ -333,11 +361,12 @@ function fillForms(st: AppState) {
     if (el.type === 'checkbox') el.checked = Boolean(v);
     else el.value = String(v ?? '');
   }
+  showControlFields();
 }
 
 function readSettingsForm(): Partial<Settings> {
   const s = state!.settings;
-  const patch: Record<string, unknown> = { safety: { ...s.safety }, profit: { ...s.profit }, minerApi: { ...s.minerApi } };
+  const patch: Record<string, unknown> = { safety: { ...s.safety }, profit: { ...s.profit }, minerApi: { ...s.minerApi }, minerControl: { ...s.minerControl } };
   for (const el of Array.from($<HTMLFormElement>('settingsForm').elements) as HTMLInputElement[]) {
     if (!el.name) continue;
     const v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value.trim();
@@ -409,6 +438,10 @@ $('powerApply').addEventListener('click', async () => {
   void act('gpuMsg', () => crypthy.applyPowerLimits(), '적용 요청 완료 (아래 로그 확인)');
 });
 
+$('controlMode').addEventListener('change', showControlFields);
+$('minerStart').addEventListener('click', () => void act('minerMsg', () => crypthy.startMining(), '켜기 요청함'));
+$('minerStop').addEventListener('click', () => void act('minerMsg', () => crypthy.stopMining(), '껐습니다'));
+$('importTask').addEventListener('click', () => void act('importTaskMsg', () => crypthy.importMinerTask(), '가져옴 (실행 파일·인자)'));
 $('settingsForm').addEventListener('submit', (e) => {
   e.preventDefault();
   void act('settingsMsg', () => crypthy.saveSettings(readSettingsForm()), '저장됨');

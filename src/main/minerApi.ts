@@ -1,4 +1,4 @@
-// 실행 중인 채굴기의 로컬 통계 API 어댑터. Crypthy 는 채굴기를 실행하지 않고 읽기만 한다.
+// 실행 중인 채굴기의 로컬 통계 API 어댑터. 통계는 읽기만 한다.
 // 새 채굴기를 지원하려면 MinerStats 를 돌려주는 어댑터를 MINER_APIS 에 추가한다.
 import { fetchSrbStatus, type SrbStatus } from './srbminer';
 

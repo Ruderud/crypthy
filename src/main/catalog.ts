@@ -1,5 +1,5 @@
 // 큐레이션 카탈로그(catalog/catalog.json): 코인 → 알고리즘 → 호환 채굴 툴 추천과 공식 저장소 링크.
-// Crypthy 는 채굴기를 내려받거나 실행하지 않는다.
+// Crypthy 는 채굴기를 내려받거나 설치하지 않는다.
 import fs from 'node:fs';
 import type { FeeStatus, RecommendationView, Vendor } from '../shared/types';
 
