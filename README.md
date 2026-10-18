@@ -65,6 +65,15 @@ Drawn with [TradingView Lightweight Charts™](https://www.tradingview.com/light
 - **Mining vs rental** (information only): per-GPU mining net vs rental net (listed price × host share − power while rented), with review alerts when renting wins, a per-GPU price threshold is exceeded, or the coin price drops by a set percentage.
 - **Vast rental price**: public search (no login) every 30 minutes for single-GPU offers of the same model. By default only **verified** offers are used (unverified/deverified offers cluster at the low end: on 2026-10-18 all RTX 5090 on-demand offers gave $0.699, verified only $0.869). On-demand or interruptible, optional country filter, offers below 80% of the median DLPerf dropped. Shows median, 25th percentile, sample count and time; fewer than 5 samples shows "insufficient data". A manual per-GPU value takes precedence.
 
+### Cumulative PnL
+
+- Every pool increase, payout, price and 10-minute energy interval is appended to a local event log (`pnl/events.jsonl`, one JSON line per event; corrupt lines are skipped; rotated once at 5 MB). Daily totals are kept in `pnl/daily.json` without a time limit and are the basis for the numbers below.
+- **Definitions**: revenue = mined amount × price at the time it was mined; energy cost = measured GPU energy × electricity price at that time; realized = manual sales − fees; unrealized = holdings (mined − sold) × current price; **total PnL = realized + unrealized − energy cost**.
+- Today / 7 days / 30 days / all, plus a daily net bar chart with a cumulative PnL line. Coins mined while no price was available are valued at the next price and marked estimated; with no current price, unrealized and total PnL show "no price", never 0.
+- **Backfill (one time)**: output mined before tracking started (the pool total when tracking began) is spread over a start time you enter, with energy estimated from a wattage you enter. Backfilled days are marked estimated.
+- **Manual sales** (optional): quantity, proceeds, fee, venue and note, stored locally only. Without sales everything is unrealized.
+- **CSV export** of daily totals and events, and a button to open the log folder.
+
 ### Theme
 
 Dark exchange-style dashboard by default (yellow accent, tabular numbers, green up / red down) with light and system themes. No exchange logos, names or icons are used.
@@ -216,6 +225,7 @@ sudo systemctl daemon-reload
 - At most 8 gpus, 20 alerts (newest first), 120 characters per string. No wallet or settings.
 - `mode`: `external` (a miner is running; Crypthy never runs miners) or `null`. `hashrate` is H/s. Alert `gpu` is a PCI bus id.
 - Alert codes — safety: `fan_stopped`, `temp_stop`, `temp_warn`, `telemetry_lost`, `miner_killed`, `miner_killed_again`, `kill_failed`, `safety_hold_running`, `hold_cleared`; review: `review_rental_price`, `review_rental_better`, `review_prl`; update: `update_available`, `update_ready`, `update_error`; other: `status_api`.
+- The response also includes a `pnl` object with rounded totals only (`mined_coin`, `holdings_coin`, `revenue_krw`, `energy_cost_krw`, `realized_krw`, `unrealized_krw`, `total_pnl_krw`, `estimated`); the raw log is never exposed.
 
 ### File locations
 
@@ -227,6 +237,8 @@ sudo systemctl daemon-reload
 | Chart history (last 3 days) | `%APPDATA%\Crypthy\history.json` |
 | Power-limit values | `%APPDATA%\Crypthy\power-limits.json` |
 | Power-limit script and log | `C:\ProgramData\Crypthy\` |
+| PnL event log (rotated at 5 MB) | `%APPDATA%\Crypthy\pnl\events.jsonl` |
+| PnL daily totals (no time limit) | `%APPDATA%\Crypthy\pnl\daily.json` |
 
 <a id="safety-and-privacy"></a>
 

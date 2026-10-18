@@ -8,11 +8,18 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-18
+
 ### Added
+- Cumulative PnL: an append-only local event log (`pnl/events.jsonl`, rotated at 5 MB) and daily totals without a time limit (`pnl/daily.json`). Shows total PnL (realized + unrealized − energy cost), lifetime mined, holdings, realized and unrealized for today / 7 / 30 days / all, with a daily net bar and cumulative PnL chart.
+- One-time backfill of output mined before tracking started, with estimated energy; backfilled values are marked estimated.
+- Optional manual sale records for realized PnL, CSV export of daily totals and events, and an "open log folder" button.
+- The local status API includes a `pnl` object with rounded totals only.
 - README in English (default), Korean (`README.ko.md`) and Simplified Chinese (`README.zh-CN.md`) with a language switcher; CI checks that the three stay structurally in sync.
 - `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and pull request templates, Dependabot configuration.
 
 ### Changed
+- Kryptex payout timestamps are parsed.
 - README reorganized: badges, features, screenshots, download and install, quick start, configuration, safety and privacy, FAQ, contributing, acknowledgements.
 - Release notes are taken from this changelog.
 
@@ -74,7 +81,8 @@ Release notes on GitHub are taken from the matching section of this file.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/Ruderud/crypthy/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Ruderud/crypthy/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/Ruderud/crypthy/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Ruderud/crypthy/compare/v0.3.0...v0.3.1

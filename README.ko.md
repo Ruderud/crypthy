@@ -65,6 +65,15 @@ NVIDIA GPU가 달린 **Windows / Ubuntu(Linux)** PC를 위한 코인 채굴 허�
 - **채굴 vs 대여**(정보 표시만): GPU별 채굴 순수익과 대여 순수익(표시가 × 호스트 몫 − 임대 중 전력비)을 비교합니다. 대여가 더 유리해지거나, GPU별 가격 기준을 넘거나, 코인 시세가 정해 둔 비율만큼 떨어지면 재검토 알림을 보냅니다.
 - **Vast 대여 시세**: 로그인 없이 공개 검색으로 같은 모델의 1장짜리 매물을 30분마다 조회합니다. 기본적으로 **verified 매물만** 씁니다(미인증·인증 해제 매물은 최저가 쪽에 몰립니다. 2026-10-18 RTX 5090 온디맨드 매물을 모두 넣으면 $0.699, verified만 넣으면 $0.869였습니다). 온디맨드 또는 중단 가능 매물을 고를 수 있고, 국가 필터는 선택이며, DLPerf 중앙값의 80%에 못 미치는 매물은 뺍니다. 중앙값, 하위 25%, 표본 수, 조회 시각을 표시하며, 표본이 5개 미만이면 "데이터 부족"으로 표시합니다. GPU별 수동값을 넣으면 수동값이 우선합니다.
 
+### 누적 손익(PnL)
+
+- 풀 누적 증가, 지급, 시세, 10분 단위 전력 구간을 로컬 이벤트 로그(`pnl/events.jsonl`)에 한 줄씩 추가합니다. 한 줄이 한 이벤트이고, 깨진 줄은 건너뛰며, 5MB가 넘으면 한 번 회전합니다. 일별 집계는 `pnl/daily.json`에 기간 제한 없이 보관하고, 아래 수치는 모두 이 집계를 기준으로 합니다.
+- **계산 정의**: 매출 = 채굴량 × 채굴 시점 시세, 전력비 = 실측 GPU 전력량 × 그때의 전기 단가, 실현 손익 = 매도 기록 − 수수료, 미실현 손익 = 보유량(채굴 − 매도) × 현재가, **총 PnL = 실현 + 미실현 − 전력비**입니다.
+- 오늘·7일·30일·전체 집계와 일별 순익 막대, 누적 PnL 선을 보여 줍니다. 시세가 없을 때 채굴된 몫은 다음 시세로 평가하고 "추정"으로 표시합니다. 현재가가 없으면 미실현·총 PnL을 0원이 아니라 "시세 없음"으로 표시합니다.
+- **소급 적용(1회)**: 기록을 시작하기 전에 채굴한 몫(기록 시작 시점의 풀 누적치)을 입력한 채굴 시작 시각부터 시간 비율로 나누고, 전력비는 입력한 W로 추정합니다. 소급한 날은 "추정"으로 표시합니다.
+- **매도 기록**(선택): 수량, 매도 대금, 수수료, 거래소, 메모를 입력하며 로컬에만 저장합니다. 매도 기록이 없으면 전부 미실현으로 계산합니다.
+- 일별 집계와 이벤트를 **CSV로 내보낼** 수 있고, 로그 폴더를 바로 열 수 있습니다.
+
 ### 테마
 
 거래소 대시보드 느낌의 다크 테마가 기본입니다(노란 강조색, 숫자 등폭 표시, 상승은 초록·하락은 빨강). 라이트와 시스템 테마도 지원합니다. 특정 거래소의 로고·이름·아이콘은 쓰지 않습니다.
@@ -216,6 +225,7 @@ sudo systemctl daemon-reload
 - 응답은 gpus 최대 8개, alerts 최대 20개(최신순), 문자열은 120자까지입니다. 지갑·설정은 넣지 않습니다.
 - `mode`: `external`(채굴기 실행 중. Crypthy는 채굴기를 실행하지 않습니다) 또는 `null`. `hashrate`는 H/s입니다. alert `gpu`는 PCI bus id입니다.
 - alert code — 안전: `fan_stopped`, `temp_stop`, `temp_warn`, `telemetry_lost`, `miner_killed`, `miner_killed_again`, `kill_failed`, `safety_hold_running`, `hold_cleared`; 재검토: `review_rental_price`, `review_rental_better`, `review_prl`; 업데이트: `update_available`, `update_ready`, `update_error`; 기타: `status_api`.
+- 응답에는 반올림한 집계값만 담은 `pnl` 객체도 들어갑니다(`mined_coin`, `holdings_coin`, `revenue_krw`, `energy_cost_krw`, `realized_krw`, `unrealized_krw`, `total_pnl_krw`, `estimated`). 원시 로그는 노출하지 않습니다.
 
 ### 파일 위치
 
@@ -227,6 +237,8 @@ sudo systemctl daemon-reload
 | 차트 기록(최근 3일) | `%APPDATA%\Crypthy\history.json` |
 | 전력 제한 값 | `%APPDATA%\Crypthy\power-limits.json` |
 | 전력 제한 스크립트·로그 | `C:\ProgramData\Crypthy\` |
+| PnL 이벤트 로그(5MB에서 회전) | `%APPDATA%\Crypthy\pnl\events.jsonl` |
+| PnL 일별 집계(기간 제한 없음) | `%APPDATA%\Crypthy\pnl\daily.json` |
 
 <a id="safety-and-privacy"></a>
 

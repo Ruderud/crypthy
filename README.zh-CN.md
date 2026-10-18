@@ -65,6 +65,15 @@
 - **挖矿 vs 出租**（仅信息展示）：按 GPU 对比挖矿净收益与出租净收益（标价 × 主机分成 − 出租期间电费），在出租更划算、超过各 GPU 的价格阈值，或币价下跌达到设定比例时发送重新评估通知。
 - **Vast 出租价格**：无需登录，通过公开搜索每 30 分钟查询一次同型号单卡的挂单。默认只使用 **verified** 挂单（未认证·已取消认证的挂单集中在最低价一侧：2026-10-18 的 RTX 5090 按需挂单，全部计入时为 $0.699，只计入 verified 时为 $0.869）。可选按需或可中断，可选按国家过滤，低于 DLPerf 中位数 80% 的挂单会被排除。显示中位数、下 25%、样本数和时间；样本少于 5 个时显示「数据不足」（데이터 부족）。按 GPU 的手动值优先。
 
+### 累计盈亏（PnL）
+
+- 矿池累计增长、支付、价格以及每 10 分钟的用电区间都会追加到本地事件日志（`pnl/events.jsonl`，每行一个 JSON 事件；损坏的行会跳过；超过 5 MB 时轮换一次）。每日汇总保存在 `pnl/daily.json`，不限期限，下列数值均以此为准。
+- **计算定义**：收入 = 挖矿量 × 挖出时的价格；电费 = 实测 GPU 用电量 × 当时电价；已实现 = 手动卖出记录 − 手续费；未实现 = 持有量（挖矿 − 卖出）× 当前价格；**总 PnL = 已实现 + 未实现 − 电费**。
+- 显示今日 / 7 天 / 30 天 / 全部汇总，以及每日净收益柱状图和累计 PnL 折线。无价格时挖出的币按下一个价格估值并标记为"估算"；没有当前价格时，未实现和总 PnL 显示"无价格"，不会显示为 0。
+- **追溯补录（一次）**：开始记录前已挖出的部分（开始记录时的矿池累计值）按输入的开始时间按时间比例分摊，电费按输入的瓦数估算。补录的日期标记为"估算"。
+- **手动卖出记录**（可选）：数量、卖出金额、手续费、交易所和备注，仅保存在本地。没有卖出记录时全部视为未实现。
+- 可将每日汇总和事件**导出为 CSV**，并可直接打开日志文件夹。
+
 ### 主题
 
 默认是交易所仪表盘风格的深色主题（黄色强调色、等宽数字、上涨绿色 / 下跌红色），另有浅色和跟随系统主题。不使用任何交易所的 logo、名称或图标。
@@ -216,6 +225,7 @@ sudo systemctl daemon-reload
 - 最多 8 个 gpus、20 个 alerts（按最新排序），每个字符串 120 字符。不包含钱包和设置。
 - `mode`：`external`（有挖矿程序在运行；Crypthy 不运行挖矿程序）或 `null`。`hashrate` 单位为 H/s。alert 的 `gpu` 为 PCI bus id。
 - alert code 列表 — 安全：`fan_stopped`、`temp_stop`、`temp_warn`、`telemetry_lost`、`miner_killed`、`miner_killed_again`、`kill_failed`、`safety_hold_running`、`hold_cleared`；重新评估：`review_rental_price`、`review_rental_better`、`review_prl`；更新：`update_available`、`update_ready`、`update_error`；其他：`status_api`。
+- 响应中还包含仅含四舍五入汇总值的 `pnl` 对象（`mined_coin`、`holdings_coin`、`revenue_krw`、`energy_cost_krw`、`realized_krw`、`unrealized_krw`、`total_pnl_krw`、`estimated`），不暴露原始日志。
 
 ### 文件位置
 
@@ -227,6 +237,8 @@ sudo systemctl daemon-reload
 | 图表记录（最近 3 天） | `%APPDATA%\Crypthy\history.json` |
 | 功率限制值 | `%APPDATA%\Crypthy\power-limits.json` |
 | 功率限制脚本和日志 | `C:\ProgramData\Crypthy\` |
+| PnL 事件日志（5 MB 轮换） | `%APPDATA%\Crypthy\pnl\events.jsonl` |
+| PnL 每日汇总（不限期限） | `%APPDATA%\Crypthy\pnl\daily.json` |
 
 <a id="safety-and-privacy"></a>
 
