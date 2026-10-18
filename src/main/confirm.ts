@@ -1,7 +1,7 @@
 // 채굴 켜기·끄기 전에 받는 확인 (데스크톱 대화상자·원격 클라이언트·헤드리스가 같은 종류와 문장을 쓴다)
 
 /** 켜기·끄기 전에 사용자에게 받아야 하는 확인 */
-export type ConfirmKind = 'consent' | 'danger' | 'stop';
+export type ConfirmKind = 'consent' | 'danger' | 'stop' | 'sell';
 /** 확인을 받으면 true. 헤드리스 API 는 요청에 확인이 없으면 NeedConfirm 을 던진다 */
 export type Confirm = (kind: ConfirmKind, detail: string) => Promise<boolean>;
 

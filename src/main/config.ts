@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { GpuConfig, GpuId, Settings } from '../shared/types';
+import { DEFAULT_AUTOSELL } from './autosell';
 
 // 개인 값(지갑·풀)은 기본값이 없다. 처음 설정 화면에서 사용자가 입력한다.
 export const DEFAULT_SETTINGS: Settings = {
@@ -11,6 +12,8 @@ export const DEFAULT_SETTINGS: Settings = {
   safetyKill: true,
   minerControl: { mode: 'none', taskName: '', unit: '', exe: '', args: '', confirmStop: true, hideWindow: true },
   sharedLedgerDir: '',
+  autoSell: { ...DEFAULT_AUTOSELL },
+  cashout: { prlDepositMin: 1, prlConfirmations: 10, withdrawNetwork: 'BSC', withdrawFeeUsdt: 1, withdrawMinUsdt: 2, withdrawSuggestUsdt: 20, measuredAt: '2026-10-19' },
   openAtLogin: false,
   loginShowWindow: false,
   autoStartMining: false,
@@ -56,6 +59,8 @@ export function mergeSettings(base: Settings, patch: Partial<Settings>): Setting
     ...known,
     minerApi: { ...base.minerApi, ...pick(base.minerApi, patch.minerApi) },
     minerControl: { ...base.minerControl, ...pick(base.minerControl, patch.minerControl) },
+    autoSell: { ...base.autoSell, ...pick(base.autoSell, patch.autoSell) },
+    cashout: { ...base.cashout, ...pick(base.cashout, patch.cashout) },
     safety: { ...base.safety, ...pick(base.safety, patch.safety) },
     profit: { ...base.profit, ...pick(base.profit, patch.profit) },
     gpus,

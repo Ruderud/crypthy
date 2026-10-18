@@ -264,3 +264,33 @@ export interface SyncState {
   /** 연결이 끊긴 동안 바꾼 공유 설정 (다시 보이면 올린다) */
   settingsDirty?: boolean;
 }
+
+// ---- 자동 매도: 하루 한 번, 한 기기에서만 ----
+
+/**
+ * 오늘 자동 매도 실행권을 잡는다 (<공유>/crypthy/autosell/<YYYY-MM-DD>.json 을 새로 만들 수 있을 때만).
+ * 이미 있으면 그 파일을 만든 인스턴스를 돌려준다. 두 OS 가 동시에 돌지 않으므로 파일 하나로 충분하다.
+ */
+export function claimAutoSellDay(root: string, day: string, by: string): { ok: true } | { ok: false; by: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('bad day');
+  const f = path.join(root, 'autosell', `${day}.json`);
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  try {
+    const fd = fs.openSync(f, 'wx');
+    try {
+      fs.writeSync(fd, `${JSON.stringify({ by, at: Date.now() })}\n`);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return { ok: true };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    try {
+      const o = JSON.parse(fs.readFileSync(f, 'utf8')) as { by?: unknown };
+      return { ok: false, by: typeof o.by === 'string' ? o.by : '?' };
+    } catch {
+      return { ok: false, by: '?' };
+    }
+  }
+}

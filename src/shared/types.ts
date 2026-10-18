@@ -31,6 +31,9 @@ export interface Settings {
   minerControl: MinerControlConfig;
   /** 공유 장부 폴더 (듀얼부팅 등 여러 OS 가 같은 PnL 을 쓸 때). 비우면 이 PC 장부만. 기기별 설정 */
   sharedLedgerDir: string;
+  /** SafeTrade 자동 매도 (기기별: 한 기기에서만 켠다) */
+  autoSell: AutoSellConfig;
+  cashout: CashoutConfig;
   /** 로그인 시 앱 자동 실행 */
   openAtLogin: boolean;
   /** 로그인 시 창을 띄운다 (false 면 트레이에만) */
@@ -57,6 +60,89 @@ export interface MinerControlConfig {
   confirmStop: boolean;
   /** 직접 실행할 때 콘솔 창 숨기기 (Windows) */
   hideWindow: boolean;
+}
+
+export interface AutoSellConfig {
+  enabled: boolean;
+  /** 주문하지 않고 계획만 (처음엔 켜 둔다) */
+  dryRun: boolean;
+  /** 매일 실행 시각 HH:MM (로컬) */
+  time: string;
+  market: string;
+  /** 남겨 둘 PRL */
+  reservePrl: number;
+  /** 사용자 최저가 (USDT). 0 이면 기준가 하락률만 */
+  floorUsd: number;
+  /** 기준가 대비 최대 하락률 % (이보다 싸면 팔지 않음) */
+  maxDropPct: number;
+  /** 최우선 매도·매수호가 차이 % 상한 */
+  maxSpreadPct: number;
+  /** 최우선 매수호가에서 5% 안의 매수 호가 합 (USDT) 하한 */
+  minBidDepthUsd: number;
+  /** 하루 최대 매도량 (PRL) */
+  dailyMaxPrl: number;
+  /** 주문 1건 최대 금액 (USDT) */
+  orderMaxUsd: number;
+  /** 다시 가격을 매기기까지 기다리는 분 */
+  repriceMinutes: number;
+  /** 한 번에 내리는 비율 % */
+  repriceStepPct: number;
+  /** 최대 재가격 횟수 */
+  maxReprices: number;
+}
+
+/** 현금화 경로 메모의 수수료·조건 (실측 날짜와 함께, 바꿀 수 있음) */
+export interface CashoutConfig {
+  /** SafeTrade PRL 입금 최소 수량 */
+  prlDepositMin: number;
+  /** PRL 입금 컨펌 수 */
+  prlConfirmations: number;
+  /** SafeTrade → 바이낸스 USDT 출금 네트워크 */
+  withdrawNetwork: string;
+  withdrawFeeUsdt: number;
+  withdrawMinUsdt: number;
+  /** 이 이상 쌓이면 주 1회(일요일) 출금 권장 알림 */
+  withdrawSuggestUsdt: number;
+  /** 위 값을 확인한 날짜 */
+  measuredAt: string;
+}
+
+export interface SellOrderRecord {
+  id: number;
+  price: number;
+  amount: number;
+  filled: number;
+  avgPrice: number;
+}
+
+export interface SellResult {
+  day: string;
+  at: number;
+  dryRun: boolean;
+  status: 'sold' | 'partial' | 'nothing' | 'skipped' | 'error' | 'planned';
+  reason: string | null;
+  floorUsd: number | null;
+  refUsd: number | null;
+  /** dry-run 계획 또는 첫 주문 */
+  plan: { price: number; amount: number } | null;
+  orders: SellOrderRecord[];
+  soldPrl: number;
+  proceedsUsdt: number;
+  feeUsdt: number;
+}
+
+export interface AutoSellView {
+  /** API 키가 저장돼 있는지 (키 자체는 화면·원격·로그에 내보내지 않는다) */
+  keySet: boolean;
+  /** 키 보관 방식 */
+  keyStore: string | null;
+  running: boolean;
+  nextRunAt: number | null;
+  todaySoldPrl: number;
+  last: SellResult | null;
+  history: SellResult[];
+  /** 마지막으로 읽은 SafeTrade 잔고 */
+  balance: { prl: number; usdt: number; at: number } | null;
 }
 
 export interface SafetyConfig {
@@ -347,6 +433,7 @@ export interface AppState {
   remote?: RemoteView | null;
   /** 공유 장부 상태 (켜져 있을 때) */
   sharedLedger: SharedLedgerView | null;
+  autoSell: AutoSellView;
   /** 설정한 Windows 예약 작업의 상태 (status 는 schtasks 표기 그대로, 예: Ready·Running·Disabled / 준비·실행 중·사용 안 함) */
   minerTask: { name: string; status: string | null; at: number } | null;
   setup: SetupView;
@@ -393,6 +480,10 @@ export interface Api {
   stopMining(): Promise<string | null>;
   importMinerTask(): Promise<string | null>;
   disableMinerTask(): Promise<string | null>;
+  /** SafeTrade API 키 저장 (이 PC 에서만, 원격 불가). 빈 값이면 지운다 */
+  setExchangeKey(key: string, secret: string): Promise<string | null>;
+  /** 자동 매도 지금 한 번 (dryRun 이 아니면 확인 대화상자) */
+  runAutoSell(dryRun: boolean): Promise<string | null>;
   /** GPU 별 채굴 켜기·끄기 (채굴 중이면 선택을 바꿔 다시 시작) */
   setGpuMining(id: GpuId, mine: boolean): Promise<string | null>;
   minerLog(): Promise<{ text: string; path: string; at: number | null; available: boolean }>;
