@@ -39,10 +39,14 @@ export interface RemoteHandlers {
 const MAX_BODY = 64 * 1024;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
-/** 바인딩 주소: IP 리터럴만, 전체 공개(0.0.0.0, ::) 불가 */
+/** IPv6 를 표준 표기로 (::0, 0:0:…:0 → ::) */
+const canonicalIp = (ip: string) => (net.isIPv6(ip) ? new URL(`http://[${ip}]/`).hostname.slice(1, -1) : ip);
+
+/** 바인딩 주소: IP 리터럴만, 전체 공개(0.0.0.0, ::, ::ffff:0.0.0.0 등) 불가 */
 export function validateBind(bind: string): string | null {
   if (!net.isIP(bind)) return `바인딩 주소는 IP 여야 합니다: ${bind}`;
-  if (bind === '0.0.0.0' || bind === '::') return '모든 주소(0.0.0.0, ::)에는 열지 않습니다 — Tailscale IP 처럼 특정 IP 를 지정하세요';
+  const c = canonicalIp(bind);
+  if (c === '0.0.0.0' || c === '::' || c === '::ffff:0:0' || c === '::ffff:0.0.0.0') return '모든 주소(0.0.0.0, ::)에는 열지 않습니다 — Tailscale IP 처럼 특정 IP 를 지정하세요';
   return null;
 }
 
@@ -61,15 +65,30 @@ export function maskWallet(w: string): string {
   return worker ? `${m}.${worker}` : m;
 }
 
-/** 원격으로 내보낼 상태: 지갑 원문 제거 */
-export function sanitizeState(st: AppState): AppState {
-  return { ...st, settings: { ...st.settings, wallet: maskWallet(st.settings.wallet) } };
+/** 채굴기 인자 속 지갑(--wallet/--user 값, 설정 지갑 문자열)도 가린다 */
+export function maskArgs(args: string, wallet: string): string {
+  let out = args;
+  const addr = wallet.split('.')[0];
+  if (addr.length >= 8) out = out.split(addr).join(maskWallet(addr));
+  return out.replace(/(--(?:wallet|user|u)[=\s]+)("?)([^\s"]{13,})\2/gi, (_m, flag: string, q: string, v: string) => `${flag}${q}${v.includes('…') ? v : maskWallet(v)}${q}`);
 }
 
-/** 원격에서 온 설정 변경: 가려진 지갑(… 포함)은 바꾸지 않는다 */
+/** 원격으로 내보낼 상태: 지갑 원문 제거 (설정의 지갑, 채굴기 인자 안의 지갑) */
+export function sanitizeState(st: AppState): AppState {
+  const s = st.settings;
+  return { ...st, settings: { ...s, wallet: maskWallet(s.wallet), minerControl: { ...s.minerControl, args: maskArgs(s.minerControl.args, s.wallet) } } };
+}
+
+/**
+ * 원격에서 바꿀 수 있는 설정 (허용 목록). 채굴 켜기·끄기 방식(실행 파일·인자·작업·유닛), 안전 정지 설정,
+ * 로그인 시 실행은 호스트에서만 바꾼다 — 쓰기 토큰만으로 호스트에서 임의 프로그램을 실행하거나 안전 정지를 끄지 못하게.
+ */
+export const REMOTE_SETTING_KEYS = new Set<keyof Settings>(['coin', 'wallet', 'pool', 'minerApi', 'updateIntervalMin', 'gpus', 'profit']);
+
+/** 원격에서 온 설정 변경: 허용한 항목만, 가려진 지갑(… 포함)은 바꾸지 않는다 */
 export function sanitizePatch(patch: unknown): Partial<Settings> {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return {};
-  const p = { ...(patch as Partial<Settings>) };
+  const p = Object.fromEntries(Object.entries(patch).filter(([k]) => REMOTE_SETTING_KEYS.has(k as keyof Settings))) as Partial<Settings>;
   if (typeof p.wallet === 'string' && p.wallet.includes('…')) delete p.wallet;
   return p;
 }

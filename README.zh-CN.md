@@ -153,7 +153,8 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --ac
 ```
 
 - 除非用 `--bind` 指定一个具体 IP，远程 API 只监听 127.0.0.1，绝不监听所有地址（0.0.0.0）。读取需要读取令牌；写入需要 `--enable-write` 和单独的写入令牌。令牌为随机值，仅所有者可读地保存在 `/var/lib/crypthy-headless`，不会写入日志。
-- 响应中不包含钱包地址（只显示为 `prl1qe…0000.rig1`）。
+- 响应中不包含钱包地址（只显示为 `prl1qe…0000.rig1`），挖矿程序参数中的钱包也会遮盖。
+- 挖矿开关方式（可执行文件、参数、任务、单元）、安全设置和开机启动只能在主机上修改：编辑 `/var/lib/crypthy-headless/settings.json` 后运行 `sudo systemctl restart crypthy-headless`。仅凭写入令牌无法让主机运行其他程序或关闭安全停止。
 - 在无界面主机上首次启动需要 `--accept-risk`，或在已连接电脑上通过同意对话框确认。危险停止后不会重新启动挖矿程序的原则不变。
 - 加上 `--power-limits` 会用同一个 `sudo` 安装 GPU 功率限制服务（不使用 pkexec）。没有自动更新：重新运行新版本的 `install.sh` 即可（数据保留）。
 - 绝不停止容器（Docker、containerd、Vast.ai `kaalia`）。

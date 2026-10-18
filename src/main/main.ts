@@ -63,9 +63,12 @@ let remoteAt: number | null = null;
 let remoteTimer: NodeJS.Timeout | null = null;
 let remoteCharts: ChartsView | null = null;
 
+/** OS 보안 저장소로 암호화할 수 있는가 (Linux 의 basic_text 는 사실상 평문이라 제외) */
 const canEncrypt = () => {
   try {
-    return safeStorage.isEncryptionAvailable();
+    if (!safeStorage.isEncryptionAvailable()) return false;
+    if (process.platform === 'linux') return !['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend());
+    return true;
   } catch {
     return false;
   }
@@ -140,7 +143,8 @@ async function connectRemote(urlRaw: unknown, readRaw: unknown, writeRaw: unknow
     return `연결 실패: ${(e as Error).message}`;
   }
   const enc = canEncrypt();
-  remoteSaved = { url, enabled: true, read: seal(readToken, enc), write: seal(target.writeToken, enc), enc };
+  // 암호화할 수 없으면 쓰기 토큰은 저장하지 않는다 (이번 실행 동안만 기억, 다시 켜면 다시 입력)
+  remoteSaved = { url, enabled: true, read: seal(readToken, enc), write: enc ? seal(target.writeToken, enc) : null, enc };
   saveRemote();
   log.info(`remote: connected to ${url} (${target.writeToken ? 'read + write' : 'read-only'})`);
   startRemote(target);

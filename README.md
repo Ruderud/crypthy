@@ -153,7 +153,8 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --ac
 ```
 
 - The remote API listens on 127.0.0.1 unless `--bind` names one specific IP; it never listens on all addresses (0.0.0.0). Reading needs the read token; writing needs `--enable-write` and a separate write token. Tokens are random, stored owner-only in `/var/lib/crypthy-headless`, and never written to logs.
-- Responses never include the wallet address (only `prl1qe…0000.rig1`).
+- Responses never include the wallet address (only `prl1qe…0000.rig1`), also not inside miner arguments.
+- The miner on/off method (executable, arguments, task, unit), safety settings and start at login can only be changed on the host: edit `/var/lib/crypthy-headless/settings.json` and run `sudo systemctl restart crypthy-headless`. A write token alone cannot make the host run another program or turn off the safety stop.
 - On a headless host the first start needs `--accept-risk` or the consent dialog on the connected PC. After a danger stop it still never restarts the miner.
 - `--power-limits` also installs the GPU power-limit service with the same `sudo` (no pkexec). No automatic updates: run the new `install.sh` again (data is kept).
 - Containers (Docker, containerd, Vast.ai `kaalia`) are never stopped.

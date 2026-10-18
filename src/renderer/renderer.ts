@@ -279,7 +279,7 @@ async function refreshRemoteSettings() {
   const url = $<HTMLInputElement>('remoteUrl');
   if (document.activeElement !== url && !url.value) url.value = v.url.replace(/^https?:\/\//, '');
   $('remoteInfo').textContent = v.enabled
-    ? `연결됨: ${v.url} (${v.hasWrite ? '읽기 + 쓰기' : '읽기 전용'}). 토큰은 ${v.encrypted ? 'OS 보안 저장소로 암호화해' : '이 사용자만 읽을 수 있는 파일에'} 저장했습니다. 토큰 칸을 비워 두면 저장된 값을 씁니다.`
+    ? `연결됨: ${v.url}. 토큰은 ${v.encrypted ? 'OS 보안 저장소로 암호화해 저장했습니다' : '이 사용자만 읽을 수 있는 파일에 읽기 토큰만 저장했습니다 (OS 보안 저장소를 쓸 수 없어 쓰기 토큰은 이번 실행 동안만 기억)'}. 토큰 칸을 비워 두면 저장된 값을 씁니다. 채굴 켜기·끄기 방식·안전 설정·로그인 시 실행은 호스트에서만 바꿀 수 있습니다.`
     : '연결 안 함 — 이 PC 의 상태를 보여 줍니다. 호스트에서 crypthy-headless --print-tokens 로 토큰을 확인하세요.';
 }
 
@@ -321,7 +321,7 @@ function render(st: AppState) {
   renderGpus(st);
 
   $('alerts').innerHTML = st.alerts.length
-    ? st.alerts.slice(0, 30).map((a) => `<li class="${a.level}"><time>${new Date(a.ts).toLocaleString('ko-KR')}</time> ${esc(a.message)}</li>`).join('')
+    ? st.alerts.slice(0, 30).map((a) => `<li class="${esc(a.level)}"><time>${new Date(a.ts).toLocaleString('ko-KR')}</time> ${esc(a.message)}</li>`).join('')
     : '<li class="muted">알림 없음</li>';
 
   const p = st.profit;
@@ -384,6 +384,13 @@ function fillForms(st: AppState) {
     else el.value = String(v ?? '');
   }
   showControlFields();
+  // 원격 호스트 화면: 채굴기 실행 방식·안전 설정·로그인 시 실행은 호스트에서만 바꾼다 (원격 쓰기 토큰으로 임의 프로그램 실행 방지)
+  for (const el of Array.from(form.elements) as HTMLInputElement[]) {
+    const hostOnly = !!st.remote && /^(minerControl\.|safety|openAtLogin)/.test(el.name);
+    el.disabled = hostOnly;
+    el.title = hostOnly ? '원격 호스트에서만 바꿀 수 있습니다' : '';
+  }
+  $<HTMLButtonElement>('importTask').disabled = !!st.remote;
 }
 
 function readSettingsForm(): Partial<Settings> {

@@ -14,7 +14,10 @@ const READ = 'r'.repeat(43);
 const WRITE = 'w'.repeat(43);
 
 const fakeState = () =>
-  ({ ts: 1, miner: { running: false, mode: null, pool: null, uptimeS: null, accepted: null, rejected: null }, gpus: [], alerts: [], pnl: null, settings: { ...DEFAULT_SETTINGS, wallet: WALLET } }) as unknown as AppState;
+  ({
+    ts: 1, miner: { running: false, mode: null, pool: null, uptimeS: null, accepted: null, rejected: null }, gpus: [], alerts: [], pnl: null,
+    settings: { ...DEFAULT_SETTINGS, wallet: WALLET, minerControl: { ...DEFAULT_SETTINGS.minerControl, args: '--algorithm pearlhash --wallet prl1qexamplewalletaddressxyz0000000000.rig1 --user prl1otherwalletaddress9999 --pool x:1' } },
+  }) as unknown as AppState;
 
 function handlers(log: string[] = []): RemoteHandlers {
   return {
@@ -88,6 +91,7 @@ describe('remote API: reading', () => {
     expect(r.status).toBe(200);
     expect(r.json.settings.wallet).toBe('prl1qe…0000.rig1');
     expect(JSON.stringify(r.json)).not.toContain('examplewallet');
+    expect(r.json.settings.minerControl.args).toBe('--algorithm pearlhash --wallet prl1qe…0000.rig1 --user prl1ot…9999 --pool x:1');
     expect((await call('GET', '/v1/charts', { token: READ })).json.symbol).toBe('PRL');
   });
 
@@ -132,6 +136,16 @@ describe('remote API: writing', () => {
     expect(log).toEqual(['settings {"pool":"prl.kryptex.network:8048"}']);
     expect(sanitizePatch([1, 2])).toEqual({});
   });
+
+  it('cannot change the miner command, safety settings or login start from remote (no remote code execution)', async () => {
+    const log: string[] = [];
+    const { call } = await serve(WRITE, log);
+    await call('POST', '/v1/settings', {
+      token: WRITE,
+      body: { patch: { minerControl: { mode: 'direct', exe: '/usr/bin/perl', args: '-e evil' }, safetyKill: false, safety: { tempStopC: 95 }, openAtLogin: true, gpus: [] } },
+    });
+    expect(log).toEqual(['settings {"gpus":[]}']);
+  });
 });
 
 describe('binding, tokens and masking', () => {
@@ -142,6 +156,7 @@ describe('binding, tokens and masking', () => {
     expect(validateBind('0.0.0.0')).not.toBeNull();
     expect(validateBind('::')).not.toBeNull();
     expect(validateBind('my-host.ts.net')).not.toBeNull();
+    for (const all of ['::0', '0:0:0:0:0:0:0:0', '::ffff:0.0.0.0', '0000::0000']) expect(validateBind(all), all).not.toBeNull();
     expect([...allowedHosts('100.101.102.103', 47321)]).toEqual(['127.0.0.1:47321', 'localhost:47321', '100.101.102.103:47321']);
     expect(allowedHosts('fd7a:115c:a1e0::1', 47321).has('[fd7a:115c:a1e0::1]:47321')).toBe(true);
   });

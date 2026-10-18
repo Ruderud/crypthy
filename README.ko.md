@@ -153,7 +153,8 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --ac
 ```
 
 - 원격 API는 `--bind`로 특정 IP 하나를 지정하지 않으면 127.0.0.1에만 열리고, 모든 주소(0.0.0.0)에는 열지 않습니다. 읽기에는 읽기 토큰, 쓰기에는 `--enable-write`와 별도 쓰기 토큰이 필요합니다. 토큰은 무작위 값으로 `/var/lib/crypthy-headless`에 소유자만 읽을 수 있게 저장되고 로그에 남지 않습니다.
-- 응답에는 지갑 주소가 들어가지 않습니다(`prl1qe…0000.rig1`처럼만 표시).
+- 응답에는 지갑 주소가 들어가지 않습니다(`prl1qe…0000.rig1`처럼만 표시). 채굴기 인자 안의 지갑도 가립니다.
+- 채굴 켜기·끄기 방식(실행 파일·인자·작업·유닛), 안전 설정, 로그인 시 실행은 호스트에서만 바꿉니다. `/var/lib/crypthy-headless/settings.json`을 고친 뒤 `sudo systemctl restart crypthy-headless`를 실행하세요. 쓰기 토큰만으로는 호스트에서 다른 프로그램을 실행하거나 안전 정지를 끌 수 없습니다.
 - 헤드리스 호스트에서 처음 켜려면 `--accept-risk` 또는 연결한 PC의 동의 대화상자가 필요합니다. 위험 정지 뒤에 채굴기를 다시 켜지 않는 원칙은 같습니다.
 - `--power-limits`를 주면 GPU 전력 제한 서비스도 같은 `sudo`로 설치합니다(pkexec 없음). 자동 업데이트는 없으며, 새 버전의 `install.sh`를 다시 실행하면 됩니다(데이터 유지).
 - 컨테이너(Docker, containerd, Vast.ai `kaalia`)는 절대 정지하지 않습니다.

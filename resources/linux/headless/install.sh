@@ -33,13 +33,16 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$(id -u)" -ne 0 ]; then echo "run with sudo" >&2; exit 1; fi
+case "$RUN_USER" in *[!a-z0-9_-]*|'') RUN_USER=root ;; esac
 if ! printf '%s' "$RUN_USER" | grep -Eq '^[a-z_][a-z0-9_-]{0,31}$' || [ "$RUN_USER" = root ]; then
   echo "choose a normal user with --user NAME (not root)" >&2; exit 2
 fi
 id "$RUN_USER" >/dev/null 2>&1 || { echo "no such user: $RUN_USER" >&2; exit 2; }
 # 유닛 파일에 들어가므로 IP·포트만 허용 (헤드리스가 다시 검사: 0.0.0.0 같은 전체 공개는 거부)
-printf '%s' "$BIND" | grep -Eq '^[0-9a-fA-F:.]+$' || { echo "--bind must be an IP address" >&2; exit 2; }
-printf '%s' "$PORT" | grep -Eq '^[0-9]{4,5}$' || { echo "--port must be a number" >&2; exit 2; }
+# grep 은 줄 단위라 줄바꿈이 섞인 값을 놓친다 → 문자열 전체를 case 로 검사
+case "$BIND" in ''|*[!0-9a-fA-F:.]*) echo "--bind must be an IP address" >&2; exit 2 ;; esac
+case "$PORT" in ''|*[!0-9]*) echo "--port must be a number" >&2; exit 2 ;; esac
+[ "${#PORT}" -ge 4 ] && [ "${#PORT}" -le 5 ] || { echo "--port must be 1024-65535" >&2; exit 2; }
 
 NODE=$(command -v node || true)
 if [ -z "$NODE" ]; then echo "Node.js 18+ is required: sudo apt install nodejs" >&2; exit 1; fi
