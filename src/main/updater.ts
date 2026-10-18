@@ -15,6 +15,8 @@ export interface UpdaterLike {
   checkForUpdates(): Promise<unknown> | null;
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+  /** electron-updater 의 내부 로그 대상 */
+  logger?: unknown;
 }
 
 export interface UpdateOptions {

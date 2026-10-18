@@ -19,6 +19,7 @@ import {
 } from './powerLimit';
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
+import { createFileLogger, type Logger } from './log';
 import {
   addEnergy, addPending, addPoolIncrease, addSale, appendEvent, bootstrap, dailyCsv, emptyBook, estimateBackfillFrom, eventsCsv,
   freshPayouts, loadBook, pnlDaily, priceUnpriced, readEvents, separateLegacyBackfill, startTracking, summarizePnl, type PnlBook, type PnlEvent,
@@ -53,6 +54,8 @@ const power = IS_LINUX
   : { isRegistered: isPowerTaskRegistered, register: registerPowerTask, run: runPowerTask, readLog: readPowerLog };
 const powerUser = () => (IS_LINUX ? os.userInfo().username : `${process.env.USERDOMAIN}\\${process.env.USERNAME}`);
 const file = (name: string) => path.join(app.getPath('userData'), name);
+/** %APPDATA%\Crypthy\logs\main.log (업데이트·종료 과정 기록) */
+let log: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined };
 
 interface Runtime {
   /** 안전 보류 GPU → 사유. 사용자가 해제하기 전까지 유지(앱 재시작·재부팅 후에도) */
@@ -120,6 +123,9 @@ let tray: Tray | null = null;
 let quitting = false;
 let trayKey = '';
 let updater: ReturnType<typeof createUpdateController> | null = null;
+/** 주기 작업 (업데이트 설치 전에 모두 멈춘다) */
+const timers: NodeJS.Timeout[] = [];
+let statusServer: import('node:http').Server | null = null;
 /** OS 알림 참조 유지 (Windows 에서 GC 되면 클릭이 사라짐) */
 const notifications = createNotificationKeeper();
 /** 사용자가 직접 확인한 직후에는 OS 알림 없이 배너만 */
@@ -881,11 +887,13 @@ function startUpdater(): void {
   if (!mockUpdate && (MOCK || !app.isPackaged || !supported)) return;
   try {
     const source: UpdaterLike = mockUpdate ? mockUpdater() : (require('electron-updater') as typeof import('electron-updater')).autoUpdater;
+    source.logger = log;
     let lastStatus = '';
     updater = createUpdateController(source, {
       initialDelayMs: UPDATE_FIRST_CHECK_MS,
       intervalMin: settings.updateIntervalMin,
       onChange: (v) => {
+        if (v.status !== lastStatus) log.info(`update: ${v.status}${v.version ? ` v${v.version}` : ''}${v.error ? ` — ${v.error}` : ''}`);
         if (v.status === 'error' && lastStatus !== 'error') {
           alertOnce({ ts: Date.now(), level: 'info', code: 'update_error', message: `업데이트 확인 실패: ${v.error}` }, 6 * 3600_000);
         }
@@ -935,9 +943,40 @@ function installUpdate(): string | null {
   writeJson(file('ledger.json'), ledger);
   writeJson(file('history.json'), historyToJson(history));
   savePnl(true);
-  quitting = true;
-  updater.install();
+  log.info('update: install requested', updater.view().version);
+  prepareForInstall();
+  // 정리한 다음 틱에 설치 (electron-updater 는 설치 파일을 띄운 뒤 app.quit 을 부른다)
+  const u = updater;
+  setImmediate(() => {
+    try {
+      u.install();
+    } catch (e) {
+      log.error('update: quitAndInstall threw', e);
+      app.exit(0);
+    }
+  });
   return null;
+}
+
+/**
+ * 설치 파일이 앱 폴더를 바꾸기 전에 이 앱이 붙잡고 있는 것을 모두 놓는다.
+ * 트레이 상주 앱은 창 close·window-all-closed 를 막아 두므로 그대로 두면 종료가 늦어지고,
+ * 설치 파일이 아직 살아 있는 앱을 강제 종료하면서 파일 교체가 실패할 수 있다.
+ */
+function prepareForInstall(): void {
+  quitting = true;
+  for (const t of timers.splice(0)) clearInterval(t);
+  statusServer?.close();
+  statusServer = null;
+  tray?.destroy();
+  tray = null;
+  app.removeAllListeners('window-all-closed');
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.removeAllListeners('close');
+    w.destroy();
+  }
+  win = null;
+  log.info('update: app resources released, handing over to the installer');
 }
 
 function registerIpc(): void {
@@ -1091,6 +1130,10 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showWindow);
   app.whenReady().then(async () => {
     app.setAppUserModelId('io.github.ruderud.crypthy');
+    log = createFileLogger(file(path.join('logs', 'main.log')));
+    log.info(`start v${app.getVersion()} ${process.platform} ${process.arch}${process.argv.includes('--updated') ? ' (after update)' : ''}${MOCK ? ' (mock)' : ''}`);
+    process.on('uncaughtException', (e) => log.error('uncaughtException', e));
+    process.on('unhandledRejection', (e) => log.error('unhandledRejection', e));
     loadState();
     registerIpc();
     applyLoginItem();
@@ -1099,7 +1142,7 @@ if (!app.requestSingleInstanceLock()) {
     tray.on('click', showWindow);
     tray.on('double-click', showWindow);
 
-    startStatusServer(buildState, (e) => pushAlert({ ts: Date.now(), level: 'warn', code: 'status_api', message: `로컬 상태 API 시작 실패: ${e.message}` }));
+    statusServer = startStatusServer(buildState, (e) => pushAlert({ ts: Date.now(), level: 'warn', code: 'status_api', message: `로컬 상태 API 시작 실패: ${e.message}` }));
     if (!MOCK) {
       powerRegistered = await power.isRegistered();
       powerLog = power.readLog();
@@ -1108,19 +1151,19 @@ if (!app.requestSingleInstanceLock()) {
     void hw.gpuVendors().then((v) => { vendors = v; }).catch(() => undefined);
     await poll();
     let polling = false;
-    setInterval(() => {
+    timers.push(setInterval(() => {
       if (polling) return;
       polling = true;
       poll().finally(() => (polling = false));
-    }, POLL_MS);
+    }, POLL_MS));
     let remoteTick = 0;
     void refreshRemote(true);
-    setInterval(() => void refreshRemote(++remoteTick % (VAST_MS / REMOTE_MS) === 0), REMOTE_MS);
-    setInterval(() => {
+    timers.push(setInterval(() => void refreshRemote(++remoteTick % (VAST_MS / REMOTE_MS) === 0), REMOTE_MS));
+    timers.push(setInterval(() => {
       writeJson(file('ledger.json'), ledger);
       writeJson(file('history.json'), historyToJson(history));
       savePnl();
-    }, 60_000);
+    }, 60_000));
 
     if (!process.argv.includes('--hidden')) showWindow();
     startUpdater();
@@ -1131,6 +1174,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('before-quit', () => {
     quitting = true;
+    log.info('quit');
     try {
       writeJson(file('ledger.json'), ledger);
       writeJson(file('history.json'), historyToJson(history));
