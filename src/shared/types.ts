@@ -47,6 +47,11 @@ export interface ProfitConfig {
   vastHostShare: number;
   rentalPowerW: number;
   reviewPrlDropPct: number;
+  /** Vast 시세: 인증(verified) 매물만 */
+  vastVerifiedOnly: boolean;
+  vastType: 'on-demand' | 'interruptible';
+  /** Vast 시세 지역 필터: 국가 코드 쉼표 목록(예: "KR,JP"). 비우면 전체 */
+  vastRegions: string;
   /** 코인 시세 기준값($). 0이면 첫 조회값으로 채움 */
   baselinePrlUsd: number;
 }
@@ -100,8 +105,11 @@ export interface CompareRow {
   label: string;
   miningKrwPerH: number | null;
   rentalKrwPerH: number | null;
+  /** 비교·재검토 기준 대여가: 수동값 또는 Vast 필터 후 중앙값 */
   rentalUsd: number | null;
   rentalSource: 'manual' | 'vast' | null;
+  /** Vast 조회 결과 (수동값이어도 참고로 표시) */
+  vast: { status: 'ok' | 'insufficient'; median: number | null; p25: number | null; n: number; total: number; at: number } | null;
 }
 
 /** 기간(오늘·이번 달) 요약. confirmed = 풀 확정, est = 해시레이트 추정 */

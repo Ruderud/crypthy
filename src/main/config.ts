@@ -19,6 +19,9 @@ export const DEFAULT_SETTINGS: Settings = {
     vastHostShare: 0.75,
     rentalPowerW: 250,
     reviewPrlDropPct: 30,
+    vastVerifiedOnly: true,
+    vastType: 'on-demand',
+    vastRegions: '',
     baselinePrlUsd: 0,
   },
 };

@@ -236,15 +236,24 @@ function render(st: AppState) {
   $('profitErr').textContent = p.error ?? '';
 
   const pr = st.settings.profit;
+  const vastCell = (r: AppState['profit']['compare'][number]) => {
+    const v = r.vast;
+    const meta = v ? `<div class="muted small">${v.status === 'ok' ? `하위 25% $${esc(v.p25?.toFixed(3))} · ` : ''}표본 ${esc(v.n)}/${esc(v.total)} · ${new Date(v.at).toLocaleTimeString('ko-KR')}</div>` : '';
+    if (r.rentalSource === 'manual') return `$${esc(r.rentalUsd?.toFixed(3))}/h <span class="muted small">수동</span>${meta}`;
+    if (!v) return '<span class="muted">조회 전</span>';
+    if (v.status === 'insufficient') return `<span class="warn">데이터 부족</span>${meta}`;
+    return `$${esc(v.median?.toFixed(3))}/h <span class="muted small">Vast 중앙값</span>${meta}`;
+  };
+  const filterText = `${pr.vastVerifiedOnly ? '인증 매물만' : '전체 매물'} · ${pr.vastType === 'interruptible' ? '중단 가능(입찰)' : '온디맨드'} · ${pr.vastRegions.trim() ? `지역 ${esc(pr.vastRegions)}` : '전체 지역'} · DLPerf 중앙값 80% 미만 제외`;
   $('compare').innerHTML = `<tr><th>GPU</th><th>채굴 순수익</th><th>대여 표시가</th><th>대여 순수익</th><th>판정</th></tr>${p.compare
     .filter((r) => st.gpus.find((g) => g.id === r.id)?.present)
     .map((r) => {
       const verdict = r.miningKrwPerH !== null && r.rentalKrwPerH !== null ? (r.miningKrwPerH >= r.rentalKrwPerH ? '채굴 유리' : '대여 유리 → 재검토') : '-';
       return `<tr><td>${esc(r.label)}</td><td>${krw(r.miningKrwPerH)}/h</td>
-        <td>${r.rentalUsd === null ? '-' : `$${r.rentalUsd.toFixed(3)}/h <span class="muted small">${r.rentalSource === 'manual' ? '수동' : 'Vast 중앙값'}</span>`}</td>
+        <td>${vastCell(r)}</td>
         <td>${krw(r.rentalKrwPerH)}/h</td><td class="${verdict.startsWith('대여') ? 'warn' : 'good'}">${verdict}</td></tr>`;
     })
-    .join('')}<tr><td colspan="5" class="muted small">가정: 호스트 몫 ${esc(Math.round(pr.vastHostShare * 100))}%, 임대 중 ${esc(pr.rentalPowerW)}W, ${esc(pr.krwPerKwh)}원/kWh, ${esc(pr.krwPerUsd)}원/$</td></tr>`;
+    .join('')}<tr><td colspan="5" class="muted small">Vast 시세: ${filterText}. 가정: 호스트 몫 ${esc(Math.round(pr.vastHostShare * 100))}%, 임대 중 ${esc(pr.rentalPowerW)}W, ${esc(pr.krwPerKwh)}원/kWh, ${esc(pr.krwPerUsd)}원/$. 비교·재검토 알림은 이 필터의 중앙값 기준입니다.</td></tr>`;
 
   const linux = st.platform === 'linux';
   $('powerRegister').textContent = linux ? '전력 제한 서비스 설치 (관리자 인증 1회)' : '전력 제한 예약 작업 등록 (UAC 1회)';

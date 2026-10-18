@@ -130,6 +130,9 @@
         <label>대여 호스트 몫(0~1) <input name="profit.vastHostShare" type="number" step="0.01" /></label>
         <label>임대 중 GPU 전력(W) <input name="profit.rentalPowerW" type="number" /></label>
         <label>재검토: 시세 하락(%) <input name="profit.reviewPrlDropPct" type="number" /></label>
+        <label class="check"><input name="profit.vastVerifiedOnly" type="checkbox" /> Vast 시세: 인증(verified) 매물만</label>
+        <label>Vast 매물 유형 <select name="profit.vastType"><option value="on-demand">온디맨드</option><option value="interruptible">중단 가능(입찰)</option></select></label>
+        <label>Vast 지역(국가 코드, 비우면 전체) <input name="profit.vastRegions" placeholder="KR,JP" spellcheck="false" /></label>
         <label>시세 기준가($, 0=다음 조회값) <input name="profit.baselinePrlUsd" type="number" step="0.01" /></label>
         <div class="row"><button type="submit" class="primary">설정 저장</button><span id="settingsMsg" class="msg"></span></div>
       </form>

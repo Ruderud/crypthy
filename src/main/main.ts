@@ -18,7 +18,7 @@ import {
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
 import { setLinuxAutostart } from './autostart';
-import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastMedian } from './remote';
+import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastStats, type VastStats } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
 import { startStatusServer } from './statusApi';
@@ -83,7 +83,7 @@ const remote = {
   balance: null as number | null,
   payouts: [] as Payout[],
   pool: null as PoolStats | null,
-  vastUsd: {} as Record<string, number | null>,
+  vast: {} as Record<string, VastStats>,
   updatedAt: null as number | null,
   error: null as string | null,
 };
@@ -154,7 +154,8 @@ function compareRows(gpus: GpuView[]): CompareRow[] {
   const p = settings.profit;
   return settings.gpus.map((g) => {
     const v = gpus.find((x) => x.id === g.id);
-    const auto = remote.vastUsd[shortName(v?.name ?? g.label)] ?? null;
+    const vast = remote.vast[shortName(v?.name ?? g.label)] ?? null;
+    const auto = vast?.status === 'ok' ? vast.median : null;
     const rentalUsd = g.rentalUsdManual > 0 ? g.rentalUsdManual : auto;
     return {
       id: g.id,
@@ -166,6 +167,7 @@ function compareRows(gpus: GpuView[]): CompareRow[] {
       rentalKrwPerH: rentalUsd === null ? null : rentalNetKrwPerHour(rentalUsd, p),
       rentalUsd,
       rentalSource: g.rentalUsdManual > 0 ? 'manual' : auto !== null ? 'vast' : null,
+      vast,
     };
   });
 }
@@ -420,7 +422,11 @@ async function refreshRemote(includeVast: boolean): Promise<void> {
       ? fetchMarketChart(c.coingeckoId).then((j) => { priceSeries = parseMarketChart(j); }).catch((e) => errors.push(`시세 차트: ${(e as Error).message}`))
       : null,
     ...(includeVast
-      ? models.map((m) => fetchVastMedian(m).then((v) => { remote.vastUsd[m] = v; }).catch((e) => errors.push(`Vast ${m}: ${(e as Error).message}`)))
+      ? models.map((m) =>
+          fetchVastStats({ gpuName: m, verifiedOnly: settings.profit.vastVerifiedOnly, type: settings.profit.vastType, regions: settings.profit.vastRegions.split(',') }, now)
+            .then((v) => { remote.vast[m] = v; })
+            .catch((e) => errors.push(`Vast ${m}: ${(e as Error).message}`)),
+        )
       : []),
   ]);
   remote.updatedAt = now;
@@ -527,6 +533,8 @@ function validatePatch(p: Partial<Settings>): string | null {
     return '안전 설정 값이 올바르지 않습니다 (경고 < 정지 ≤ 95°C, 팬 판정 ≥ 2초)';
   }
   const pr = next.profit;
+  if (!['on-demand', 'interruptible'].includes(pr.vastType)) return 'Vast 매물 유형이 올바르지 않습니다';
+  if (!/^\s*([A-Za-z]{2}(\s*,\s*[A-Za-z]{2})*)?\s*$/.test(pr.vastRegions)) return 'Vast 지역은 국가 코드 쉼표 목록(예: KR,JP)이어야 합니다';
   if (![pr.krwPerKwh, pr.krwPerUsd, pr.vastHostShare, pr.rentalPowerW, pr.reviewPrlDropPct, pr.baselinePrlUsd].every((v) => Number.isFinite(v) && v >= 0)) {
     return '수익 설정 값이 올바르지 않습니다';
   }
@@ -537,6 +545,8 @@ function applyPatch(p: Partial<Settings>): string | null {
   const err = validatePatch(p);
   if (err) return err;
   const coinChanged = p.coin !== undefined && p.coin !== settings.coin;
+  const vastKey = (x: Settings) => `${x.profit.vastVerifiedOnly}|${x.profit.vastType}|${x.profit.vastRegions}`;
+  const vastChanged = vastKey(mergeSettings(settings, p)) !== vastKey(settings);
   settings = mergeSettings(settings, p);
   if (coinChanged) {
     // 코인이 바뀌면 시세 기준가·장부 기준점을 새로 잡는다
@@ -549,6 +559,11 @@ function applyPatch(p: Partial<Settings>): string | null {
   saveSettings();
   applyLoginItem();
   updater?.setIntervalMin(settings.updateIntervalMin);
+  if (vastChanged) {
+    // 필터가 바뀌면 이전 조건의 시세를 버리고 바로 다시 조회
+    remote.vast = {};
+    void refreshRemote(true);
+  }
   return null;
 }
 
