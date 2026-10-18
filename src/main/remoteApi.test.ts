@@ -32,6 +32,10 @@ function handlers(log: string[] = []): RemoteHandlers {
       log.push(`stop ${accept.join(',')}`);
       return null;
     },
+    async setGpu(id, mine) {
+      log.push(`gpu ${id} ${mine}`);
+      return null;
+    },
     saveSettings(patch: Partial<Settings>) {
       log.push(`settings ${JSON.stringify(patch)}`);
       return null;
@@ -117,6 +121,15 @@ describe('remote API: writing', () => {
     expect((await call('POST', '/v1/miner/stop', { token: READ, body: {} })).status).toBe(401);
     expect((await call('POST', '/v1/miner/stop', { token: WRITE, body: { accept: ['stop'] } })).status).toBe(200);
     expect(log).toEqual(['stop stop']);
+  });
+
+  it('per-GPU mining needs the write token and a boolean', async () => {
+    const log: string[] = [];
+    const { call } = await serve(WRITE, log);
+    expect((await call('POST', '/v1/miner/gpu', { token: READ, body: { id: '00000000:01:00.0', mine: false } })).status).toBe(401);
+    expect((await call('POST', '/v1/miner/gpu', { token: WRITE, body: { id: '00000000:01:00.0', mine: 'no' } })).status).toBe(400);
+    expect((await call('POST', '/v1/miner/gpu', { token: WRITE, body: { id: '00000000:01:00.0', mine: false } })).status).toBe(200);
+    expect(log).toEqual(['gpu 00000000:01:00.0 false']);
   });
 
   it('asks the client for consent instead of starting silently', async () => {

@@ -426,6 +426,7 @@ function registerIpc(): void {
   ipcMain.handle('miner:start', routed(() => core.startMining(dialogConfirm), '/v1/miner/start', () => ({})));
   ipcMain.handle('miner:stop', routed(() => core.stopMining(dialogConfirm), '/v1/miner/stop', () => ({})));
   ipcMain.handle('miner:importTask', () => (remote ? LOCAL_ONLY : core.importMinerTask()));
+  ipcMain.handle('miner:gpu', routed((id, mine) => core.setGpuMining(String(id), mine === true, dialogConfirm), '/v1/miner/gpu', (id, mine) => ({ id: String(id), mine: mine === true })));
   // 예약 작업 끄기: 실행 파일 방식으로 바꾼 뒤 그 작업이 채굴기를 하나 더 띄우지 않게 (사용자 확인 후)
   ipcMain.handle('miner:disableTask', async () => {
     if (remote) return LOCAL_ONLY;

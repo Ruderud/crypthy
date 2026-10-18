@@ -31,6 +31,7 @@ const api: Api = {
   stopMining: () => ipcRenderer.invoke('miner:stop'),
   importMinerTask: () => ipcRenderer.invoke('miner:importTask'),
   disableMinerTask: () => ipcRenderer.invoke('miner:disableTask'),
+  setGpuMining: (id, mine) => ipcRenderer.invoke('miner:gpu', id, mine),
   minerLog: () => ipcRenderer.invoke('miner:log'),
   pickPath: (kind, current) => ipcRenderer.invoke('dialog:pickPath', kind, current),
 };

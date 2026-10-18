@@ -81,6 +81,7 @@ async function main(): Promise<void> {
       charts: core.chartsView,
       start: (accept) => core.startMining(acceptFrom(accept)),
       stop: (accept) => core.stopMining(acceptFrom(accept)),
+      setGpu: (id, mine, accept) => core.setGpuMining(id, mine, acceptFrom(accept)),
       saveSettings: core.saveSettingsPatch,
       clearHold: core.clearHold,
       addSale: core.addSaleRecord,

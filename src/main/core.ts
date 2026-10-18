@@ -11,8 +11,8 @@ import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, r
 import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
 import {
-  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, isUsableProcessName, parseTaskStatus, parseTaskXml, spawnOptions, startBlocker,
-  unwrapConhost, validateControl, type Platform,
+  autoStartDecision, controlProcessName, createMinerControl, decodeConsole, gpuSelectionEnv, isUsableProcessName, parseTaskStatus, parseTaskXml, spawnOptions,
+  startBlocker, stripGpuArgs, unwrapConhost, validateControl, type Platform,
 } from './minerControl';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
@@ -186,8 +186,16 @@ export function alertOnce(a: Alert, withinMs: number): void {
 // GPU id 가 곧 PCI bus id 이므로 nvidia-smi 가 실패해도 채굴기 API 장치와 매칭할 수 있다
 const deviceOf = (g: GpuConfig) => (lastStats ? matchSrbDevice(lastStats.devices, parsePciBus(g.id)) : undefined);
 
+/** GPU 별 채굴 선택은 실행 파일 방식에서만 적용된다 (채굴기 환경 변수를 이 앱이 정하므로) */
+const selectionActive = () => settings.minerControl.mode === 'direct';
+/** 채굴하지 않기로 고른 GPU (선택이 적용되는 방식일 때만) */
+const mineOff = (g: GpuConfig | undefined) => !!g && selectionActive() && g.mine === false;
+const gpuOf = (busId: string) => settings.gpus.find((g) => g.id === busId);
+/** 채굴 비용에 넣는 전력: 채굴하지 않기로 고른 GPU 의 전력은 뺀다 */
+const miningWatts = () => lastNv.reduce((a, n) => a + (mineOff(gpuOf(n.busId)) ? 0 : (n.powerW ?? 0)), 0);
+
 function isMining(g: GpuConfig): boolean {
-  if (!running) return false;
+  if (!running || mineOff(g)) return false;
   const dev = deviceOf(g);
   if (dev) return (dev.hashrate ?? 0) > 0;
   // 채굴기 API 에 장치 정보가 없으면, 이번 세션에 보인 GPU 는 보수적으로 채굴 중이라고 본다
@@ -214,6 +222,8 @@ function gpuViews(): GpuView[] {
       mining: isMining(g),
       hold: runtime.holds[g.id] ?? null,
       present: !!nv,
+      mine: g.mine !== false,
+      selectable: selectionActive() && !!nv,
     };
   });
 }
@@ -247,7 +257,8 @@ function profitView(gpus: GpuView[]): ProfitView {
   const sum = summarize(ledger, now, usd, p);
   const supported = !!kryptexPool();
   const hash = lastStats?.totalHashrate ?? null;
-  const watts = gpus.reduce((s, g) => s + (g.present ? (g.powerW ?? 0) : 0), 0);
+  // 채굴하지 않기로 고른 GPU 의 전력은 비용에서 뺀다
+  const watts = gpus.reduce((s, g) => s + (g.present && !(g.selectable && !g.mine) ? (g.powerW ?? 0) : 0), 0);
   const liveCoinPerH = hash && remote.pool ? prlPerHour(hash, remote.pool) : null;
   return {
     supported,
@@ -312,7 +323,7 @@ function pnlView(): PnlView {
     trackStart: book.trackStart,
     bootstrapped: book.bootstrapped,
     backfill: book.backfill && { from: book.backfill.from, to: book.backfill.to, qty: book.backfill.qty, watts: book.backfill.watts, auto: book.backfill.auto },
-    currentWatts: Math.round(lastNv.reduce((a, g) => a + (g.powerW ?? 0), 0)),
+    currentWatts: Math.round(miningWatts()),
     logDir: pnlDir(),
   };
 }
@@ -342,7 +353,7 @@ function autoBackfill(): void {
   const book = bookView();
   const ts = book.trackStart;
   if (!ts || book.bootstrapped || !(ts.total > 0) || !kryptexPool()) return;
-  const watts = Math.round(lastNv.reduce((a, g) => a + (g.powerW ?? 0), 0));
+  const watts = Math.round(miningWatts());
   const rate = lastStats?.totalHashrate && remote.pool ? prlPerHour(lastStats.totalHashrate, remote.pool) : null;
   const paid = remote.payouts.map((p) => p.at).filter((t): t is number => typeof t === 'number' && Number.isFinite(t));
   const from = estimateBackfillFrom({ to: ts.at, qty: ts.total, coinPerHour: rate, earliestPayoutAt: paid.length ? Math.min(...paid) : null });
@@ -562,7 +573,29 @@ export async function startMining(confirm: Confirm): Promise<string | null> {
   if (controlBlocker()) return controlBlocker();
   if (settings.minerControl.mode === 'direct' && !mockHw && !fs.existsSync(settings.minerControl.exe)) return `실행 파일이 없습니다: ${settings.minerControl.exe}`;
   startingUntil = Date.now() + STARTING_MS;
-  const err = await minerControl.start(settings.minerControl);
+  // GPU 별 채굴: 고른 GPU 만 채굴기에 보이게 (실행 파일 방식)
+  let mc = settings.minerControl;
+  let gpuEnv: Record<string, string> | undefined;
+  if (selectionActive()) {
+    const present = settings.gpus.flatMap((g) => {
+      const nv = nvOf(g.id);
+      return nv ? [{ index: nv.index, uuid: nv.uuid, mine: g.mine !== false }] : [];
+    });
+    const sel = present.length ? gpuSelectionEnv(present) : null;
+    if (sel === 'none') {
+      startingUntil = 0;
+      return '채굴할 GPU 를 하나 이상 켜 주세요';
+    }
+    if (sel) {
+      gpuEnv = sel;
+      const stripped = stripGpuArgs(mc.args);
+      if (stripped.removed.length) {
+        mc = { ...mc, args: stripped.args };
+        pushAlert({ ts: Date.now(), level: 'info', code: 'gpu_args_removed', message: `GPU 별 채굴 선택을 쓰는 동안 인자 ${stripped.removed.join(', ')} 는 빼고 실행합니다` }, false);
+      }
+    }
+  }
+  const err = await minerControl.start(mc, gpuEnv);
   if (err) {
     startingUntil = 0;
     return err;
@@ -571,6 +604,32 @@ export async function startMining(confirm: Confirm): Promise<string | null> {
   pushAlert({ ts: Date.now(), level: 'info', code: 'miner_started', message: '채굴 켜기 (사용자)' }, false);
   env.onChange();
   return null;
+}
+
+/**
+ * GPU 별 채굴 켜기·끄기. 채굴 중이면(실행 파일 방식) 새 선택으로 다시 시작하고, 하나도 안 남으면 끈다.
+ * 끄기 확인은 묻지 않는다(사용자가 방금 고름). 켜기의 동의·위험 정지 확인은 그대로 받는다.
+ */
+export async function setGpuMining(id: string, mine: boolean, confirm: Confirm): Promise<string | null> {
+  const g = settings.gpus.find((x) => x.id === id);
+  if (!g) return '알 수 없는 GPU 입니다';
+  if (g.mine === mine) return null;
+  g.mine = mine;
+  saveSettings();
+  env.log.info(`gpu ${g.label} mining ${mine ? 'on' : 'off'}`);
+  if (!selectionActive() || !running) {
+    env.onChange();
+    return null;
+  }
+  const accept: Confirm = (k, d) => (k === 'stop' ? Promise.resolve(true) : confirm(k, d));
+  const stopErr = await stopMining(accept);
+  if (stopErr) return `다시 시작하려고 끄지 못했습니다: ${stopErr}`;
+  if (!settings.gpus.some((x) => x.mine !== false && nvOf(x.id))) {
+    env.onChange();
+    return null;
+  }
+  running = false;
+  return startMining(accept);
 }
 
 /** 위험·비용 고지에 동의했는지 */
@@ -786,7 +845,7 @@ export async function poll(): Promise<void> {
   }
 
   if (lastPollAt) {
-    const watts = lastNv.reduce((s, g) => s + (g.powerW ?? 0), 0);
+    const watts = miningWatts();
     const dt = Math.min(now - lastPollAt, 10_000);
     // 같은 시간의 해시레이트 기반 추정 채굴량 (풀 통계·채굴기 API 가 있을 때만)
     const est = lastStats?.totalHashrate && remote.pool ? (prlPerHour(lastStats.totalHashrate, remote.pool) * dt) / 3_600_000 : 0;
@@ -814,10 +873,23 @@ export async function poll(): Promise<void> {
     safetyState, settings.safety, holdSet(), now,
   );
   safetyState = result.state;
-  result.alerts.forEach((a) => pushAlert(a));
-  for (const e of result.exclude) runtime.holds[e.id] = e.reason;
-  if (result.exclude.length) saveRuntime();
-  await enforceHolds(result.exclude, now);
+  // 채굴하지 않기로 고른 GPU 에서 해시레이트가 나오면 채굴기가 GPU 선택(CUDA_VISIBLE_DEVICES)을 따르지 않는 것
+  for (const g of settings.gpus) {
+    const h = mineOff(g) && running ? (deviceOf(g)?.hashrate ?? 0) : 0;
+    if (h > 0) {
+      alertOnce({ ts: now, level: 'warn', code: 'gpu_selection_ignored', gpu: g.id, message: `${g.label}: 채굴하지 않기로 골랐는데 채굴 중입니다 — 채굴기가 GPU 선택(CUDA_VISIBLE_DEVICES)을 따르지 않습니다. 채굴기 인자로 GPU 를 지정하세요` }, 6 * 3600_000);
+    }
+  }
+  // 채굴하지 않기로 고른 GPU 의 위험 경보는 2초마다 반복되지 않게 아래의 경고 하나(10분 간격)로 대신한다
+  result.alerts.filter((a) => !(a.level === 'critical' && a.gpu && mineOff(gpuOf(a.gpu)))).forEach((a) => pushAlert(a));
+  // 채굴하지 않기로 고른 GPU 의 위험은 알리기만 한다: 그 GPU 는 채굴기가 쓰지 않으므로 채굴기를 멈춰도 소용없고 보류도 걸지 않는다
+  const trips = result.exclude.filter((e) => !mineOff(gpuOf(e.id)));
+  for (const e of result.exclude.filter((x) => !trips.includes(x))) {
+    alertOnce({ ts: now, level: 'warn', code: 'safety_not_mining', gpu: e.id, message: `${gpuOf(e.id)?.label ?? e.id}: ${e.reason} — 채굴하지 않는 GPU 라 채굴기는 그대로 둡니다. 카드 상태를 확인하세요` }, 10 * 60_000);
+  }
+  for (const e of trips) runtime.holds[e.id] = e.reason;
+  if (trips.length) saveRuntime();
+  await enforceHolds(trips, now);
 
   env.onChange();
 }
@@ -1043,7 +1115,7 @@ export const isAllowedLink = (url: unknown): url is string => typeof url === 'st
 export async function registerPowerLimits(): Promise<string | null> {
   if (MOCK) return 'mock 모드에서는 예약 작업을 등록하지 않습니다';
   try {
-    writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
+    writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus.filter((g) => !mineOff(g))));
     await power.register(env.resourcesDir, file('power-limits.json'), powerUser());
     powerRegistered = await power.isRegistered();
     await sleep(4000);
@@ -1056,7 +1128,7 @@ export async function registerPowerLimits(): Promise<string | null> {
 
 export async function applyPowerLimits(): Promise<string | null> {
   if (MOCK) return 'mock 모드에서는 전력 제한을 적용하지 않습니다';
-  writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus));
+  writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus.filter((g) => !mineOff(g))));
   if (!powerRegistered) return '먼저 전력 제한 등록을 1회 실행해 주세요';
   try {
     await power.run();

@@ -29,6 +29,8 @@ export interface RemoteHandlers {
   state(): AppState;
   charts(): ChartsView;
   start(accept: ConfirmKind[]): Promise<string | null>;
+  /** GPU 별 채굴 켜기·끄기 (채굴 중이면 다시 시작) */
+  setGpu(id: string, mine: boolean, accept: ConfirmKind[]): Promise<string | null>;
   stop(accept: ConfirmKind[]): Promise<string | null>;
   saveSettings(patch: Partial<Settings>): string | null;
   clearHold(id: string): void;
@@ -182,6 +184,11 @@ export function createRemoteApiHandler(cfg: RemoteApiConfig, h: RemoteHandlers):
           return result(await h.start(acceptOf(body)));
         case '/v1/miner/stop':
           return result(await h.stop(acceptOf(body)));
+        case '/v1/miner/gpu': {
+          const b = body as { id?: unknown; mine?: unknown };
+          if (typeof b?.id !== 'string' || typeof b.mine !== 'boolean') return send(400, { error: 'bad_request' });
+          return result(await h.setGpu(b.id, b.mine, acceptOf(body)));
+        }
         case '/v1/settings':
           return result(h.saveSettings(sanitizePatch((body as { patch?: unknown })?.patch)));
         case '/v1/holds/clear': {
