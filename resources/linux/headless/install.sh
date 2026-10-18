@@ -1,6 +1,6 @@
 #!/bin/sh
 # Crypthy 헤드리스 설치 (Ubuntu Server 등 화면 없는 Linux). root 로 1회 실행한다:
-#   sudo ./install.sh [--user NAME] [--bind IP] [--port N] [--enable-write] [--accept-risk] [--power-limits]
+#   sudo ./install.sh [--user NAME] [--bind IP] [--port N] [--enable-write] [--accept-risk] [--power-limits] [--shared-ledger DIR]
 #
 #  - 앱 파일은 /opt/crypthy-headless (root 소유), 데이터·토큰은 /var/lib/crypthy-headless (실행 사용자만 읽기)
 #  - systemd 시스템 유닛 crypthy-headless.service 를 지정한 사용자 권한으로 돌린다 (root 아님)
@@ -18,6 +18,7 @@ BIND=127.0.0.1
 PORT=47321
 EXTRA=""
 POWER=0
+SHARED=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
     --enable-write) EXTRA="$EXTRA --enable-write"; shift ;;
     --accept-risk) EXTRA="$EXTRA --accept-risk"; shift ;;
     --power-limits) POWER=1; shift ;;
+    --shared-ledger) SHARED="${2:-}"; shift 2 ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -43,6 +45,12 @@ id "$RUN_USER" >/dev/null 2>&1 || { echo "no such user: $RUN_USER" >&2; exit 2; 
 case "$BIND" in ''|*[!0-9a-fA-F:.]*) echo "--bind must be an IP address" >&2; exit 2 ;; esac
 case "$PORT" in ''|*[!0-9]*) echo "--port must be a number" >&2; exit 2 ;; esac
 [ "${#PORT}" -ge 4 ] && [ "${#PORT}" -le 5 ] || { echo "--port must be 1024-65535" >&2; exit 2; }
+# 공유 장부 폴더 (듀얼부팅의 Windows 와 같은 PnL): 절대 경로, 유닛 파일에 들어가므로 안전한 문자만
+if [ -n "$SHARED" ]; then
+  case "$SHARED" in /*) ;; *) echo "--shared-ledger must be an absolute path" >&2; exit 2 ;; esac
+  case "$SHARED" in *[!A-Za-z0-9._/@+-]*) echo "--shared-ledger: unsupported characters" >&2; exit 2 ;; esac
+  EXTRA="$EXTRA --shared-ledger $SHARED"
+fi
 
 NODE=$(command -v node || true)
 if [ -z "$NODE" ]; then echo "Node.js 18+ is required: sudo apt install nodejs" >&2; exit 1; fi
@@ -90,7 +98,7 @@ Restart=on-failure
 RestartSec=10
 NoNewPrivileges=yes
 ProtectSystem=full
-ReadWritePaths=$DATA
+ReadWritePaths=$DATA${SHARED:+ $SHARED}
 PrivateTmp=yes
 
 [Install]

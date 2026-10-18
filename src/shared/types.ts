@@ -27,6 +27,8 @@ export interface Settings {
   safetyKill: boolean;
   /** 채굴 켜기·끄기 (사용자가 구성한 채굴기만 실행·정지) */
   minerControl: MinerControlConfig;
+  /** 공유 장부 폴더 (듀얼부팅 등 여러 OS 가 같은 PnL 을 쓸 때). 비우면 이 PC 장부만. 기기별 설정 */
+  sharedLedgerDir: string;
   /** 로그인 시 앱 자동 실행 */
   openAtLogin: boolean;
   /** 업데이트 확인 주기(분). 30~1440, 기본 60 */
@@ -289,6 +291,20 @@ export interface ChartsView {
   symbol: string;
 }
 
+export interface SharedLedgerView {
+  dir: string;
+  /** 폴더가 보이고 읽기·쓰기가 되는지 */
+  ok: boolean;
+  error: string | null;
+  instanceId: string;
+  /** 공유 폴더에 이벤트 파일이 있는 인스턴스 id 들 */
+  instances: string[];
+  /** 마지막 동기화 시각 */
+  at: number | null;
+  /** 서로 다른 인스턴스의 전력 기록이 시간상 겹친 구간 수 (0 이 정상) */
+  overlaps: number;
+}
+
 /** 원격 호스트(헤드리스 Crypthy)에 붙어 있을 때 */
 export interface RemoteView {
   url: string;
@@ -315,6 +331,8 @@ export interface AppState {
   mock: boolean;
   /** 원격 호스트 화면을 보고 있으면 그 정보, 이 PC 화면이면 null */
   remote?: RemoteView | null;
+  /** 공유 장부 상태 (켜져 있을 때) */
+  sharedLedger: SharedLedgerView | null;
   setup: SetupView;
   miner: MinerView;
   gpus: GpuView[];

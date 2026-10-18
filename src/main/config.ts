@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   minerApi: { adapter: 'srbminer', port: 21550 },
   safetyKill: true,
   minerControl: { mode: 'none', taskName: '', unit: '', exe: '', args: '', confirmStop: true },
+  sharedLedgerDir: '',
   openAtLogin: false,
   updateIntervalMin: 60,
   gpus: [],

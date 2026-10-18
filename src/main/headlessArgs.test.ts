@@ -19,6 +19,12 @@ describe('headless arguments', () => {
     expect(parseHeadlessArgs(['--enable-write'], {}).enableWrite).toBe(true);
   });
 
+  it('takes an absolute shared ledger folder', () => {
+    expect(parseHeadlessArgs(['--shared-ledger', '/mnt/crypthy'], {}).sharedLedger).toBe('/mnt/crypthy');
+    expect(parseHeadlessArgs([], {}).sharedLedger).toBeNull();
+    expect(() => parseHeadlessArgs(['--shared-ledger', 'relative/dir'], {})).toThrow();
+  });
+
   it('rejects unknown flags, missing values and bad ports', () => {
     expect(() => parseHeadlessArgs(['--bind'], {})).toThrow();
     expect(() => parseHeadlessArgs(['--bind', '--enable-write'], {})).toThrow();

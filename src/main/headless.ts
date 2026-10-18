@@ -65,6 +65,7 @@ async function main(): Promise<void> {
     version,
     resourcesDir: path.join(__dirname, '..', '..', 'resources'),
     log,
+    sharedLedgerDir: opts.sharedLedger ?? undefined,
     notify: (a: Alert) => log[a.level === 'critical' ? 'error' : a.level === 'warn' ? 'warn' : 'info'](`alert ${a.code}${a.gpu ? ` ${a.gpu}` : ''}: ${a.message}`),
     onChange: () => undefined,
   });

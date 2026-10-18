@@ -21,4 +21,5 @@ sudo -u "$USER" crypthy-headless --print-tokens                          # token
 - `--power-limits` also installs the GPU power-limit service (uses the same sudo, no pkexec prompt).
 - To start a miner through a systemd user unit, enable lingering once: `sudo loginctl enable-linger "$USER"`.
 - No automatic updates: download the new tarball and run `install.sh` again (data is kept).
+- Dual boot with Windows: `--shared-ledger /mnt/crypthy` (a folder the Windows Crypthy also uses as its shared ledger folder) keeps one PnL for both OSes.
 - Containers (Docker, containerd, Vast.ai's `kaalia`) are never stopped by the safety watch.

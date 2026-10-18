@@ -13,6 +13,8 @@ export interface HeadlessOptions {
   acceptRisk: boolean;
   printTokens: boolean;
   help: boolean;
+  /** 공유 장부 폴더 (듀얼부팅의 다른 OS 와 같은 PnL). 없으면 settings.json 의 값 */
+  sharedLedger: string | null;
 }
 
 export const HEADLESS_USAGE = `crypthy-headless — Crypthy without a screen (remote API for another Crypthy)
@@ -22,6 +24,7 @@ export const HEADLESS_USAGE = `crypthy-headless — Crypthy without a screen (re
   --port N          port (default ${STATUS_PORT})
   --enable-write    allow remote start/stop, settings, clearing holds (separate write token)
   --accept-risk     accept the mining risk and cost notice (needed before the first start)
+  --shared-ledger DIR  shared PnL folder used by the other OS of a dual boot (e.g. /mnt/crypthy)
   --print-tokens    print the read/write tokens and exit
   --help
 `;
@@ -42,12 +45,14 @@ export function parseHeadlessArgs(argv: string[], env: NodeJS.ProcessEnv, file: 
     if (v === undefined || v.startsWith('--')) throw new Error(`${name} 에 값이 필요합니다`);
     return v;
   };
-  const known = new Set(['--data-dir', '--bind', '--port', '--enable-write', '--accept-risk', '--print-tokens', '--help', '-h']);
+  const known = new Set(['--data-dir', '--bind', '--port', '--shared-ledger', '--enable-write', '--accept-risk', '--print-tokens', '--help', '-h']);
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith('-')) continue;
     if (!known.has(argv[i])) throw new Error(`알 수 없는 인자: ${argv[i]}`);
-    if (['--data-dir', '--bind', '--port'].includes(argv[i])) i++;
+    if (['--data-dir', '--bind', '--port', '--shared-ledger'].includes(argv[i])) i++;
   }
+  const shared = value('--shared-ledger');
+  if (shared !== undefined && !path.isAbsolute(shared)) throw new Error('--shared-ledger 는 절대 경로여야 합니다');
   const portRaw = value('--port') ?? (typeof file.port === 'number' ? String(file.port) : undefined);
   const port = portRaw === undefined ? STATUS_PORT : Number(portRaw);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('포트는 1024~65535 정수여야 합니다');
@@ -59,5 +64,6 @@ export function parseHeadlessArgs(argv: string[], env: NodeJS.ProcessEnv, file: 
     acceptRisk: flag('--accept-risk'),
     printTokens: flag('--print-tokens'),
     help: flag('--help') || flag('-h'),
+    sharedLedger: shared ?? null,
   };
 }
