@@ -34,17 +34,31 @@ export function parseTime(v: unknown): number | null {
   return null;
 }
 
+/**
+ * 지급 목록. 키는 지급 시각 + 금액으로 만든다: Kryptex 는 지급 중(txid 없음)과 지급 완료(txid 있음)를 같은 항목으로 돌려주므로
+ * txid 를 키로 쓰면 상태가 바뀔 때 같은 지급을 두 번 센다 (0.5.0 이하의 누적 채굴량 과다 원인).
+ */
 export function parseKryptexPayouts(json: unknown): Payout[] {
   const results = isObj(json) && Array.isArray(json.results) ? json.results.filter(isObj) : [];
   const out: Payout[] = [];
   for (const r of results) {
     const amount = num(r.amount) ?? num(r.value);
     if (amount === null) continue;
-    const id = r.txid ?? r.tx_hash ?? r.hash ?? r.id;
     const time = r.created ?? r.timestamp ?? r.time ?? r.date;
-    out.push({ key: String(id ?? `${String(time)}:${amount}`), amount, at: parseTime(time) });
+    const id = r.txid ?? r.tx_hash ?? r.hash ?? r.id;
+    const key = time !== undefined && time !== null && time !== '' ? `${String(time)}:${amount}` : String(id ?? `?:${amount}`);
+    const status = typeof r.status === 'string' ? r.status.toUpperCase() : '';
+    // 실패·취소된 지급은 잔고로 돌아가므로 지급으로 세지 않는다
+    if (/FAIL|CANCEL|REJECT|REVERT/.test(status)) continue;
+    out.push({ key, amount, at: parseTime(time), pending: status !== '' && status !== 'FINISHED' });
   }
   return out;
+}
+
+/** 지급 목록이 전부 왔는지 (count 와 받은 개수). 전부일 때만 지급 합계를 목록으로 다시 맞춘다 */
+export function payoutsComplete(json: unknown): boolean {
+  if (!isObj(json) || !Array.isArray(json.results)) return false;
+  return typeof json.count === 'number' && json.results.length >= json.count && !json.next;
 }
 
 export function parseKryptexPool(json: unknown): PoolStats | null {
@@ -70,7 +84,7 @@ export async function fetchKryptex(ticker: string, wallet: string) {
     getJson(`${base}/miner/payouts/${addr}`),
     getJson(`${base}/pool/stats`),
   ]);
-  return { balance: parseKryptexBalance(bal), payouts: parseKryptexPayouts(pay), pool: parseKryptexPool(pool) };
+  return { balance: parseKryptexBalance(bal), payouts: parseKryptexPayouts(pay), payoutsComplete: payoutsComplete(pay), pool: parseKryptexPool(pool) };
 }
 
 // ---- CoinGecko ----

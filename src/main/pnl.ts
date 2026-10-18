@@ -29,6 +29,8 @@ export type PnlEvent = EventBase & (
   | { type: 'price'; coin: string; usd: number; krwPerUsd: number }
   | { type: 'sale'; coin: string; qty: number; proceedsKrw: number; feeKrw: number; venue: string; note: string }
   | { type: 'bootstrap'; coin: string; from: number; to: number; qty: number; watts: number; kwh: number; auto?: boolean; days?: Record<string, BackfillDay> }
+  /** 채굴량 바로잡기 (qty 는 음수, at 의 날짜에서 krwPerCoin 으로 뺀다). 0.5.1: 중복으로 센 지급 */
+  | { type: 'adjust'; coin: string; qty: number; at: number; krwPerCoin: number | null; reason: string }
 );
 
 /** 같은 이벤트인지 판단하는 키: id 가 있으면 id, 없으면(0.4.0 이전) 키를 정렬한 내용 */
@@ -38,7 +40,7 @@ export function eventKey(ev: PnlEvent): string {
   return `c:${JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]))}`;
 }
 
-const EVENT_TYPES = new Set(['pool', 'payout', 'mined', 'energy', 'price', 'sale', 'bootstrap']);
+const EVENT_TYPES = new Set(['pool', 'payout', 'mined', 'energy', 'price', 'sale', 'bootstrap', 'adjust']);
 
 /** 한 줄 추가. 상한을 넘으면 먼저 .1 로 회전. 실패해도 예외를 던지지 않는다(다음 이벤트에서 다시 시도) */
 export function appendEvent(file: string, ev: PnlEvent, maxBytes = EVENTS_MAX_BYTES): boolean {
@@ -159,6 +161,8 @@ export interface PnlBook {
   lastMinedAt: number | null;
   /** 풀에 아직 반영되지 않은 실시간 추정 채굴량 (`coin|day` → 수량). 풀 증가가 확인되면 비운다 */
   pending: Record<string, number>;
+  /** 0.5.1: 이 PC 장부에서 중복 지급분을 뺐는지 (한 번만) */
+  dupFixed?: boolean;
 }
 
 export const emptyBook = (): PnlBook => ({ version: 1, days: {}, trackStart: null, bootstrapped: false, backfill: null, lastMinedAt: null, pending: {} });
@@ -171,6 +175,7 @@ export function loadBook(raw: unknown): PnlBook {
   const r = raw as Partial<PnlBook>;
   if (r.trackStart && Number.isFinite(r.trackStart.at) && Number.isFinite(r.trackStart.total)) b.trackStart = { at: r.trackStart.at, total: r.trackStart.total };
   b.bootstrapped = r.bootstrapped === true;
+  if (r.dupFixed === true) b.dupFixed = true;
   if (Number.isFinite(r.lastMinedAt)) b.lastMinedAt = r.lastMinedAt as number;
   for (const [k, v] of Object.entries(r.pending ?? {})) if (/^[^|]+\|\d{4}-\d{2}-\d{2}$/.test(k) && num(v) > 0) b.pending[k] = num(v);
   const f = r.backfill;
@@ -209,6 +214,72 @@ export function addMined(b: PnlBook, coin: string, at: number, qty: number, krwP
   d.mined += qty;
   if (krwPerCoin !== null && krwPerCoin > 0) d.revenueKrw += qty * krwPerCoin;
   else d.unpriced += qty;
+}
+
+/**
+ * 채굴량 바로잡기: at 의 날짜부터 빼고, 그날 양이 모자라면 그 전 날들에서 이어서 뺀다 (증가분이 여러 날에 나뉘어 기록됐을 수 있다).
+ * 매출은 at 의 날은 krwPerCoin 으로, 이어서 뺀 날은 그날 평균 단가로. 소급분(backfill)은 건드리지 않는다. 빼지 못한 양을 돌려준다
+ */
+export function adjustMined(b: PnlBook, coin: string, at: number, qty: number, krwPerCoin: number | null): number {
+  if (!(qty < 0)) return 0;
+  let left = -qty;
+  const first = dateKey(at);
+  const keys = Object.values(b.days).filter((d) => d.coin === coin && d.day <= first && d.mined > 0).map((d) => d.day).sort().reverse();
+  for (const k of keys) {
+    const d = day(b, coin, k);
+    const take = Math.min(left, d.mined);
+    const priced = d.mined - d.unpriced;
+    const unit = k === first && krwPerCoin !== null && krwPerCoin > 0 ? krwPerCoin : priced > 0 ? d.revenueKrw / priced : 0;
+    const fromUnpriced = unit > 0 ? Math.max(0, take - priced) : take;
+    d.unpriced = Math.max(0, d.unpriced - fromUnpriced);
+    d.revenueKrw = Math.max(0, d.revenueKrw - (take - fromUnpriced) * unit);
+    d.mined -= take;
+    left -= take;
+    if (left <= 1e-12) return 0;
+  }
+  return left;
+}
+
+/**
+ * 같은 지급을 두 번 센 곳 찾기 (0.5.0 이하): 금액이 같고 시각이 하루 안인 지급 이벤트가 키만 다르게 또 나오면 중복.
+ * 그 지급과 같은 관측(같은 시각·같은 인스턴스)의 채굴 증가분에서 그 금액만큼이 과다 계상이다.
+ */
+export interface PayoutDuplicate {
+  /** 중복으로 센 지급 금액 (지급 합계에서 뺄 양) */
+  amount: number;
+  /** 바로잡기 이벤트 id (인스턴스가 달라도 같은 값 → 공유 장부에서 한 번만) */
+  id: string;
+  t: number;
+  src: string;
+  qty: number;
+  krwPerCoin: number | null;
+  /** 이미 바로잡기 이벤트가 있음 */
+  done: boolean;
+}
+
+export function findPayoutDuplicates(events: (PnlEvent & { src?: string })[], coin: string): PayoutDuplicate[] {
+  const seen: { key: string; amount: number; at: number | null; t: number }[] = [];
+  const adjusted = new Set(events.filter((e) => e.type === 'adjust').map((e) => e.id));
+  const out: PayoutDuplicate[] = [];
+  const used = new Map<string, number>();
+  for (const ev of events) {
+    if (ev.type !== 'payout' || ev.coin !== coin) continue;
+    // 지급 시각이 없으면 기록 시각으로 하루 안인지 본다
+    const when = (x: { at: number | null; t: number }) => x.at ?? x.t;
+    const dup = seen.find((p) => p.key !== ev.key && Math.abs(p.amount - ev.amount) < 1e-9 && Math.abs(when(p) - when(ev)) <= 86_400_000);
+    if (!seen.some((p) => p.key === ev.key)) seen.push({ key: ev.key, amount: ev.amount, at: ev.at, t: ev.t });
+    if (!dup) continue;
+    const src = ev.src ?? '';
+    const mined = events.find((m) => m.type === 'mined' && m.coin === coin && m.t === ev.t && (m.src ?? '') === src) as Extract<PnlEvent, { type: 'mined' }> | undefined;
+    if (!mined) continue;
+    const slot = `${src}|${ev.t}`;
+    const qty = Math.min(ev.amount, mined.qty - (used.get(slot) ?? 0));
+    if (!(qty > 0)) continue;
+    used.set(slot, (used.get(slot) ?? 0) + qty);
+    const id = `fix-payout-dup:${ev.t}:${ev.key}`;
+    out.push({ id, amount: ev.amount, t: ev.t, src, qty, krwPerCoin: mined.krwPerCoin, done: adjusted.has(id) });
+  }
+  return out;
 }
 
 /** from~to 를 로컬 날짜 경계(자정)로 자른 조각들 */
@@ -588,6 +659,9 @@ export function replayEvents(events: (PnlEvent & { src?: string })[], coin: stri
       case 'sale':
         if (ev.coin === coin) addSale(b, coin, ev.t, ev.qty, ev.proceedsKrw, ev.feeKrw);
         break;
+      case 'adjust':
+        if (ev.coin === coin) adjustMined(b, coin, ev.at, ev.qty, ev.krwPerCoin);
+        break;
       case 'bootstrap':
         if (ev.coin === coin && (!lastBoot || ev.t >= lastBoot.t)) lastBoot = ev;
         break;
@@ -674,6 +748,7 @@ export function eventsCsv(events: PnlEvent[]): string {
       case 'price': return [iso, e.type, e.coin, '', Math.round(e.usd * e.krwPerUsd * 100) / 100, `usd ${e.usd} fx ${e.krwPerUsd}`];
       case 'sale': return [iso, e.type, e.coin, e.qty, e.proceedsKrw - e.feeKrw, `${e.venue} ${e.note}`.trim()];
       case 'bootstrap': return [iso, e.type, e.coin, e.qty, '', `${e.auto ? 'auto ' : ''}estimated ${new Date(e.from).toISOString()}~${new Date(e.to).toISOString()} ${e.watts}W ${e.kwh.toFixed(3)}kWh`];
+      case 'adjust': return [iso, e.type, e.coin, e.qty, e.krwPerCoin === null ? '' : Math.round(e.qty * e.krwPerCoin), `${e.reason} for ${new Date(e.at).toISOString()}`];
     }
   });
   return [head, ...rows].map((r) => r.map(csvCell).join(',')).join('\n') + '\n';

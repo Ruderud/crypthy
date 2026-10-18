@@ -108,6 +108,17 @@ export interface Ledger {
   pendingMs: number;
   /** 마지막으로 받은 정상 시세 (시세 조회 실패 시 시각과 함께 사용) */
   lastPrice: { usd: number; at: number } | null;
+  /** 지급 키 방식 (2 = 시각+금액, 0.5.1). 그 전 장부는 한 번 바로잡는다 */
+  payoutKeys?: number;
+  /** 풀 진실값(잔고 + 지급 합)이 기록한 누적치보다 낮아진 시각과 마지막으로 낮게 본 시각. 계속 이어지면 누적치를 진실값으로 내린다 */
+  belowSince?: number | null;
+  belowLast?: number | null;
+  /** 누적치를 진실값으로 내린(바로잡은) 마지막 시각. 공유 장부에서 더 최근에 바로잡은 기준점을 낮더라도 받아들인다 */
+  correctedAt?: number;
+  /** 바로잡을 때 뺀 양: 바로잡기 전 버전이 쓴 기준점을 이만큼 낮춰 본다 */
+  legacyOffset?: number;
+  /** 마지막으로 본 풀 진실값 */
+  poolTotal?: number | null;
 }
 
 export interface Payout {
@@ -115,6 +126,8 @@ export interface Payout {
   amount: number;
   /** 지급 시각(ms). 응답에 없으면 null */
   at?: number | null;
+  /** 지급 중 (아직 전송 완료 아님) */
+  pending?: boolean;
 }
 
 const KEEP_DAYS = 62;
@@ -125,7 +138,7 @@ export const MIN_MATCHED_MS = 3 * 3_600_000;
 export const PRICE_STALE_MS = 30 * 60_000;
 
 export const emptyLedger = (): Ledger => ({
-  version: 2, lastTotal: null, paidTotal: 0, seenPayouts: [], days: {}, pendingKwh: 0, pendingMs: 0, lastPrice: null,
+  version: 2, lastTotal: null, paidTotal: 0, seenPayouts: [], days: {}, pendingKwh: 0, pendingMs: 0, lastPrice: null, payoutKeys: 2,
 });
 
 const emptyDay = (): DayEntry => ({ prl: 0, kwh: 0, matchedKwh: 0, matchedMs: 0, estPrl: 0 });
@@ -142,6 +155,10 @@ export function migrateLedger(raw: unknown): Ledger {
   l.lastTotal = typeof r.lastTotal === 'number' && Number.isFinite(r.lastTotal) ? r.lastTotal : null;
   l.paidTotal = num(r.paidTotal);
   l.seenPayouts = Array.isArray(r.seenPayouts) ? r.seenPayouts.filter((k) => typeof k === 'string') : [];
+  // 0.5.0 이하 장부는 한 번 바로잡도록 표시를 지운다 (새 장부만 처음부터 새 키)
+  if (r.payoutKeys !== 2) delete l.payoutKeys;
+  if (typeof r.correctedAt === 'number' && Number.isFinite(r.correctedAt)) l.correctedAt = r.correctedAt;
+  if (typeof r.legacyOffset === 'number' && Number.isFinite(r.legacyOffset)) l.legacyOffset = r.legacyOffset;
   if (r.lastPrice && Number.isFinite(r.lastPrice.usd) && Number.isFinite(r.lastPrice.at)) l.lastPrice = { usd: r.lastPrice.usd, at: r.lastPrice.at };
   const days = r.days && typeof r.days === 'object' ? r.days : {};
   for (const [k, v] of Object.entries(days)) {
@@ -186,13 +203,26 @@ function prune(l: Ledger): void {
  * (지급으로 잔액이 먼저 줄고 지급 내역은 나중에 보이는 경우에도 이중 계상하지 않음)
  * 첫 조회는 기준점만 잡고, 그 이전 전력은 버린다(짝지을 채굴량이 없으므로).
  */
-export function recordEarnings(prev: Ledger, balance: number, payouts: Payout[], now: number): Ledger {
+export function recordEarnings(prev: Ledger, balance: number, payouts: Payout[], now: number, complete = false): Ledger {
   const l: Ledger = structuredClone(prev);
   const seen = new Set(l.seenPayouts);
-  const fresh = payouts.filter((p) => !seen.has(p.key));
-  l.paidTotal += fresh.reduce((s, p) => s + p.amount, 0);
+  // 같은 지급이 다른 키로 다시 와도(지급 중 → 완료에서 시각이 바뀌는 경우 등) 금액이 같고 하루 안이면 이미 본 것
+  const fresh = payouts.filter((p) => !seen.has(p.key) && !sameAsSeen(p, l.seenPayouts));
   l.seenPayouts.push(...fresh.map((p) => p.key));
+  // 지급 목록이 전부 왔으면 지급 합계는 목록 합 그대로 (지급 중이던 것이 실패·취소로 빠지면 그만큼 줄어든다)
+  if (complete && l.payoutKeys === 2) l.paidTotal = payouts.reduce((s, p) => s + p.amount, 0);
+  else l.paidTotal += fresh.reduce((s, p) => s + p.amount, 0);
   const total = balance + l.paidTotal;
+  l.poolTotal = total;
+  // 지급 직후처럼 잠깐 낮아질 수 있다(잔고가 먼저 비고 지급 목록이 늦게 뜸): 낮아진 시각만 기억해 두고 settleDrift 가 판단.
+  // 관측이 끊겼다 이어지면(앱 종료·다른 OS) 연속으로 보지 않는다
+  if (l.lastTotal !== null && total < l.lastTotal - 1e-9) {
+    if (!l.belowSince || !l.belowLast || now - l.belowLast > BELOW_GAP_MS) l.belowSince = now;
+    l.belowLast = now;
+  } else {
+    l.belowSince = null;
+    l.belowLast = null;
+  }
   if (l.lastTotal === null) {
     l.lastTotal = total;
     l.pendingKwh = 0;
@@ -207,6 +237,77 @@ export function recordEarnings(prev: Ledger, balance: number, payouts: Payout[],
     l.lastTotal = total;
   }
   prune(l);
+  return l;
+}
+
+/**
+ * 0.5.0 이하 장부 바로잡기 (한 번): 지급 키를 시각+금액으로 바꾸고, 지급 목록이 전부 왔으면 지급 합계를 목록 합으로,
+ * 누적치를 풀 진실값(잔고 + 지급 합)으로 맞춘다. 목록이 일부뿐이면 이벤트에서 찾은 중복 지급(dupQty)만 뺀다.
+ * excess = 줄인 누적치 (장부의 채굴량에서도 같은 만큼 빼야 한다)
+ */
+export function correctPayouts(prev: Ledger, balance: number, payouts: Payout[], complete: boolean, dupPaid: number, now: number, dupQty = dupPaid): { ledger: Ledger; excess: number } {
+  if (prev.payoutKeys === 2) return { ledger: prev, excess: 0 };
+  const l: Ledger = structuredClone(prev);
+  l.payoutKeys = 2;
+  if (complete) {
+    l.paidTotal = payouts.reduce((s, p) => s + p.amount, 0);
+    l.seenPayouts = payouts.map((p) => p.key);
+  } else {
+    l.paidTotal = Math.max(0, l.paidTotal - dupPaid);
+    l.seenPayouts = [...new Set([...l.seenPayouts, ...payouts.map((p) => p.key)])];
+  }
+  prune(l);
+  if (l.lastTotal === null) return { ledger: l, excess: 0 };
+  // 누적치가 부풀려진 양은 중복으로 센 증가분(dupQty), 지급 합계가 부풀려진 양은 지급 금액(dupPaid)
+  const truth = complete ? balance + l.paidTotal : l.lastTotal - dupQty;
+  if (!(truth < l.lastTotal - 1e-9)) return { ledger: l, excess: 0 };
+  const excess = l.lastTotal - truth;
+  l.lastTotal = truth;
+  l.poolTotal = truth;
+  l.correctedAt = now;
+  l.legacyOffset = excess;
+  return { ledger: l, excess };
+}
+
+/** 키가 "지급 시각(초):금액" 이면 금액이 같고 하루 안인 이미 본 지급이 있는지 */
+function sameAsSeen(p: Payout, seen: string[]): boolean {
+  if (!p.at) return false;
+  return seen.some((k) => {
+    const m = /^(\d+):([\d.e-]+)$/.exec(k);
+    if (!m || Math.abs(Number(m[2]) - p.amount) >= 1e-9) return false;
+    const t = Number(m[1]);
+    return Math.abs((t < 1e11 ? t * 1000 : t) - (p.at as number)) <= 86_400_000;
+  });
+}
+
+/** 진실값이 이 시간 넘게 기록보다 낮으면 기록이 부풀려진 것으로 본다 (잔고·지급 목록이 어긋나는 순간은 보통 몇 분) */
+export const DRIFT_SETTLE_MS = 60 * 60_000;
+/** 낮은 관측 사이가 이보다 벌어지면 연속이 끊긴 것으로 (풀 조회는 5분마다) */
+export const BELOW_GAP_MS = 20 * 60_000;
+
+/**
+ * 누적치를 풀 진실값으로 내리기: 진실값이 DRIFT_SETTLE_MS 이상 계속 낮았으면 그 차이(gap)만큼 내린다.
+ * (지급 목록이 잔고보다 먼저 바뀐 순간의 일시적 합계가 high-water mark 로 굳은 경우, 블록 고아 처리 등)
+ */
+export function settleDrift(prev: Ledger, now: number, minMs = DRIFT_SETTLE_MS): { ledger: Ledger; gap: number } {
+  const t = prev.poolTotal;
+  if (prev.lastTotal === null || t === null || t === undefined || !prev.belowSince || now - prev.belowSince < minMs) return { ledger: prev, gap: 0 };
+  const gap = prev.lastTotal - t;
+  if (!(gap > 1e-9)) return { ledger: { ...prev, belowSince: null, belowLast: null }, gap: 0 };
+  return { ledger: { ...subtractEarnings(prev, now, gap), lastTotal: t, belowSince: null, belowLast: null, correctedAt: now }, gap };
+}
+
+/** 확정 채굴량에서 빼기 (중복으로 센 지급 바로잡기). 그날 양보다 많으면 그 전 날들에서 이어서 뺀다 */
+export function subtractEarnings(prev: Ledger, at: number, qty: number): Ledger {
+  if (!(qty > 0)) return prev;
+  const l: Ledger = structuredClone(prev);
+  let left = qty;
+  for (const k of Object.keys(l.days).filter((k) => k <= dateKey(at)).sort().reverse()) {
+    const take = Math.min(left, l.days[k].prl);
+    l.days[k].prl -= take;
+    left -= take;
+    if (left <= 1e-12) break;
+  }
   return l;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCoingecko, parseKryptexBalance, parseKryptexPayouts, parseKryptexPool, walletAddress } from './remote';
+import { parseCoingecko, parseKryptexBalance, parseKryptexPayouts, parseKryptexPool, payoutsComplete, walletAddress } from './remote';
 
 describe('kryptex', () => {
   it('balance uses total', () => {
@@ -14,15 +14,30 @@ describe('kryptex', () => {
       { foo: 1 },
     ] });
     expect(p).toEqual([
-      { key: 'abc', amount: 1.01, at: Date.parse('2026-10-17T10:00:00Z') },
-      { key: '1792150800000:2.5', amount: 2.5, at: 1792150800000 },
+      { key: '2026-10-17T10:00:00Z:1.01', amount: 1.01, at: Date.parse('2026-10-17T10:00:00Z'), pending: false },
+      { key: '1792150800000:2.5', amount: 2.5, at: 1792150800000, pending: false },
     ]);
     expect(parseKryptexPayouts({ count: 0, results: [] })).toEqual([]);
   });
 
   it('parses the real Kryptex payout shape (date = unix seconds string, amount string)', () => {
     const real = { count: 1, results: [{ date: '1792278460', address: 'x', status: 'FINISHED', amount: '1.403018290000000000', received: 1.40301829, fee: '0.00000002', txid: 't1' }] };
-    expect(parseKryptexPayouts(real)).toEqual([{ key: 't1', amount: 1.40301829, at: 1792278460000 }]);
+    expect(parseKryptexPayouts(real)).toEqual([{ key: '1792278460:1.40301829', amount: 1.40301829, at: 1792278460000, pending: false }]);
+  });
+
+  it('a payout keeps its key from "paying" (no txid) to "finished" (txid) — it must not be counted twice', () => {
+    const paying = { count: 1, results: [{ date: '1792338420', status: 'PENDING', amount: '1.324557980000000000', txid: null }] };
+    const done = { count: 1, results: [{ date: '1792338420', status: 'FINISHED', amount: '1.324557980000000000', txid: '0xabc' }] };
+    const [a] = parseKryptexPayouts(paying);
+    const [b] = parseKryptexPayouts(done);
+    expect(a.key).toBe(b.key);
+    expect([a.pending, b.pending]).toEqual([true, false]);
+  });
+
+  it('knows when the payout list is complete', () => {
+    expect(payoutsComplete({ count: 2, next: null, results: [{}, {}] })).toBe(true);
+    expect(payoutsComplete({ count: 30, next: 'https://x?page=2', results: [{}, {}] })).toBe(false);
+    expect(payoutsComplete({ results: [] })).toBe(false);
   });
 
   it('pool stats', () => {

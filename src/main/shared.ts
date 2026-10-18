@@ -184,6 +184,10 @@ export interface PoolState {
   seenPayouts: string[];
   /** 마지막 풀 증가 시각 (다음 증가분을 날짜에 나눌 때 시작점) */
   lastMinedAt: number | null;
+  /** 지급 키 방식 (2 = 0.5.1 시각+금액, 중복 지급을 바로잡은 기준점) */
+  payoutKeys?: number;
+  /** 누적치를 풀 진실값으로 내린 시각 */
+  correctedAt?: number;
 }
 
 const num = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -200,6 +204,8 @@ export function readPoolState(root: string): PoolState | null {
       paidTotal: num(r.paidTotal),
       seenPayouts: Array.isArray(r.seenPayouts) ? r.seenPayouts.filter((k): k is string => typeof k === 'string') : [],
       lastMinedAt: typeof r.lastMinedAt === 'number' && Number.isFinite(r.lastMinedAt) ? r.lastMinedAt : null,
+      ...(r.payoutKeys === 2 ? { payoutKeys: 2 } : {}),
+      ...(typeof r.correctedAt === 'number' && Number.isFinite(r.correctedAt) ? { correctedAt: r.correctedAt } : {}),
     };
   } catch {
     return null;
@@ -216,9 +222,20 @@ export function writePoolState(root: string, s: PoolState): void {
  * 지급 id 는 합집합. 누적치는 같은 기준이므로 큰 값(high-water mark).
  */
 export function adoptPoolState(l: Ledger, s: PoolState): Ledger {
+  const reset = { pendingKwh: 0, pendingMs: 0, belowSince: null, belowLast: null };
+  // 다른 인스턴스가 더 최근에 누적치를 풀 진실값으로 바로잡았으면 (낮더라도) 그 기준점을 그대로 받는다
+  if ((s.correctedAt ?? 0) > (l.correctedAt ?? 0) && s.lastTotal !== null) {
+    return { ...l, ...reset, lastTotal: s.lastTotal, paidTotal: s.paidTotal, seenPayouts: s.seenPayouts.slice(-300), payoutKeys: s.payoutKeys === 2 ? 2 : l.payoutKeys, correctedAt: s.correctedAt };
+  }
+  // 바로잡은 장부는 바로잡기 전 버전(0.5.0 이하)이 쓴 기준점을 바로잡은 양만큼 낮춰 본다 (그 버전의 증가분을 다시 세지 않게)
+  if (l.payoutKeys === 2 && s.payoutKeys !== 2) {
+    const legacy = s.lastTotal === null ? null : s.lastTotal - (l.legacyOffset ?? 0);
+    return { ...l, ...reset, lastTotal: legacy === null || l.lastTotal === null ? l.lastTotal : Math.max(l.lastTotal, legacy) };
+  }
   const seen = [...new Set([...l.seenPayouts, ...s.seenPayouts])];
   return {
     ...l,
+    ...reset,
     lastTotal: s.lastTotal === null ? l.lastTotal : l.lastTotal === null ? s.lastTotal : Math.max(l.lastTotal, s.lastTotal),
     paidTotal: Math.max(l.paidTotal, s.paidTotal),
     seenPayouts: seen.slice(-300),
@@ -230,6 +247,8 @@ export function adoptPoolState(l: Ledger, s: PoolState): Ledger {
 
 export const poolStateOf = (l: Ledger, coin: string, lastMinedAt: number | null, gen: number, by: string): PoolState => ({
   gen, by, coin, lastTotal: l.lastTotal, paidTotal: l.paidTotal, seenPayouts: l.seenPayouts.slice(-300), lastMinedAt,
+  ...(l.payoutKeys === 2 ? { payoutKeys: 2 } : {}),
+  ...(l.correctedAt ? { correctedAt: l.correctedAt } : {}),
 });
 
 // ---- 공유 설정 (기기와 무관한 것만) ----

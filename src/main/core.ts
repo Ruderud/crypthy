@@ -16,7 +16,7 @@ import {
 } from './minerControl';
 import { parsePciBus, type NvGpu } from './nvsmi';
 import {
-  dateKey, emptyLedger, migrateLedger, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
+  correctPayouts, dateKey, emptyLedger, migrateLedger, settleDrift, subtractEarnings, miningNetKrwPerHour, prlPerHour, PRICE_STALE_MS, recordEarnings, recordEnergy, recordPrice,
   rentalNetKrwPerHour, reviewAlerts, summarize, type Ledger, type Payout, type PoolStats,
 } from './profit';
 import {
@@ -26,7 +26,7 @@ import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHi
 import { linuxPower } from './powerLimitLinux';
 import type { Logger } from './log';
 import {
-  addEnergy, addPending, addPoolIncrease, addSale, appendEvent, bookDailyPoints, bootstrap, dailyCsv, emptyBook, estimateBackfillFrom, eventsCsv,
+  addEnergy, addPending, addPoolIncrease, addSale, adjustMined, appendEvent, findPayoutDuplicates, bookDailyPoints, bootstrap, dailyCsv, emptyBook, estimateBackfillFrom, eventsCsv,
   clearPending, freshPayouts, loadBook, mergeEvents, pnlDaily, priceUnpriced, readEvents, replayEvents, separateLegacyBackfill, startTracking, summarizePnl,
   type PnlBook, type PnlEvent,
 } from './pnl';
@@ -273,8 +273,10 @@ function profitView(gpus: GpuView[]): ProfitView {
     price: usd === null || remote.priceAt === null ? null : { usd, at: remote.priceAt, stale: now - remote.priceAt > PRICE_STALE_MS },
     change24hPct: remote.change24h,
     balanceCoin: remote.balance,
-    paidCoin: remote.payouts.length ? remote.payouts.reduce((s, x) => s + x.amount, 0) : null,
-    lifetimeCoin: supported ? ledger.lastTotal : null,
+    // 지급 합계는 지금까지 본 모든 지급 (지급 중 포함), 풀 누적 = 지급 + 풀 잔고 (지갑과 대조하기 쉽게 나눠 보여 준다)
+    paidCoin: supported && ledger.lastTotal !== null ? ledger.paidTotal : null,
+    payingCoin: remote.payouts.some((x) => x.pending) ? remote.payouts.filter((x) => x.pending).reduce((s, x) => s + x.amount, 0) : 0,
+    lifetimeCoin: supported ? (ledger.poolTotal ?? ledger.lastTotal) : null,
     liveCoinPerH,
     // 전체 GPU 전력비를 빼서 보수적으로 (채굴 안 하는 GPU 전력도 비용)
     liveKrwPerH: liveCoinPerH !== null && usd !== null ? liveCoinPerH * usd * p.krwPerUsd - (watts / 1000) * p.krwPerKwh : null,
@@ -1241,9 +1243,24 @@ export async function refreshRemote(includeVast: boolean): Promise<void> {
             if (sharedDir() && !sharedStatus?.ok) return;
             // 다른 인스턴스(다른 OS)가 그 사이 기록한 기준점이 있으면 먼저 받아들인다
             syncPoolIn();
+            if (ledger.payoutKeys !== 2) fixPayoutDuplicates(k.balance, k.payouts, k.payoutsComplete, now);
+            // 다른 OS 가 먼저 바로잡은 기준점을 받은 경우: 이 PC 장부의 중복분만 한 번 뺀다
+            else if (!pnl.dupFixed) {
+              const { events, shared } = ledgerEvents();
+              fixLocalBook(findPayoutDuplicates(events, c.id), shared);
+            }
             const prevTotal = ledger.lastTotal;
             const fresh = freshPayouts(new Set(ledger.seenPayouts), k.payouts);
-            ledger = recordEarnings(ledger, k.balance, k.payouts, now);
+            ledger = recordEarnings(ledger, k.balance, k.payouts, now, k.payoutsComplete);
+            // 기록한 누적치가 한 시간 넘게 풀 진실값보다 높으면 진실값으로 내리고 장부에서도 뺀다
+            const drift = settleDrift(ledger, now);
+            if (drift.gap > 0) {
+              ledger = drift.ledger;
+              logEvent({ t: now, type: 'adjust', coin: c.id, qty: -drift.gap, at: now, krwPerCoin: priceKrw(), reason: 'pool-truth' });
+              warnLeft(adjustMined(pnl, c.id, now, -drift.gap, priceKrw()));
+              env.log.info(`pnl: cumulative lowered to the pool total by ${drift.gap.toFixed(8)} ${c.id}`);
+              pushAlert({ ts: now, level: 'info', code: 'pnl_corrected', message: `누적 채굴량을 풀 실측(지급 + 풀 잔고)에 맞춰 ${drift.gap.toFixed(4)} ${c.symbol} 내렸습니다 (한 시간 넘게 풀 값이 더 낮았음)` }, false);
+            }
             for (const p of fresh) logEvent({ t: now, type: 'payout', coin: c.id, key: p.key, amount: p.amount, at: p.at });
             if (ledger.lastTotal !== null && ledger.lastTotal !== prevTotal) {
               logEvent({ t: now, type: 'pool', coin: c.id, total: ledger.lastTotal });
@@ -1282,6 +1299,70 @@ export async function refreshRemote(includeVast: boolean): Promise<void> {
   const rows = compareRows(gpuViews()).map((r) => ({ ...r, reviewRentalUsd: settings.gpus.find((g) => g.id === r.id)?.reviewRentalUsd ?? 0 }));
   for (const a of reviewAlerts(rows, remote.prlUsd, settings.profit, now)) alertOnce(a, REVIEW_REPEAT_MS);
   env.onChange();
+}
+
+/**
+ * 0.5.0 이하에서 같은 지급을 두 번 센 장부 바로잡기 (한 번). 지급 중 → 지급 완료로 바뀌며 txid 가 생기면 다른 지급으로 보았다.
+ * 누적치는 풀 진실값(잔고 + 지급 합)으로, 채굴량은 중복이 들어간 증가분의 날짜에서 그때 시세로 뺀다 (공유 장부에도 바로잡기 이벤트).
+ */
+function fixPayoutDuplicates(balance: number, payouts: Payout[], complete: boolean, now: number): void {
+  // 아직 기준점이 없으면 바로잡을 것이 없다 (첫 조회가 새 키로 지급을 센다)
+  if (ledger.lastTotal === null) {
+    ledger = { ...ledger, payoutKeys: 2 };
+    return;
+  }
+  const coin = settings.coin;
+  const { events, shared } = ledgerEvents();
+  const dups = findPayoutDuplicates(events, coin);
+  const dupPaid = dups.reduce((s, d) => s + d.amount, 0);
+  const dupQty = dups.reduce((s, d) => s + d.qty, 0);
+  const before = ledger.lastTotal;
+  const r = correctPayouts(ledger, balance, payouts, complete, dupPaid, now, dupQty);
+  ledger = r.ledger;
+  for (const d of dups) {
+    if (!d.done) logEvent({ t: now, id: d.id, type: 'adjust', coin, qty: -d.qty, at: d.t, krwPerCoin: d.krwPerCoin, reason: 'payout-dup' });
+  }
+  fixLocalBook(dups, shared);
+  // 중복 지급으로 설명되지 않는 나머지 (지급 목록이 잔고보다 먼저 바뀐 순간이 굳은 경우 등): 오늘부터 거슬러 뺀다.
+  // id 가 인스턴스와 무관해 다른 OS 가 같은 바로잡기를 해도 공유 장부에서 한 번만
+  const rest = r.excess - dupQty;
+  if (rest > 1e-6) {
+    logEvent({ t: now, id: `fix-pool-truth:${coin}:v0.5.1`, type: 'adjust', coin, qty: -rest, at: now, krwPerCoin: priceKrw(), reason: 'pool-truth' });
+    warnLeft(adjustMined(pnl, coin, now, -rest, priceKrw()));
+    ledger = subtractEarnings(ledger, now, rest);
+  }
+  if (ledger.lastTotal !== before) logEvent({ t: now, type: 'pool', coin, total: ledger.lastTotal ?? 0 });
+  savePnl();
+  writeJson(file('ledger.json'), ledger);
+  syncPoolOut();
+  sharedDirty = true;
+  env.log.info(`pnl: payout keys migrated (${dups.length} duplicate payouts, paid ${dupPaid.toFixed(8)} / mined ${dupQty.toFixed(8)} ${coin}; total ${before} → ${ledger.lastTotal}, list ${complete ? 'complete' : 'partial'})`);
+  if (r.excess > 1e-6 || dupQty > 1e-6) {
+    pushAlert({ ts: now, level: 'info', code: 'pnl_corrected', message: `누적 채굴량을 바로잡았습니다: 같은 지급을 두 번 센 ${Math.max(r.excess, dupQty).toFixed(4)} ${coin.toUpperCase()} 를 뺐습니다 (지급 중 → 지급 완료 때 중복). 이제 풀 누적 = 지급 + 풀 잔고` }, false);
+  }
+}
+
+/** 바로잡기에 쓸 이벤트: 공유 장부가 보이면 모든 인스턴스 것, 아니면 이 PC 것 */
+function ledgerEvents(): { events: (PnlEvent & { src?: string })[]; shared: boolean } {
+  const dir = sharedDir();
+  const shared = !!dir && !!sharedStatus?.ok;
+  return { events: shared ? mergeEvents(readSharedEvents(sharedRoot(dir!))) : readEvents(pnlEvents()), shared };
+}
+
+/** 이 PC 장부(공유 폴더가 안 보일 때 쓰는 장부)에서 이 PC 가 센 중복 지급분을 한 번 뺀다 */
+function fixLocalBook(dups: ReturnType<typeof findPayoutDuplicates>, shared: boolean): void {
+  if (pnl.dupFixed) return;
+  for (const d of dups) {
+    if (shared && d.src !== instanceId) continue;
+    warnLeft(adjustMined(pnl, settings.coin, d.t, -d.qty, d.krwPerCoin));
+    ledger = subtractEarnings(ledger, d.t, d.qty);
+  }
+  pnl.dupFixed = true;
+}
+
+/** 확정 채굴 기록이 모자라 빼지 못한 양 (소급분만 있는 경우 등) */
+function warnLeft(left: number): void {
+  if (left > 1e-9) env.log.warn(`pnl: correction could not remove ${left.toFixed(8)} (not enough confirmed output recorded)`);
 }
 
 function validatePatch(p: Partial<Settings>): string | null {
@@ -1545,6 +1626,9 @@ function syncPoolIn(): void {
   if (!st || st.gen <= sync.poolGen) return;
   // 다른 코인의 기준점은 받지 않는다 (공유 설정의 코인을 먼저 받아들인 뒤 다시 맞춘다)
   if (st.coin && st.coin !== settings.coin) return;
+  if (st.payoutKeys !== 2 && st.by !== instanceId && ledger.payoutKeys === 2) {
+    alertOnce({ ts: Date.now(), level: 'warn', code: 'shared_old_version', message: `다른 OS 의 Crypthy(${st.by})가 0.5.0 이하입니다 — 그 기기도 0.5.1 이상으로 업데이트하세요 (그 버전은 지급 중 → 완료 때 같은 지급을 두 번 셉니다)` }, 24 * 3600_000);
+  }
   ledger = adoptPoolState(ledger, st);
   if (st.lastMinedAt !== null) pnl.lastMinedAt = Math.max(pnl.lastMinedAt ?? 0, st.lastMinedAt);
   // 재부팅 전 실시간 추정분은 그 사이 다른 OS 가 확정분으로 기록했다
@@ -1649,6 +1733,20 @@ export function syncShared(): void {
         lists = readSharedEvents(root, sharedTail);
       }
       backfillShared = true;
+      // 바로잡기 전 버전(다른 OS)이 같은 지급을 두 번 센 기록이 들어오면 바로잡기 이벤트를 남긴다
+      if (ledger.payoutKeys === 2) {
+        const fresh = findPayoutDuplicates(mergeEvents(lists), settings.coin).filter((d) => !d.done);
+        for (const d of fresh) {
+          logEvent({ t: Date.now(), id: d.id, type: 'adjust', coin: settings.coin, qty: -d.qty, at: d.t, krwPerCoin: d.krwPerCoin, reason: 'payout-dup' });
+          // 그 구버전 기준점도 이만큼 더 부풀려졌다: 받아들일 때 더 낮춰 본다 (나중에 다시 빼지 않게)
+          if (d.src !== instanceId) ledger = { ...ledger, legacyOffset: (ledger.legacyOffset ?? 0) + d.qty };
+        }
+        if (fresh.length) {
+          writeJson(file('ledger.json'), ledger);
+          mirror.push();
+          lists = readSharedEvents(root, sharedTail);
+        }
+      }
       const r = replayEvents(mergeEvents(lists), settings.coin);
       sharedBook = r.book;
       if (r.overlaps > 0 && r.overlaps !== sharedOverlaps) {
