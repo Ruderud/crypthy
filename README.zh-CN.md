@@ -4,7 +4,7 @@
 
 # Crypthy
 
-面向搭载 NVIDIA GPU 的 **Windows 和 Ubuntu（Linux）** PC 的挖矿币种中心、GPU/PC 管理器和挖矿收益查看工具。名称由 crypto 与 smithy（铁匠铺）合成。
+面向搭载 NVIDIA GPU 的 **Windows 和 Ubuntu（Linux）** PC 的挖矿币种中心、GPU/PC 管理器和挖矿收益查看工具。
 
 [![CI](https://github.com/Ruderud/crypthy/actions/workflows/ci.yml/badge.svg)](https://github.com/Ruderud/crypthy/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Ruderud/crypthy)](https://github.com/Ruderud/crypthy/releases)

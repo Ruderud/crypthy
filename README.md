@@ -4,7 +4,7 @@
 
 # Crypthy
 
-Coin-mining hub, GPU/PC manager and mining profit tracker for **Windows and Ubuntu (Linux)** PCs with NVIDIA GPUs. The name is crypto + smithy.
+Coin-mining hub, GPU/PC manager and mining profit tracker for **Windows and Ubuntu (Linux)** PCs with NVIDIA GPUs.
 
 [![CI](https://github.com/Ruderud/crypthy/actions/workflows/ci.yml/badge.svg)](https://github.com/Ruderud/crypthy/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Ruderud/crypthy)](https://github.com/Ruderud/crypthy/releases)

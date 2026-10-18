@@ -4,7 +4,7 @@
 
 # Crypthy
 
-NVIDIA GPU가 달린 **Windows / Ubuntu(Linux)** PC를 위한 코인 채굴 허브, GPU/PC 관리, 채굴 수익 확인 앱입니다. 이름은 crypto + smithy(대장간)를 합친 말입니다.
+NVIDIA GPU가 달린 **Windows / Ubuntu(Linux)** PC를 위한 코인 채굴 허브, GPU/PC 관리, 채굴 수익 확인 앱입니다.
 
 [![CI](https://github.com/Ruderud/crypthy/actions/workflows/ci.yml/badge.svg)](https://github.com/Ruderud/crypthy/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Ruderud/crypthy)](https://github.com/Ruderud/crypthy/releases)
