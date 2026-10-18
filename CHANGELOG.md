@@ -8,6 +8,16 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-18
+
+### Fixed
+- The miner console window still opened when the method was **scheduled task**: Task Scheduler launches the miner itself, so hiding only applied to the executable method. **Switch to executable** (formerly "import from scheduled task") now reads the task's executable and arguments, unwraps a `conhost --headless` wrapper, and changes the method to **executable** with the window hidden. Task mode shows why its window cannot be hidden.
+
+### Added
+- **View miner window** on the miner card: the miner's output goes to `logs/miner.log` (rotated at 2 MB) and is shown in the app only when you open it.
+- **Disable scheduled task** (asks first) when the method is executable but the old task is still enabled, so it does not start a second miner with a console window at logon.
+- **Browse…** buttons with the file dialog for the miner executable and the shared ledger folder (disabled while viewing a remote host).
+
 ## [0.4.2] - 2026-10-18
 
 ### Added
@@ -162,7 +172,8 @@ Not yet tested on a real Ubuntu Server, Tailscale or Vast.ai host.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/Ruderud/crypthy/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Ruderud/crypthy/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ruderud/crypthy/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ruderud/crypthy/compare/v0.3.9...v0.4.0
