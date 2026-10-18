@@ -192,6 +192,8 @@ The app UI is currently in Korean only.
 | Shared ledger folder | empty (this PC only) | Dual boot: folder both OSes can reach; see [Shared ledger](#shared-ledger) |
 | Stop miners on dangerous conditions | on | Off = alerts only |
 | Start at login | off | Windows login item / Linux XDG autostart |
+| Show window at login | off (tray only) | On: the window opens at login |
+| Start mining when Crypthy starts | off | 30 s after start; needs consent; skipped on a safety hold, a recent danger stop or a miner already running |
 | Update check interval | 60 min | 30–1440 minutes |
 | Fan-stop power / time | 100 W / 10 s | Safety watch |
 | Temperature warning / stop | 80°C / 85°C | Safety watch |
@@ -219,6 +221,15 @@ Crypthy starts and stops only a miner you set up yourself; it never downloads or
 - Arguments are split on spaces (use "double quotes" for spaces) and passed as a list, so shell characters such as `&` or `|` have no effect. On Windows only `.exe` files can be run directly; use a scheduled task for a `.bat`.
 - The app runs as a normal user. A miner started as administrator cannot be stopped by it; you are told to stop it in Task Manager.
 - After a danger stop the app does not start the miner again by itself; with a scheduled task or unit it also ends the task or unit, so Task Scheduler or systemd cannot restart the miner. The executable must be the miner itself, not `cmd` or `powershell`. See [Safety watch](#safety-watch).
+- **Start mining when Crypthy starts** (off by default): 30 seconds after Crypthy starts it starts the configured miner once. It needs the risk and cost notice (asked when you turn it on) and is skipped on a safety hold, a danger stop in the last 6 hours, or when a miner is already running (for example started by a scheduled task); the reason appears in the alerts. It never restarts a miner after a danger stop.
+- With **executable** the miner starts without a console window on Windows (**hide miner console window**, on by default).
+- To let Crypthy open at login and start mining quietly instead of a scheduled task that opens a console window:
+  1. Settings → mining on/off: **scheduled task**, the task name (e.g. `PearlMiner`), **import from scheduled task**. If the task runs the miner through `cmd` or `conhost`, enter the miner `.exe` path yourself.
+  2. Switch the method to **executable**, keep **hide miner console window**, turn on **start mining when Crypthy starts**, **start at login** and **show window at login**, and save.
+  3. Disable the old task so it does not start a second miner (Crypthy would detect it and skip, but the console window would still open):
+```bat
+schtasks /Change /TN PearlMiner /DISABLE
+```
 
 ### Power limits — Windows (one UAC prompt)
 

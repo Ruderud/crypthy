@@ -8,6 +8,14 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-18
+
+### Added
+- **Start mining when Crypthy starts** (off by default): 30 s after start the configured miner is started once. It needs the risk and cost notice (asked when you turn it on) and is skipped, with the reason in the alerts, on a safety hold, a danger stop in the last 6 hours or a miner that is already running (for example started by a scheduled task). A miner stopped for danger is still never restarted.
+- **Hide miner console window** for the executable method (on by default): the miner starts without a console window on Windows.
+- **Show window at login**: start at login can open the window instead of the tray only.
+- README: how to replace a scheduled task that opens a console window with Crypthy at login.
+
 ## [0.4.1] - 2026-10-18
 
 ### Added
@@ -154,7 +162,8 @@ Not yet tested on a real Ubuntu Server, Tailscale or Vast.ai host.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/Ruderud/crypthy/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ruderud/crypthy/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ruderud/crypthy/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/Ruderud/crypthy/compare/v0.3.8...v0.3.9
