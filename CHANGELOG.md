@@ -8,6 +8,17 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-19
+
+### Fixed
+- **Cumulative output was higher than the pool** (reported: about 13 PRL in Crypthy vs 10.59 PRL = payouts 8.81 + pool balance 1.79). Kryptex lists a payout first as *paying* without a txid and then as *finished* with a txid; payouts were identified by txid, so a payout seen in both states was counted twice in the payout total, the lifetime output and the PnL. Payouts are now identified by payout time and amount (also matched when the time shifts within a day), and failed or cancelled payouts are not counted.
+- **Existing ledgers are corrected once** at the first pool check after the update: with the full payout list, the payout total is rebuilt from the list and the lifetime output set to pool balance + payouts; duplicate payouts found in the event log (including the other OS's log in a shared ledger) are removed from the PnL on the day they were counted, at that day's price, through `adjust` events that a shared ledger applies once. An alert shows the amount removed.
+- If the pool total (balance + payouts) stays below the recorded cumulative for an hour (for example a payout listed before the balance dropped), the cumulative is lowered to the pool total and the PnL corrected.
+- Shared ledger (dual boot): a corrected baseline from the other OS is taken even though it is lower; a baseline from an older Crypthy is offset by the corrected amount and an alert asks to update that device (update the headless host too).
+
+### Changed
+- The profit card shows **paid / paying / pool balance (unpaid)** under the lifetime output, to compare with the wallet. The PnL cumulative output shows the pool-confirmed amount, with the live estimate separately.
+
 ## [0.5.0] - 2026-10-19
 
 Start with a dry run: create a SafeTrade API key with **trade permission only** (no withdrawal, IP restriction if possible), enter it on the **SafeTrade auto-sell** card, set a minimum price, run **dry run** and check the plan, then turn dry run off.
