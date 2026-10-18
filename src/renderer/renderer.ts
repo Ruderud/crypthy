@@ -225,9 +225,16 @@ function renderGpus(st: AppState) {
     .filter((g) => g.present || g.hold)
     .map((g) => {
       const fanCls = g.fanPct === 0 && (g.powerW ?? 0) > st.settings.safety.fanStopPowerW ? 'crit' : '';
+      // GPU 별 채굴 선택: 실행 파일 방식에서만, 원격 읽기 전용이면 바꿀 수 없음
+      const readOnly = !!st.remote && !st.remote.write;
+      const why = !g.selectable ? 'GPU 별 채굴은 "실행 파일 직접 실행" 방식에서만 적용됩니다' : readOnly ? '원격 읽기 전용 연결입니다' : g.mine ? '이 GPU 로 채굴하지 않기 (채굴 중이면 다시 시작)' : '이 GPU 로 채굴 (채굴 중이면 다시 시작)';
+      const toggle = `<label class="switch" title="${esc(why)}"><input type="checkbox" data-gpu-mine="${esc(g.id)}" ${g.mine ? 'checked' : ''} ${!g.selectable || readOnly ? 'disabled' : ''} /> 채굴</label>`;
       return `<article class="card gpu ${g.hold ? 'excluded' : ''}">
         <h2>${esc(g.label)} <span class="muted small">nvidia-smi #${esc(g.index ?? '-')}</span>
-          <span class="badge ${g.mining ? 'ok' : ''}">${g.mining ? '채굴 중' : g.present ? '대기' : '인식 안 됨'}</span></h2>
+          ${g.selectable && !g.mine && (g.hashrate ?? 0) > 0
+            ? '<span class="badge warn" title="채굴기가 GPU 선택을 따르지 않습니다">꺼짐인데 채굴 중</span>'
+            : `<span class="badge ${g.mining ? 'ok' : ''}">${g.mining ? '채굴 중' : g.selectable && !g.mine ? '채굴 안 함' : g.present ? '대기' : '인식 안 됨'}</span>`}
+          <span class="spacer"></span>${toggle}</h2>
         <div class="big ${tempClass(g, st.settings)}">${n(g.tempC, 0, '°C')}</div>
         <dl class="stats">
           ${stat('팬', n(g.fanPct, 0, '%'), fanCls)}
@@ -505,6 +512,17 @@ $('powerApply').addEventListener('click', async () => {
 });
 
 $('controlMode').addEventListener('change', showControlFields);
+// GPU 별 채굴 켜기·끄기 (카드는 상태가 올 때마다 다시 그려지므로 위임)
+$('gpus').addEventListener('change', (e) => {
+  const input = e.target as HTMLInputElement;
+  const id = input.dataset.gpuMine;
+  if (!id) return;
+  input.disabled = true;
+  void crypthy.setGpuMining(id, input.checked).then((err) => {
+    if (err && err !== '취소됨') $('minerMsg').textContent = err;
+    return refresh();
+  });
+});
 $('minerLogBtn').addEventListener('click', () => {
   const view = $('minerLogView');
   view.hidden = !view.hidden;

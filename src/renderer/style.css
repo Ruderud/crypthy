@@ -60,6 +60,8 @@ h2 { font-size: 13px; margin: 0 0 8px; display: flex; align-items: center; gap: 
 h3 { font-size: 12px; margin: 0 0 4px; font-weight: 600; color: var(--muted); }
 .spacer { flex: 1; }
 .pick { display: flex; gap: 6px; }
+.switch { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: normal; cursor: pointer; }
+.switch input:disabled + * , .switch:has(input:disabled) { opacity: 0.6; cursor: not-allowed; }
 .pick input { flex: 1; min-width: 0; }
 
 main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 8px 12px 24px; }
