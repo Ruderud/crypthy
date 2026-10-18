@@ -8,6 +8,13 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-18
+
+### Added
+- **Per-GPU mining** (executable method, NVIDIA): a **mine** switch on each GPU card. Only the chosen GPUs are visible to the miner (`CUDA_DEVICE_ORDER=PCI_BUS_ID`, `CUDA_VISIBLE_DEVICES` by GPU UUID from nvidia-smi, else by PCI bus order), so the miner's own device numbers are not needed. A running miner restarts with the new choice and stops when no GPU is left; the choice is saved and used by automatic start. A `--gpu-id` argument is left out while a choice is active.
+- GPUs that are not mining are left out of the power cost (PnL, live estimate, backfill watts) and of power limits; a danger condition on them warns once instead of stopping the miner or setting a hold. A hashrate on a GPU that is off is flagged (the miner does not follow the choice).
+- Remote API: `POST /v1/miner/gpu` (write token).
+
 ## [0.4.3] - 2026-10-18
 
 ### Fixed
@@ -172,7 +179,8 @@ Not yet tested on a real Ubuntu Server, Tailscale or Vast.ai host.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/Ruderud/crypthy/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/Ruderud/crypthy/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Ruderud/crypthy/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ruderud/crypthy/compare/v0.4.0...v0.4.1
