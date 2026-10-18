@@ -22,5 +22,5 @@ body:
     attributes:
       label: Project principles
       options:
-        - label: The proposal does not require Crypthy to download, run or restart miners, add a fee, or collect secrets.
+        - label: The proposal does not require Crypthy to download or install miners, restart them automatically, add a fee, or collect secrets.
           required: true

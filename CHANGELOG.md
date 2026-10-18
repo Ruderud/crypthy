@@ -8,6 +8,19 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-18
+
+### Added
+- **Mining on/off** from the miner card and the tray for a miner you configured yourself: a Windows scheduled task (`schtasks /Run`, `/End`), a Linux systemd user unit (`systemctl --user start|stop`) or an executable with arguments (run without a shell, detached from the app). Stopping also stops the miner process and confirms it. Crypthy still does not download or install miners.
+- The first start asks you to accept a risk and cost notice; stopping asks once for confirmation (can be turned off).
+- **Import from scheduled task** fills the executable and arguments from the task (Windows). The configured executable is added to the processes the app watches and stops.
+- The local status API reports `mode: "app"` for a miner started with the app.
+
+### Changed
+- If a miner is already running, start is disabled and the card shows that it was started outside the app; a second miner is never launched.
+- After a danger stop the app still never starts the miner by itself. Start stays disabled until the hold is cleared, and the next start shows the cause again.
+- A miner started as administrator that the app cannot stop is reported with instructions to stop it in Task Manager.
+
 ## [0.3.6] - 2026-10-18
 
 ### Changed
@@ -101,7 +114,8 @@ Release notes on GitHub are taken from the matching section of this file.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/Ruderud/crypthy/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/Ruderud/crypthy/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/Ruderud/crypthy/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/Ruderud/crypthy/compare/v0.3.3...v0.3.4

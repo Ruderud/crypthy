@@ -14,7 +14,7 @@ Coin-mining hub, GPU/PC manager and mining profit tracker for **Windows and Ubun
 ![Dashboard (dark theme, mock data)](docs/screenshots/dashboard-dark.png)
 
 > **Important**
-> - **Crypthy does not install or run miners.** It recommends compatible mining tools with links to their official repositories; you install and run the miner yourself.
+> - **Crypthy does not download or install miners.** It recommends compatible mining tools with links to their official repositories; you install and configure the miner yourself. It can then start and stop the miner you configured (a scheduled task, a systemd user unit or an executable) from the app and the tray.
 > - **No default wallet and no dev fee.** The wallet address is only used to read public pool statistics.
 > - **On danger it only stops.** On a stopped fan or overheating it stops known running miners and never restarts them; this can be turned off.
 > - **Builds are not code-signed.** Verify downloads with `SHA256SUMS.txt` from each release.
@@ -47,6 +47,7 @@ Catalog as of 2026-10-17:
 
 - **GPU dashboard**: `nvidia-smi` every 2 seconds: temperature, fan, power/limit, utilization. GPUs are identified by PCI bus id.
 - **Safety watch**: stops known miners on a stopped fan, overheating or lost temperature readings. See [Safety watch](#safety-watch).
+- **Mining on/off**: start and stop the miner you configured from the miner card and the tray. See [Mining on/off](#mining-on-off).
 - **Power limits**: watts per GPU, re-applied automatically after a one-time admin approval (Windows scheduled task / Linux systemd service). The app itself runs as a normal user.
 - **Tray app** with optional start at login, a read-only **local status API**, and **auto-update** from GitHub Releases.
 
@@ -144,7 +145,7 @@ The app UI is currently in Korean only.
 
 - Wallet, pool, power limits, safety thresholds and profit settings are kept; 0.1.x miner-launch settings (miner folder, GPU selection/mapping, consent record) are dropped.
 - GPUs that were "safety excluded" become **safety holds**.
-- 0.2.0 and later never start miners. A miner started by 0.1.x keeps running; start and restart it yourself from then on.
+- 0.2.0 to 0.3.6 never start miners; from 0.3.7 you can start and stop a miner you configured yourself (see [Mining on/off](#mining-on-off)). A miner started by 0.1.x keeps running.
 - When updating from 0.3.1 or earlier, the profit ledger is converted: the pool baseline is kept and old daily values are shown as mined amounts only (excluded from net profit).
 
 ## Configuration
@@ -156,6 +157,7 @@ The app UI is currently in Korean only.
 | Coin | Pearl | Catalog coin for the hub, price and pool statistics |
 | Wallet / pool | empty | Public address `.worker` and `host:port`; only for public pool statistics |
 | Miner stats API / port | SRBMiner-MULTI / 21550 | `none` disables it |
+| Mining on/off | not used | Scheduled task (Windows), systemd user unit (Linux) or executable + arguments; confirm before stopping (on) |
 | Stop miners on dangerous conditions | on | Off = alerts only |
 | Start at login | off | Windows login item / Linux XDG autostart |
 | Update check interval | 60 min | 30–1440 minutes |
@@ -165,6 +167,26 @@ The app UI is currently in Korean only.
 | Rental host share / power while rented | 0.75 / 250 W | Mining vs rental |
 | Price drop alert / baseline price | 30% / first price seen | Review alert |
 | Vast verified only / offer type / regions | on / on-demand / all | Rental price filter |
+
+<a id="mining-on-off"></a>
+
+### Mining on/off
+
+Crypthy starts and stops only a miner you set up yourself; it never downloads or installs one. Choose a method in **Settings → mining on/off**:
+
+| Method | Start | Stop |
+|---|---|---|
+| Windows scheduled task | `schtasks /Run /TN <name>` | `schtasks /End /TN <name>`, then stop the miner process |
+| Linux systemd user unit | `systemctl --user start -- <unit>` | `systemctl --user stop -- <unit>`, then stop the miner process |
+| Executable | runs the `.exe` (Windows) or binary with your arguments, without a shell, detached from the app | stops the miner process |
+
+- Use the **start / stop** buttons on the miner card or the tray menu; only the one that applies is enabled.
+- The first start asks you to accept a risk and cost notice. Stopping asks once for confirmation (can be turned off).
+- If a miner is already running (for example started outside the app), **start** is disabled and the card shows "started outside the app"; a second miner is never launched. **Stop** still works.
+- For a scheduled task, **import from scheduled task** reads the task's executable and arguments; the executable name is also added to the processes the app watches and stops.
+- Arguments are split on spaces (use "double quotes" for spaces) and passed as a list, so shell characters such as `&` or `|` have no effect. On Windows only `.exe` files can be run directly; use a scheduled task for a `.bat`.
+- The app runs as a normal user. A miner started as administrator cannot be stopped by it; you are told to stop it in Task Manager.
+- After a danger stop the app does not start the miner again by itself. See [Safety watch](#safety-watch).
 
 ### Power limits — Windows (one UAC prompt)
 
@@ -202,7 +224,7 @@ sudo systemctl daemon-reload
 - Windows installer and Linux AppImage only. Checks a few seconds after the window opens and then every hour (30 minutes–24 hours in settings); **check for updates** is in the header and the tray menu.
 - A new version shows an OS notification (also when only the tray is running) and a banner pinned under the header with release notes. Clicking the notification, **check for updates** or the tray's new-version item opens a dialog with **download / later**; after downloading, **restart now to install / later**. The banner offers the same buttons.
 - **Later** hides the same notice until the next scheduled check; a manual check shows it again.
-- Install happens only when you click. Crypthy does not manage miners, so mining continues through the restart; only the safety watch pauses briefly.
+- Install happens only when you click. Miners run separately from the app, so mining continues through the restart; only the safety watch pauses briefly.
 - Downloads are checked against the sha512 in `latest.yml` / `latest-linux.yml`. Builds are unsigned, so signature verification (`verifyUpdateCodeSignature`) is off; this only proves the file matches the one on GitHub Releases.
 - A failed update leaves an alert and does not affect the safety watch. Try the flow with `CRYPTHY_MOCK=1 CRYPTHY_MOCK_UPDATE=1`.
 
@@ -223,7 +245,7 @@ sudo systemctl daemon-reload
 
 - Bound to `127.0.0.1` only. A Host header other than `127.0.0.1:47321` / `localhost:47321` gets 403 (DNS rebinding protection); non-GET gets 405, other paths 404.
 - At most 8 gpus, 20 alerts (newest first), 120 characters per string. No wallet or settings.
-- `mode`: `external` (a miner is running; Crypthy never runs miners) or `null`. `hashrate` is H/s. Alert `gpu` is a PCI bus id.
+- `mode`: `external` (a miner started outside the app is running), `app` (started with the app's **start**) or `null`. `hashrate` is H/s. Alert `gpu` is a PCI bus id.
 - Alert codes — safety: `fan_stopped`, `temp_stop`, `temp_warn`, `telemetry_lost`, `miner_killed`, `miner_killed_again`, `kill_failed`, `safety_hold_running`, `hold_cleared`; review: `review_rental_price`, `review_rental_better`, `review_prl`; update: `update_available`, `update_ready`, `update_error`; other: `status_api`.
 - The response also includes a `pnl` object with rounded totals only (`mined_coin`, `holdings_coin`, `revenue_krw`, `energy_cost_krw`, `realized_krw`, `unrealized_krw`, `total_pnl_krw`, `estimated`); the raw log is never exposed.
 
@@ -263,7 +285,7 @@ sudo systemctl daemon-reload
   - its cgroup path contains docker / containerd / kubepods / podman / lxc and similar
   - it is in a different PID namespace from the app, or the namespace cannot be read
   - an ancestor process is containerd-shim / dockerd / runc / conmon and similar
-- Stopping is per miner, not per GPU, and the app never restarts miners.
+- Stopping is per miner, not per GPU. After a danger stop the app never starts the miner again; **start** stays disabled until you clear the hold, and then shows the cause once more before starting.
 - **Holds persist** across app restarts and reboots. A miner started again during a hold is stopped again every 15 seconds; clear the hold with **clear hold** on the GPU card after fixing the cause. Holds are also set when no miner is running (for example overheating while gaming).
 - If nvidia-smi fails, monitoring continues with the miner API's device values (matched by PCI bus). If tasklist fails, every known name is stopped and a critical alert is sent if this cannot be confirmed. A miner detected only through its API with an unknown executable name is reported as not stoppable.
 - Another program with exactly the same executable name can also be stopped (for example a different `forge.exe`).
@@ -274,7 +296,7 @@ sudo systemctl daemon-reload
 
 - No telemetry, no account, no remote control and no write API.
 - It never asks for or stores wallet seeds, passwords or tokens, and never changes security settings such as Windows Defender or the firewall.
-- It does not download, install, run or restart miners, and does not build miner command lines.
+- It does not download or install miners and does not build miner command lines. It only starts or stops the miner you configured, when you click.
 - Outgoing requests are public reads only:
   - CoinGecko prices
   - Kryptex pool statistics and public wallet balance
@@ -288,7 +310,7 @@ Builds are not code-signed, so Windows SmartScreen may warn. Every release inclu
 ## FAQ
 
 **Does Crypthy mine or take a fee?**
-No. It never runs miners and has no dev fee. Miners you install may charge their own dev fee, shown in the coin hub.
+No. It never downloads miners and has no dev fee. Miners you install may charge their own dev fee, shown in the coin hub.
 
 **Why are today and this month marked "estimated"?**
 They include backfilled output (estimated start time and power) and the live estimate that the pool has not reflected yet. Both are replaced or corrected as the pool confirms output or you recalculate the backfill.

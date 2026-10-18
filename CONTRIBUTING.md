@@ -12,7 +12,7 @@ Thanks for your interest. Bug reports, catalog corrections, translations and cod
 
 Changes must keep these guarantees (see "Safety and privacy" in the [README](README.md)):
 
-- Crypthy never downloads, installs, starts or restarts miners and never builds miner command lines.
+- Crypthy never downloads or installs miners and never builds miner command lines. It starts or stops only a miner the user configured, only when the user clicks, and never restarts one after a safety stop.
 - No default wallet, no dev fee, no telemetry. Never ask for or store wallet seeds, passwords or tokens.
 - The safety watch may only stop known miner processes, and must never touch container workloads on Linux.
 - Do not change operating-system security settings (Defender, firewall, etc.).
