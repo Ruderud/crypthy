@@ -297,6 +297,27 @@ async function refreshRemoteSettings() {
     : '연결 안 함 — 이 PC 의 상태를 보여 줍니다. 호스트에서 crypthy-headless --print-tokens 로 토큰을 확인하세요.';
 }
 
+/** 실행 파일 방식인데 예전 예약 작업이 아직 켜져 있으면 끄기를 권한다 (로그온 때 채굴기가 콘솔 창과 함께 하나 더 뜰 수 있음) */
+function renderTaskNotice(st: AppState) {
+  const t = st.minerTask;
+  const on = !!t && st.settings.minerControl.mode === 'direct' && t.status !== null && !/disabled|사용 안 함|無効|禁用|deaktiviert/i.test(t.status);
+  $('taskOnRow').hidden = !on || !!st.remote;
+  if (on) $('taskOnText').textContent = `예약 작업 "${t!.name}" 이 아직 켜져 있습니다 (${t!.status}). 로그온할 때 채굴기를 콘솔 창과 함께 따로 띄울 수 있습니다.`;
+}
+
+/** 채굴 창 보기: 채굴기 출력(logs/miner.log)의 끝부분을 2초마다 */
+let minerLogTimer: ReturnType<typeof setInterval> | null = null;
+async function refreshMinerLog() {
+  const r = await crypthy.minerLog();
+  const view = $('minerLogView');
+  view.textContent = r.text
+    ? r.text
+    : r.available
+      ? `아직 출력이 없습니다 (${r.path || 'logs/miner.log'}). 이 앱에서 켠 채굴기의 출력만 보입니다.`
+      : '채굴기 출력은 "실행 파일 직접 실행" 방식으로 이 앱에서 켰을 때만 볼 수 있습니다 (원격 호스트 연결 중에는 볼 수 없음).';
+  view.scrollTop = view.scrollHeight;
+}
+
 /** 설정의 켜기·끄기 방식에 맞는 입력칸만 보이기 */
 function showControlFields() {
   const mode = $<HTMLSelectElement>('controlMode').value;
@@ -313,6 +334,7 @@ function render(st: AppState) {
   badge.textContent = m.running ? `채굴기 실행 중${m.mode === 'external' ? '(외부 실행)' : ''}${m.processes.length ? ` · ${m.processes.join(', ')}` : ''}` : '채굴기 없음';
   renderControl(m);
   renderRemote(st);
+  renderTaskNotice(st);
   badge.className = `badge ${m.running ? 'ok' : ''}`;
   $('updated').textContent = new Date(st.ts).toLocaleTimeString('ko-KR');
 
@@ -405,6 +427,7 @@ function fillForms(st: AppState) {
     el.title = hostOnly ? '원격 호스트에서만 바꿀 수 있습니다' : '';
   }
   $<HTMLButtonElement>('importTask').disabled = !!st.remote;
+  document.querySelectorAll<HTMLButtonElement>('[data-pick]').forEach((b) => (b.disabled = !!st.remote));
 }
 
 function readSettingsForm(): Partial<Settings> {
@@ -482,6 +505,26 @@ $('powerApply').addEventListener('click', async () => {
 });
 
 $('controlMode').addEventListener('change', showControlFields);
+$('minerLogBtn').addEventListener('click', () => {
+  const view = $('minerLogView');
+  view.hidden = !view.hidden;
+  $('minerLogBtn').textContent = view.hidden ? '채굴 창 보기' : '채굴 창 닫기';
+  if (minerLogTimer) clearInterval(minerLogTimer);
+  minerLogTimer = null;
+  if (!view.hidden) {
+    void refreshMinerLog();
+    minerLogTimer = setInterval(() => void refreshMinerLog(), 2000);
+  }
+});
+$('disableTask').addEventListener('click', () => void act('disableTaskMsg', () => crypthy.disableMinerTask(), '작업을 껐습니다'));
+document.querySelectorAll<HTMLButtonElement>('[data-pick]').forEach((b) =>
+  b.addEventListener('click', async () => {
+    const input = document.querySelector<HTMLInputElement>(`#settingsForm [name="${b.dataset.for}"]`);
+    if (!input) return;
+    const picked = await crypthy.pickPath(b.dataset.pick === 'folder' ? 'folder' : 'exe', input.value.trim());
+    if (picked) input.value = picked;
+  }),
+);
 $('remoteForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const v = (id: string) => $<HTMLInputElement>(id).value.trim();
@@ -495,7 +538,7 @@ $('remoteForm').addEventListener('submit', (e) => {
 $('remoteOff').addEventListener('click', () => void crypthy.disconnectRemote().then(() => (refreshRemoteSettings(), refreshCharts(), refresh())));
 $('minerStart').addEventListener('click', () => void act('minerMsg', () => crypthy.startMining(), '켜기 요청함'));
 $('minerStop').addEventListener('click', () => void act('minerMsg', () => crypthy.stopMining(), '껐습니다'));
-$('importTask').addEventListener('click', () => void act('importTaskMsg', () => crypthy.importMinerTask(), '가져옴 (실행 파일·인자)'));
+$('importTask').addEventListener('click', () => void act('importTaskMsg', () => crypthy.importMinerTask(), '실행 파일 방식으로 바꿨습니다 — 예약 작업은 아래에서 끄세요'));
 $('settingsForm').addEventListener('submit', (e) => {
   e.preventDefault();
   void act('settingsMsg', () => crypthy.saveSettings(readSettingsForm()), '저장됨');

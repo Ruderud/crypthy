@@ -59,6 +59,8 @@ h1::before { content: ""; display: inline-block; width: 10px; height: 10px; marg
 h2 { font-size: 13px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
 h3 { font-size: 12px; margin: 0 0 4px; font-weight: 600; color: var(--muted); }
 .spacer { flex: 1; }
+.pick { display: flex; gap: 6px; }
+.pick input { flex: 1; min-width: 0; }
 
 main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 8px 12px 24px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; min-width: 0; }

@@ -82,9 +82,10 @@
     <section class="card wide">
       <h2>채굴기 상태 <span class="muted small">켜기·끄기는 설정한 방식으로만 · 위험 정지 뒤 자동으로 다시 켜지 않음</span>
         <span class="spacer"></span>
-        <button id="minerStart" class="primary">켜기</button><button id="minerStop">끄기</button><span id="minerMsg" class="msg"></span>
+        <button id="minerStart" class="primary">켜기</button><button id="minerStop">끄기</button><button id="minerLogBtn" title="채굴기 출력 보기 (실행 파일 방식)">채굴 창 보기</button><span id="minerMsg" class="msg"></span>
       </h2>
       <p class="muted small" id="minerControlInfo"></p>
+      <pre id="minerLogView" class="log" hidden></pre>
       <dl class="stats" id="minerStats"></dl>
     </section>
 
@@ -177,15 +178,19 @@
         </select></label>
         <label data-ctl="task">예약 작업 이름 <input name="minerControl.taskName" placeholder="PearlMiner" spellcheck="false" /></label>
         <label data-ctl="systemd">systemd 유닛 <input name="minerControl.unit" placeholder="srbminer.service" spellcheck="false" /></label>
-        <label data-ctl="task systemd direct">채굴기 실행 파일 (절대 경로 · 직접 실행은 필수, 그 외는 감지용) <input name="minerControl.exe" placeholder="C:\Mining\SRBMiner\SRBMiner-MULTI.exe" spellcheck="false" /></label>
+        <label data-ctl="task systemd direct">채굴기 실행 파일 (직접 실행은 필수, 그 외는 감지용)
+          <span class="pick"><input name="minerControl.exe" placeholder="C:\Mining\SRBMiner\SRBMiner-MULTI.exe" spellcheck="false" /><button type="button" data-pick="exe" data-for="minerControl.exe">찾아보기…</button></span></label>
         <label data-ctl="direct">인자 (셸 없이 실행, 공백 구분 · 공백 포함은 "따옴표") <input name="minerControl.args" placeholder="--algorithm pearlhash --pool host:port --wallet 주소.워커 --api-enable --api-port 21550" spellcheck="false" /></label>
         <label class="check" data-ctl="task systemd direct"><input name="minerControl.confirmStop" type="checkbox" /> 끄기 전에 확인</label>
-        <label class="check" data-ctl="direct"><input name="minerControl.hideWindow" type="checkbox" /> 채굴기 콘솔 창 숨기기 (Windows)</label>
+        <label class="check" data-ctl="direct"><input name="minerControl.hideWindow" type="checkbox" /> 채굴기 콘솔 창 숨기기 (출력은 채굴기 상태의 "채굴 창 보기"에서)</label>
         <label class="check" data-ctl="task systemd direct"><input name="autoStartMining" type="checkbox" /> Crypthy 시작 시 채굴 자동 시작 (30초 뒤 · 처음 켤 때 동의 · 안전 보류·최근 위험 정지·이미 실행 중이면 안 함)</label>
-        <div class="row" data-ctl="task"><button type="button" id="importTask">예약 작업에서 실행 파일·인자 가져오기</button><span id="importTaskMsg" class="msg"></span></div>
+        <p class="small warn" data-ctl="task">예약 작업 방식은 작업 스케줄러가 채굴기를 띄우므로 콘솔 창을 숨길 수 없습니다. 아래 버튼으로 작업의 실행 파일·인자를 가져와 실행 파일 방식으로 바꾸세요.</p>
+        <div class="row" data-ctl="task"><button type="button" id="importTask" class="primary">실행 파일 방식으로 전환 (작업에서 실행 파일·인자 가져오기)</button><span id="importTaskMsg" class="msg"></span></div>
+        <div class="row" data-ctl="direct" id="taskOnRow" hidden><span class="small warn" id="taskOnText"></span><button type="button" id="disableTask">예약 작업 끄기</button><span id="disableTaskMsg" class="msg"></span></div>
         <label class="check"><input name="openAtLogin" type="checkbox" /> 로그인 시 앱 실행</label>
         <label class="check"><input name="loginShowWindow" type="checkbox" /> 로그인 시 창 띄우기 (끄면 트레이에만)</label>
-        <label>공유 장부 폴더 (듀얼부팅 다른 OS 와 같은 PnL, 비우면 이 PC 만) <input name="sharedLedgerDir" placeholder="U:\ 또는 /mnt/crypthy" spellcheck="false" /></label>
+        <label>공유 장부 폴더 (듀얼부팅 다른 OS 와 같은 PnL, 비우면 이 PC 만)
+          <span class="pick"><input name="sharedLedgerDir" placeholder="U:\ 또는 /mnt/crypthy" spellcheck="false" /><button type="button" data-pick="folder" data-for="sharedLedgerDir">찾아보기…</button></span></label>
         <label>업데이트 확인 주기(분, 30~1440) <input name="updateIntervalMin" type="number" min="30" max="1440" step="30" /></label>
         <label>팬 정지 판정 전력(W) <input name="safety.fanStopPowerW" type="number" /></label>
         <label>팬 정지 판정 시간(초) <input name="safety.fanStopSeconds" type="number" /></label>
