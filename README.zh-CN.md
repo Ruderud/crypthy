@@ -48,6 +48,7 @@
 - **GPU 仪表盘**：每 2 秒读取一次 `nvidia-smi`：温度、风扇、功耗/上限、使用率。GPU 以 PCI bus id 识别。
 - **安全监控**：风扇停转、过热或温度读数丢失时，停止已知的挖矿程序。参见[安全监控](#safety-watch)。
 - **挖矿开关**：在挖矿程序卡片和托盘中启动、停止你配置的挖矿程序。见[挖矿开关](#mining-on-off)。
+- **无界面主机与远程画面**：在没有屏幕的电脑上以服务方式运行 Crypthy，并通过 Tailscale 在另一台电脑的 Crypthy 上查看和操作。见[无界面主机](#headless)。
 - **功率限制**：按 GPU 设定 W 值，只需一次管理员授权，之后会自动重新应用（Windows 计划任务 / Linux systemd 服务）。应用本体以普通用户权限运行。
 - **托盘应用**：可选登录时启动；另有只读的**本地状态 API**，以及来自 GitHub Releases 的**自动更新**。
 
@@ -132,6 +133,35 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
   sudo apt install ./Crypthy-*.deb
   ```
 - 托盘图标通过 Ubuntu 的 AppIndicator 显示，其他桌面环境可能需要 AppIndicator 扩展。开启“登录时启动”后，会创建 `~/.config/autostart/crypthy.desktop`。
+
+<a id="headless"></a>
+
+### 无界面主机与远程画面（v0.4.0，尚未在真机上测试）
+
+适用于没有屏幕的电脑，例如用作 Vast.ai 主机的 Ubuntu Server。Crypthy 在那台电脑上作为 systemd 服务（`crypthy-headless`：监控、安全停止、收益记录，无窗口）运行，另一台电脑上的 Crypthy 通过 [Tailscale](https://tailscale.com/) 等私有网络连接，显示同样的仪表盘。
+
+1. 在主机上（Node.js 18 及以上，`sudo apt install nodejs`）从 Releases 下载 `crypthy-headless-<版本>.tar.gz` 并安装：
+```bash
+tar xzf crypthy-headless-*.tar.gz && cd crypthy-headless-*/
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)"
+sudo -u "$USER" crypthy-headless --print-tokens
+```
+2. 在另一台电脑的 Crypthy 中：**设置 → 远程主机连接（원격 호스트 연결）**，输入主机地址（`100.x.y.z:47321`）和读取令牌。连接期间顶部显示 **远程（원격）**；点击 **回到本机画面（이 PC 화면으로）** 断开连接。
+3. 如需在另一台电脑上启动/停止挖矿、修改设置或解除暂停，请启用写入后安装，并同时输入写入令牌：
+```bash
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --accept-risk
+```
+
+- 除非用 `--bind` 指定一个具体 IP，远程 API 只监听 127.0.0.1，绝不监听所有地址（0.0.0.0）。读取需要读取令牌；写入需要 `--enable-write` 和单独的写入令牌。令牌为随机值，仅所有者可读地保存在 `/var/lib/crypthy-headless`，不会写入日志。
+- 响应中不包含钱包地址（只显示为 `prl1qe…0000.rig1`）。
+- 在无界面主机上首次启动需要 `--accept-risk`，或在已连接电脑上通过同意对话框确认。危险停止后不会重新启动挖矿程序的原则不变。
+- 加上 `--power-limits` 会用同一个 `sudo` 安装 GPU 功率限制服务（不使用 pkexec）。没有自动更新：重新运行新版本的 `install.sh` 即可（数据保留）。
+- 绝不停止容器（Docker、containerd、Vast.ai `kaalia`）。
+- 目前还没有 macOS 发布版本，请从源码运行：
+```bash
+git clone https://github.com/Ruderud/crypthy && cd crypthy
+npm ci && npm run build && npx electron .
+```
 
 ## 快速开始
 
@@ -248,6 +278,7 @@ sudo systemctl daemon-reload
 - `mode`：`external`（在应用之外启动的挖矿程序正在运行）、`app`（用应用的**启动**启动）或 `null`。`hashrate` 单位为 H/s。alert 的 `gpu` 为 PCI bus id。
 - alert code 列表 — 安全：`fan_stopped`、`temp_stop`、`temp_warn`、`telemetry_lost`、`miner_killed`、`miner_killed_again`、`kill_failed`、`safety_hold_running`、`hold_cleared`；重新评估：`review_rental_price`、`review_rental_better`、`review_prl`；更新：`update_available`、`update_ready`、`update_error`；其他：`status_api`。
 - 响应中还包含仅含四舍五入汇总值的 `pnl` 对象（`mined_coin`、`holdings_coin`、`revenue_krw`、`energy_cost_krw`、`realized_krw`、`unrealized_krw`、`total_pnl_krw`、`estimated`），不暴露原始日志。
+- 无界面主机在同一端口上还提供需要令牌的端点（`/v1/state`、`/v1/charts`、写入）；见[无界面主机](#headless)。
 
 ### 文件位置
 
@@ -262,6 +293,7 @@ sudo systemctl daemon-reload
 | PnL 事件日志（5 MB 轮换） | `%APPDATA%\Crypthy\pnl\events.jsonl` |
 | PnL 每日汇总（不限期限） | `%APPDATA%\Crypthy\pnl\daily.json` |
 | 应用日志（更新与退出过程，1 MB 轮换） | `%APPDATA%\Crypthy\logs\main.log` |
+| 无界面主机数据与令牌 | `/var/lib/crypthy-headless/`（仅所有者） |
 
 <a id="safety-and-privacy"></a>
 

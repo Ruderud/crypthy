@@ -48,6 +48,7 @@ Catalog as of 2026-10-17:
 - **GPU dashboard**: `nvidia-smi` every 2 seconds: temperature, fan, power/limit, utilization. GPUs are identified by PCI bus id.
 - **Safety watch**: stops known miners on a stopped fan, overheating or lost temperature readings. See [Safety watch](#safety-watch).
 - **Mining on/off**: start and stop the miner you configured from the miner card and the tray. See [Mining on/off](#mining-on-off).
+- **Headless host and remote screen**: run Crypthy as a service on a PC without a screen and view or control it from another Crypthy over Tailscale. See [Headless host](#headless).
 - **Power limits**: watts per GPU, re-applied automatically after a one-time admin approval (Windows scheduled task / Linux systemd service). The app itself runs as a normal user.
 - **Tray app** with optional start at login, a read-only **local status API**, and **auto-update** from GitHub Releases.
 
@@ -132,6 +133,35 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
   sudo apt install ./Crypthy-*.deb
   ```
 - The tray icon uses Ubuntu's AppIndicator; other desktops may need an AppIndicator extension. "Start at login" creates `~/.config/autostart/crypthy.desktop`.
+
+<a id="headless"></a>
+
+### Headless host and remote screen (v0.4.0, not yet tested on real hardware)
+
+For a PC without a screen, such as Ubuntu Server used as a Vast.ai host. Crypthy runs there as a systemd service (`crypthy-headless`: monitor, safety stop, profit tracking, no window), and another Crypthy connects over a private network such as [Tailscale](https://tailscale.com/) and shows the same dashboard.
+
+1. On the host (Node.js 18+, `sudo apt install nodejs`), download `crypthy-headless-<version>.tar.gz` from Releases:
+```bash
+tar xzf crypthy-headless-*.tar.gz && cd crypthy-headless-*/
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)"
+sudo -u "$USER" crypthy-headless --print-tokens
+```
+2. In Crypthy on the other PC: **Settings → remote host**, enter the host's address (`100.x.y.z:47321`) and the read token. The header shows **remote** while connected; **back to this PC** disconnects.
+3. To start and stop mining, change settings or clear holds from the other PC, install with writes enabled and also enter the write token:
+```bash
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --accept-risk
+```
+
+- The remote API listens on 127.0.0.1 unless `--bind` names one specific IP; it never listens on all addresses (0.0.0.0). Reading needs the read token; writing needs `--enable-write` and a separate write token. Tokens are random, stored owner-only in `/var/lib/crypthy-headless`, and never written to logs.
+- Responses never include the wallet address (only `prl1qe…0000.rig1`).
+- On a headless host the first start needs `--accept-risk` or the consent dialog on the connected PC. After a danger stop it still never restarts the miner.
+- `--power-limits` also installs the GPU power-limit service with the same `sudo` (no pkexec). No automatic updates: run the new `install.sh` again (data is kept).
+- Containers (Docker, containerd, Vast.ai `kaalia`) are never stopped.
+- macOS has no release build yet; run from source:
+```bash
+git clone https://github.com/Ruderud/crypthy && cd crypthy
+npm ci && npm run build && npx electron .
+```
 
 ## Quick start
 
@@ -248,6 +278,7 @@ sudo systemctl daemon-reload
 - `mode`: `external` (a miner started outside the app is running), `app` (started with the app's **start**) or `null`. `hashrate` is H/s. Alert `gpu` is a PCI bus id.
 - Alert codes — safety: `fan_stopped`, `temp_stop`, `temp_warn`, `telemetry_lost`, `miner_killed`, `miner_killed_again`, `kill_failed`, `safety_hold_running`, `hold_cleared`; review: `review_rental_price`, `review_rental_better`, `review_prl`; update: `update_available`, `update_ready`, `update_error`; other: `status_api`.
 - The response also includes a `pnl` object with rounded totals only (`mined_coin`, `holdings_coin`, `revenue_krw`, `energy_cost_krw`, `realized_krw`, `unrealized_krw`, `total_pnl_krw`, `estimated`); the raw log is never exposed.
+- A headless host serves the same port with more endpoints (`/v1/state`, `/v1/charts`, writes) behind tokens; see [Headless host](#headless).
 
 ### File locations
 
@@ -262,6 +293,7 @@ sudo systemctl daemon-reload
 | PnL event log (rotated at 5 MB) | `%APPDATA%\Crypthy\pnl\events.jsonl` |
 | PnL daily totals (no time limit) | `%APPDATA%\Crypthy\pnl\daily.json` |
 | App log (update and quit steps, rotated at 1 MB) | `%APPDATA%\Crypthy\logs\main.log` |
+| Headless host data and tokens | `/var/lib/crypthy-headless/` (owner only) |
 
 <a id="safety-and-privacy"></a>
 

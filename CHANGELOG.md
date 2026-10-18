@@ -8,6 +8,20 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
+Not yet tested on a real Ubuntu Server, Tailscale or Vast.ai host.
+
+### Added
+- **Headless host** (`crypthy-headless-<version>.tar.gz`, Node.js 18+): runs the monitor, safety stop and profit tracking as a systemd service on a PC without a screen. `install.sh` (sudo) installs to `/opt/crypthy-headless`, keeps data and tokens in `/var/lib/crypthy-headless` (owner only), runs the service as a normal user and can install the GPU power-limit service with the same sudo. No automatic updates.
+- **Remote API** on the headless host: listens on 127.0.0.1 or one specific IP (for example the Tailscale IP, never 0.0.0.0), read token for the full state and charts, writes (start/stop, settings, clear holds, sales, backfill) only with `--enable-write` and a separate write token. Host header check, wallet address never sent, the old `/v1/status` stays open to this PC only.
+- **Remote screen** in the app: Settings → remote host (address, read token, optional write token). The dashboard and tray show the host; start/stop and settings go to the host, and the host's confirmations (risk notice, recent danger stop, stop) are asked on this PC. Tokens stay in the main process, encrypted with the OS keychain.
+- `--accept-risk` for the first start on a headless host. After a danger stop the miner is still never restarted.
+- CI installs the headless package on Ubuntu with systemd and Node 18 and checks the API (tokens, Host header, read-only default, 0.0.0.0 refused, clean stop). More tests that Vast.ai customer and defjob containers are never stopped.
+
+### Changed
+- State, polling, safety and actions moved into `core.ts`, shared by the desktop app and the headless host.
+
 ## [0.3.9] - 2026-10-18
 
 ### Fixed
@@ -133,7 +147,8 @@ Release notes on GitHub are taken from the matching section of this file.
 ### Added
 - First release: Windows tray app with GPU dashboard (nvidia-smi), SRBMiner control, fan/temperature safety watch, power limits through a one-time UAC scheduled task, Kryptex profit tracking, mining vs rental comparison, read-only local status API, NSIS installer with auto-update.
 
-[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/Ruderud/crypthy/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Ruderud/crypthy/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/Ruderud/crypthy/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/Ruderud/crypthy/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/Ruderud/crypthy/compare/v0.3.6...v0.3.7

@@ -48,6 +48,7 @@ NVIDIA GPU가 달린 **Windows / Ubuntu(Linux)** PC를 위한 코인 채굴 허�
 - **GPU 대시보드**: `nvidia-smi`를 2초마다 읽어 온도, 팬, 전력/한도, 사용률을 보여 줍니다. GPU는 PCI bus id로 식별합니다.
 - **안전 감시**: 팬 정지, 과열, 온도 값 소실이 생기면 알려진 채굴기를 정지합니다. [안전 감시](#safety-watch)를 참고하세요.
 - **채굴 켜기·끄기**: 직접 구성한 채굴기를 채굴기 카드와 트레이에서 켜고 끕니다. [채굴 켜기·끄기](#mining-on-off)를 참고하세요.
+- **헤드리스 호스트와 원격 화면**: 화면 없는 PC에서 Crypthy를 서비스로 돌리고, 다른 PC의 Crypthy에서 Tailscale로 보고 조작합니다. [헤드리스 호스트](#headless)를 참고하세요.
 - **전력 제한**: GPU별로 W를 정하고, 처음 한 번만 관리자 승인을 받으면 이후 자동으로 다시 적용됩니다(Windows 예약 작업 / Linux systemd 서비스). 앱 본체는 일반 사용자 권한으로 실행됩니다.
 - **트레이 앱**: 로그인 시 실행(선택), 읽기 전용 **로컬 상태 API**, GitHub Releases를 통한 **자동 업데이트**를 지원합니다.
 
@@ -132,6 +133,35 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
   sudo apt install ./Crypthy-*.deb
   ```
 - 트레이 아이콘은 Ubuntu의 AppIndicator를 씁니다. 다른 데스크톱 환경에서는 AppIndicator 확장이 필요할 수 있습니다. "로그인 시 앱 실행"을 켜면 `~/.config/autostart/crypthy.desktop`을 만듭니다.
+
+<a id="headless"></a>
+
+### 헤드리스 호스트와 원격 화면 (v0.4.0, 실기 미검증)
+
+Vast.ai 호스트로 쓰는 Ubuntu Server처럼 화면이 없는 PC용입니다. 그 PC에서는 Crypthy가 systemd 서비스(`crypthy-headless`: 감시·안전 정지·수익 기록, 창 없음)로 돌고, 다른 PC의 Crypthy가 [Tailscale](https://tailscale.com/) 같은 사설망으로 붙어 같은 대시보드를 봅니다.
+
+1. 호스트(Node.js 18 이상, `sudo apt install nodejs`)에서 Releases의 `crypthy-headless-<버전>.tar.gz`를 받아 설치합니다.
+```bash
+tar xzf crypthy-headless-*.tar.gz && cd crypthy-headless-*/
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)"
+sudo -u "$USER" crypthy-headless --print-tokens
+```
+2. 다른 PC의 Crypthy에서 **설정 → 원격 호스트 연결**에 호스트 주소(`100.x.y.z:47321`)와 읽기 토큰을 넣습니다. 연결 중에는 머리말에 **원격**이 표시되고, **이 PC 화면으로**를 누르면 연결을 끊습니다.
+3. 다른 PC에서 채굴 켜기·끄기, 설정 변경, 보류 해제까지 하려면 쓰기를 켜서 설치하고 쓰기 토큰도 넣습니다.
+```bash
+sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --enable-write --accept-risk
+```
+
+- 원격 API는 `--bind`로 특정 IP 하나를 지정하지 않으면 127.0.0.1에만 열리고, 모든 주소(0.0.0.0)에는 열지 않습니다. 읽기에는 읽기 토큰, 쓰기에는 `--enable-write`와 별도 쓰기 토큰이 필요합니다. 토큰은 무작위 값으로 `/var/lib/crypthy-headless`에 소유자만 읽을 수 있게 저장되고 로그에 남지 않습니다.
+- 응답에는 지갑 주소가 들어가지 않습니다(`prl1qe…0000.rig1`처럼만 표시).
+- 헤드리스 호스트에서 처음 켜려면 `--accept-risk` 또는 연결한 PC의 동의 대화상자가 필요합니다. 위험 정지 뒤에 채굴기를 다시 켜지 않는 원칙은 같습니다.
+- `--power-limits`를 주면 GPU 전력 제한 서비스도 같은 `sudo`로 설치합니다(pkexec 없음). 자동 업데이트는 없으며, 새 버전의 `install.sh`를 다시 실행하면 됩니다(데이터 유지).
+- 컨테이너(Docker, containerd, Vast.ai `kaalia`)는 절대 정지하지 않습니다.
+- macOS용 릴리스 빌드는 아직 없습니다. 소스에서 실행하세요.
+```bash
+git clone https://github.com/Ruderud/crypthy && cd crypthy
+npm ci && npm run build && npx electron .
+```
 
 ## 빠른 시작
 
@@ -248,6 +278,7 @@ sudo systemctl daemon-reload
 - `mode`: `external`(앱 밖에서 시작한 채굴기 실행 중), `app`(앱의 **켜기**로 시작) 또는 `null`. `hashrate`는 H/s입니다. alert `gpu`는 PCI bus id입니다.
 - alert code — 안전: `fan_stopped`, `temp_stop`, `temp_warn`, `telemetry_lost`, `miner_killed`, `miner_killed_again`, `kill_failed`, `safety_hold_running`, `hold_cleared`; 재검토: `review_rental_price`, `review_rental_better`, `review_prl`; 업데이트: `update_available`, `update_ready`, `update_error`; 기타: `status_api`.
 - 응답에는 반올림한 집계값만 담은 `pnl` 객체도 들어갑니다(`mined_coin`, `holdings_coin`, `revenue_krw`, `energy_cost_krw`, `realized_krw`, `unrealized_krw`, `total_pnl_krw`, `estimated`). 원시 로그는 노출하지 않습니다.
+- 헤드리스 호스트는 같은 포트에서 토큰이 필요한 엔드포인트(`/v1/state`, `/v1/charts`, 쓰기)를 더 제공합니다. [헤드리스 호스트](#headless)를 참고하세요.
 
 ### 파일 위치
 
@@ -262,6 +293,7 @@ sudo systemctl daemon-reload
 | PnL 이벤트 로그(5MB에서 회전) | `%APPDATA%\Crypthy\pnl\events.jsonl` |
 | PnL 일별 집계(기간 제한 없음) | `%APPDATA%\Crypthy\pnl\daily.json` |
 | 앱 로그(업데이트·종료 과정, 1MB에서 회전) | `%APPDATA%\Crypthy\logs\main.log` |
+| 헤드리스 호스트 데이터·토큰 | `/var/lib/crypthy-headless/` (소유자만) |
 
 <a id="safety-and-privacy"></a>
 
