@@ -7,268 +7,367 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- 상단 고정: HUD + 탭 + 업데이트 안내 -->
   <div class="topbar">
-  <header>
-    <h1>Crypthy</h1>
-    <span id="mock" class="badge warn" hidden>MOCK</span>
-    <span id="remoteBadge" class="badge info" hidden></span>
-    <span id="minerBadge" class="badge">-</span>
-    <span id="updated" class="muted"></span>
-    <span class="spacer"></span>
-    <span id="updateInfo" class="muted small"></span>
-    <button id="checkUpdateBtn" title="지금 업데이트 확인">업데이트 확인</button>
-    <button id="themeBtn" title="테마 전환">다크</button>
-  </header>
-
-  <section class="update-banner" id="updateBanner" hidden>
-    <div class="update-text">
-      <b id="updateTitle"></b>
-      <div class="muted small" id="updateDetail"></div>
-      <pre class="update-notes" id="updateNotes" hidden></pre>
-    </div>
-    <div class="update-actions">
-      <button class="primary" id="updatePrimary"></button>
-      <button id="updateLater">나중에</button>
-    </div>
-  </section>
+    <header class="hud" id="hud">
+      <h1>Crypthy</h1>
+      <button type="button" class="chip" id="hudMining" data-go="dash" title="대시보드로">확인 중</button>
+      <button type="button" id="hudToggle" class="primary">켜기</button>
+      <button type="button" class="hud-num" id="hudLive" data-go="pnl" title="수익·장부로"><small>실시간 순수익</small><b>-</b></button>
+      <button type="button" class="hud-num" id="hudToday" data-go="pnl" title="수익·장부로"><small>오늘 순익</small><b>-</b></button>
+      <button type="button" class="hud-num" id="hudPrice" title="차트 창의 시세"><small>시세</small><b>-</b></button>
+      <div class="hud-gpus" id="hudGpus"></div>
+      <span class="spacer"></span>
+      <span id="mock" class="badge warn" hidden>MOCK</span>
+      <button type="button" id="remoteBadge" class="badge info" hidden title="설정 › 원격 연결"></button>
+      <button type="button" id="updateDot" class="badge accent" hidden title="업데이트 안내">업데이트</button>
+      <button type="button" class="icon-btn" id="hudAlerts" title="알림"><span class="bell">알림</span> <b id="hudAlertCount">0</b></button>
+      <button type="button" id="openCharts" title="차트 창 열기">차트</button>
+      <button type="button" id="openSettings" title="설정 열기">설정</button>
+    </header>
+    <nav class="tabbar" role="tablist" id="tabbar">
+      <button role="tab" data-tab="dash" class="on">대시보드</button>
+      <button role="tab" data-tab="pnl">수익·장부</button>
+      <button role="tab" data-tab="sell">매도·현금화</button>
+      <button role="tab" data-tab="miner">채굴기</button>
+      <span class="spacer"></span>
+      <span id="updated" class="muted small"></span>
+      <span id="updateInfo" class="muted small"></span>
+      <button id="checkUpdateBtn" class="ghost small" title="지금 업데이트 확인">업데이트 확인</button>
+    </nav>
+    <section class="update-banner" id="updateBanner" hidden>
+      <div class="update-text">
+        <b id="updateTitle"></b>
+        <div class="muted small" id="updateDetail"></div>
+        <pre class="update-notes" id="updateNotes" hidden></pre>
+      </div>
+      <div class="update-actions">
+        <button class="primary" id="updatePrimary"></button>
+        <button id="updateLater">나중에</button>
+      </div>
+    </section>
   </div>
 
   <main>
-    <section class="card wide">
-      <h2>코인 허브 <span class="muted small" id="hubSub"></span></h2>
-      <div class="row">
-        <label>코인 <select id="hubCoin"></select></label>
-        <span id="hubInfo" class="muted"></span>
-        <span id="hubMsg" class="msg"></span>
+    <!-- 대시보드: 읽기 전용 (입력은 GPU 채굴 스위치만) -->
+    <section class="tab-panel" data-panel="dash">
+      <div class="strip" id="setupStrip" hidden>
+        <span id="setupStripText"></span>
+        <button type="button" id="openWizard" class="primary small">처음 설정</button>
       </div>
-      <table class="table" id="hubTable"></table>
-      <p class="muted small">Crypthy 는 채굴기를 내려받거나 설치하지 않습니다. 저장소 링크를 열어 직접 확인·설치하세요. dev fee 는 각 출처에서 확인한 값이며, 확인하지 못한 값은 "미확인"으로 표시합니다. 채굴기 바이너리는 보안 프로그램에 탐지될 수 있으니 출처와 해시를 직접 확인하세요.</p>
-    </section>
-
-    <section class="card wide">
-      <h2>차트
-        <span class="tabs" id="metricTabs">
-          <button data-metric="hash" class="on">해시레이트</button><button data-metric="temp">온도</button><button data-metric="power">전력</button>
-        </span>
-        <span class="muted small" id="chartLegend"></span>
-      </h2>
-      <div class="chart" id="gpuChart"></div>
-      <div class="chart-row">
-        <div><h3 id="priceTitle">시세 (USD, 30일)</h3><div class="chart small-chart" id="priceChart"></div></div>
-        <div><h3>일별 채굴량 <span class="muted small">(막대, 왼쪽)</span> · 순수익 원 <span class="muted small">(선, 오른쪽)</span></h3><div class="chart small-chart" id="dailyChart"></div></div>
+      <p class="small" id="dashMinerMsg" hidden></p>
+      <div class="gpus" id="gpus"></div>
+      <div class="dash-row">
+        <article class="card">
+          <h2>풀 · 지갑 <span class="muted small" id="poolSub"></span></h2>
+          <dl class="stats tight" id="poolStats"></dl>
+        </article>
+        <article class="card">
+          <h2>자동 매도 <span class="spacer"></span><button type="button" class="link" data-go="sell">매도·현금화</button></h2>
+          <dl class="stats tight" id="dashSell"></dl>
+        </article>
+        <article class="card">
+          <h2>최근 알림 <span class="spacer"></span><button type="button" class="link" id="allAlerts">전체 보기</button></h2>
+          <ul class="alerts short" id="dashAlerts"></ul>
+        </article>
       </div>
+      <article class="card">
+        <h2>해시레이트 <span class="muted small">최근 1시간 · 전체 GPU</span> <span class="muted small" id="sparkNow"></span>
+          <span class="spacer"></span><button type="button" class="link" id="sparkBig">크게 보기</button></h2>
+        <svg class="spark" id="spark" viewBox="0 0 600 60" preserveAspectRatio="none" role="img" aria-label="최근 1시간 해시레이트"></svg>
+      </article>
     </section>
 
-    <section class="card wide setup" id="setupCard" hidden>
-      <h2>처음 설정 <span class="muted small">Crypthy 는 채굴기를 설치하지 않습니다. 채굴기는 직접 설치·구성하고, 여기서는 감시·수익 확인과 켜기·끄기를 합니다</span></h2>
-      <ol class="steps">
-        <li id="stepWallet">
-          <b>지갑·풀</b> <span class="state"></span>
-          <div class="grid">
-            <label>공개 지갑 주소.워커 <input id="wallet" placeholder="prl1...(공개 주소).worker1" spellcheck="false" /></label>
-            <label>풀 (host:port) <input id="pool" list="poolExamples" placeholder="prl.kryptex.network:8048" spellcheck="false" /></label>
-          </div>
-          <datalist id="poolExamples"></datalist>
-          <div class="row"><button id="saveWallet" class="primary">저장</button><button id="importBat">기존 bat에서 가져오기</button><span id="walletMsg" class="msg"></span></div>
-          <p class="muted small">풀 공개 통계(잔액·지급)를 조회하는 데만 씁니다. 공개 주소만 입력하고, 시드 문구·비밀번호·토큰은 절대 넣지 마세요.</p>
-        </li>
-        <li id="stepApi">
-          <b>채굴기 통계 API</b> <span class="state"></span>
-          <p class="muted small">실행 중인 채굴기의 해시레이트·share 를 읽습니다. SRBMiner-MULTI 는 <code>--api-enable --api-port 21550</code> 옵션으로 실행하세요. 포트는 아래 설정에서 바꿀 수 있습니다.</p>
-        </li>
-      </ol>
+    <!-- 수익·장부 -->
+    <section class="tab-panel" data-panel="pnl" hidden>
+      <article class="card">
+        <h2>채굴량·수익 <span class="muted small" id="profitSub"></span></h2>
+        <dl class="stats" id="profit"></dl>
+        <p id="profitErr" class="msg err"></p>
+      </article>
+      <article class="card">
+        <h2>누적 손익 (PnL) <span class="muted small" id="pnlSub"></span>
+          <span class="spacer"></span>
+          <button type="button" id="openSale">매도 기록 추가</button>
+          <button type="button" id="openBootstrap" hidden>소급 적용</button>
+          <button type="button" id="pnlExport">CSV 내보내기</button><button type="button" id="pnlFolder">로그 폴더 열기</button>
+          <span id="pnlMsg" class="msg"></span>
+        </h2>
+        <p class="small" id="sharedInfo" hidden></p>
+        <dl class="stats" id="pnlSummary"></dl>
+        <table class="table" id="pnlTable"></table>
+      </article>
+      <article class="card">
+        <h2>GPU별 채굴 vs 대여 <span class="muted small">정보 표시만 — 대여가는 수동값 또는 Vast.ai 공개 오퍼 중앙값</span></h2>
+        <table class="table" id="compare"></table>
+      </article>
     </section>
 
-    <section class="card wide">
-      <h2>채굴기 상태 <span class="muted small">켜기·끄기는 설정한 방식으로만 · 위험 정지 뒤 자동으로 다시 켜지 않음</span>
-        <span class="spacer"></span>
-        <button id="minerStart" class="primary">켜기</button><button id="minerStop">끄기</button><button id="minerLogBtn" title="채굴기 출력 보기 (실행 파일 방식)">채굴 창 보기</button><span id="minerMsg" class="msg"></span>
-      </h2>
-      <p class="muted small" id="minerControlInfo"></p>
-      <p class="small" id="gpuSelInfo" hidden></p>
-      <pre id="minerLogView" class="log" hidden></pre>
-      <dl class="stats" id="minerStats"></dl>
+    <!-- 매도·현금화 -->
+    <section class="tab-panel" data-panel="sell" hidden>
+      <article class="card">
+        <h2>SafeTrade 자동 매도 <span class="muted small">하루 1회 · 지정가만 · 하한가 아래로는 팔지 않음 · 출금·지갑 송금은 하지 않음</span>
+          <span class="spacer"></span>
+          <button type="button" id="openAutoSell">설정</button><button type="button" id="openKey">API 키</button>
+          <button type="button" id="asDryRun">모의 실행</button><button type="button" id="asRealRun" class="danger">지금 한 번 실제 매도 (확인 후)</button>
+          <span id="asMsg" class="msg"></span>
+        </h2>
+        <div class="strip warn" id="asError" hidden><span id="asErrorText"></span><button type="button" id="asErrorKey">API 키 확인</button></div>
+        <dl class="stats" id="asStatus"></dl>
+        <p class="small" id="asLast"></p>
+        <table class="table" id="asHistory"></table>
+      </article>
+      <article class="card">
+        <h2>현금화 경로 <span class="muted small" id="cashoutSub"></span><span class="spacer"></span><button type="button" id="openCashout">메모 편집</button></h2>
+        <ol class="steps small" id="cashoutSteps"></ol>
+      </article>
     </section>
 
-    <section class="gpus" id="gpus"></section>
-
-    <section class="card">
-      <h2>알림</h2>
-      <ul id="alerts" class="alerts"></ul>
-    </section>
-
-    <section class="card">
-      <h2>채굴량·수익 <span class="muted small" id="profitSub"></span></h2>
-      <dl class="stats" id="profit"></dl>
-      <p id="profitErr" class="msg err"></p>
-    </section>
-
-    <section class="card wide">
-      <h2>누적 손익 (PnL) <span class="muted small" id="pnlSub"></span>
-        <span class="spacer"></span>
-        <button id="pnlExport">CSV 내보내기</button><button id="pnlFolder">로그 폴더 열기</button>
-      </h2>
-      <p class="small" id="sharedInfo" hidden></p>
-      <dl class="stats" id="pnlSummary"></dl>
-      <table class="table" id="pnlTable"></table>
-      <h3>일별 순익 <span class="muted small">(막대, 왼쪽 · 흐린 막대 = 추정)</span> · 누적 PnL <span class="muted small">(선, 오른쪽)</span></h3>
-      <div class="chart small-chart" id="pnlChart"></div>
-      <div class="pnl-forms">
-        <form id="bootstrapForm" class="note" hidden>
-          <b>소급 적용</b>
-          <span class="muted small" id="bootstrapInfo"></span>
-          <div class="row">
-            <label>채굴 시작 <input type="datetime-local" id="bootstrapFrom" /></label>
-            <label>추정 GPU 전력(W) <input type="number" id="bootstrapWatts" min="0" step="10" /></label>
-            <button type="submit" id="bootstrapSubmit">소급 적용</button><span id="bootstrapMsg" class="msg"></span>
-          </div>
-        </form>
-        <form id="saleForm" class="note">
-          <b>매도 기록 <span class="muted small">(선택 — 실현 손익 계산용, 로컬에만 저장)</span></b>
-          <div class="row">
-            <label>수량 <input type="number" id="saleQty" step="0.0001" min="0" /></label>
-            <label>매도 대금(원) <input type="number" id="saleProceeds" step="1" min="0" /></label>
-            <label>수수료(원) <input type="number" id="saleFee" step="1" min="0" value="0" /></label>
-            <label>거래소 <input id="saleVenue" maxlength="60" /></label>
-            <label>메모 <input id="saleNote" maxlength="200" /></label>
-            <button type="submit">기록</button><span id="saleMsg" class="msg"></span>
-          </div>
-        </form>
-      </div>
-    </section>
-
-    <section class="card wide" id="autoSellCard">
-      <h2>SafeTrade 자동 매도 <span class="muted small">하루 1회 · 지정가만 · 하한가 아래로는 팔지 않음 · 출금·지갑 송금은 하지 않음</span>
-        <span class="spacer"></span>
-        <button id="asDryRun">모의 실행</button><button id="asRealRun" class="danger">지금 한 번 실제 매도 (확인 후)</button><span id="asMsg" class="msg"></span>
-      </h2>
-      <dl class="stats" id="asStatus"></dl>
-      <p class="small" id="asLast"></p>
-      <table class="table" id="asHistory"></table>
-      <form id="autoSellForm" class="grid">
-        <label class="check"><input name="enabled" type="checkbox" /> 이 기기에서 자동 매도 (한 기기에서만 켜세요)</label>
-        <label class="check"><input name="dryRun" type="checkbox" /> 모의 실행 (주문 없이 계획만 · 처음에는 켜 두세요)</label>
-        <label>실행 시각 (이 PC 시간) <input name="time" type="time" /></label>
-        <label>남겨 둘 PRL <input name="reservePrl" type="number" min="0" step="0.0001" /></label>
-        <label>최저가 ($, 실제 매도에는 필수) <input name="floorUsd" type="number" min="0" step="0.01" /></label>
-        <label>기준가 대비 최대 하락(%) <input name="maxDropPct" type="number" min="0.1" max="50" step="0.1" /></label>
-        <label>최대 스프레드(%) — 넘으면 그날 안 팜 <input name="maxSpreadPct" type="number" min="0.1" max="20" step="0.1" /></label>
-        <label>최소 매수 호가 깊이($) <input name="minBidDepthUsd" type="number" min="0" step="10" /></label>
-        <label>하루 최대 매도(PRL) <input name="dailyMaxPrl" type="number" min="0" step="1" /></label>
-        <label>주문 1건 최대($) <input name="orderMaxUsd" type="number" min="1" step="1" /></label>
-        <label>안 팔리면 몇 분 뒤 값 내림 <input name="repriceMinutes" type="number" min="1" max="240" step="1" /></label>
-        <label>한 번에 내리는 폭(%) <input name="repriceStepPct" type="number" min="0.1" max="5" step="0.1" /></label>
-        <label>값 내림 최대 횟수 (0~20) <input name="maxReprices" type="number" min="0" max="20" step="1" /></label>
-        <div class="row"><button type="submit" class="primary">자동 매도 설정 저장</button><span id="asSaveMsg" class="msg"></span></div>
-      </form>
-      <p class="muted small">하한가 = max(최저가, 기준가 × (1 − 최대 하락%)). 기준가는 SafeTrade 24시간 평균가와 CoinGecko 시세 중 높은 값입니다. 가장 낮은 매도 호가보다 한 틱 아래에 지정가로 걸고, 안 팔리면 정한 시간마다 조금씩 내리되 하한가 아래로는 내리지 않습니다. 호가가 비정상(스프레드가 넓음, 매수 깊이가 얕음, API 오류)이면 그날은 팔지 않고 알립니다. 판 기록은 PnL 에 "실현 매도"로 남습니다.</p>
-      <form id="keyForm" class="note">
-        <b>SafeTrade API 키 <span class="muted small" id="keyState"></span></b>
-        <div class="row">
-          <label>API 키 <input id="exKey" type="password" autocomplete="off" spellcheck="false" /></label>
-          <label>시크릿 <input id="exSecret" type="password" autocomplete="off" spellcheck="false" /></label>
-          <button type="submit" class="primary">키 저장</button><button type="button" id="exKeyClear">키 삭제</button><span id="keyMsg" class="msg"></span>
-        </div>
-        <p class="small warn">SafeTrade 에서 키를 만들 때 <b>거래(Trade) 권한만</b> 주고 <b>출금 권한은 주지 마세요</b>. 가능하면 이 PC 의 IP 로 제한하세요. SafeTrade API 로는 키의 권한을 확인할 수 없으므로 Crypthy 가 대신 막아 주지 못합니다.</p>
-        <p class="muted small" id="keyHelp">키는 이 PC 의 OS 보안 저장소로 암호화해 저장하고, 화면·원격 화면·로그·상태 API 로 내보내지 않습니다. 헤드리스(Ubuntu)는 install.sh --safetrade-key 파일 (root 0600, systemd LoadCredential) 로 넣습니다.</p>
-      </form>
-    </section>
-
-    <section class="card wide" id="cashoutCard">
-      <h2>현금화 경로 메모 <span class="muted small" id="cashoutSub"></span></h2>
-      <ol class="steps small" id="cashoutSteps"></ol>
-      <form id="cashoutForm" class="grid">
-        <label>PRL 입금 최소 <input name="prlDepositMin" type="number" min="0" step="0.1" /></label>
-        <label>PRL 입금 컨펌 수 <input name="prlConfirmations" type="number" min="0" step="1" /></label>
-        <label>SafeTrade 매도 수수료(%) <input name="sellFeePct" type="number" min="0" step="0.01" /></label>
-        <label>USDT 출금 네트워크 <input name="withdrawNetwork" maxlength="20" spellcheck="false" /></label>
-        <label>USDT 출금 수수료 <input name="withdrawFeeUsdt" type="number" min="0" step="0.1" /></label>
-        <label>USDT 출금 최소 <input name="withdrawMinUsdt" type="number" min="0" step="0.1" /></label>
-        <label>출금 권장 잔고 (USDT, 일요일 알림) <input name="withdrawSuggestUsdt" type="number" min="0" step="1" /></label>
-        <label>측정일 <input name="measuredAt" type="date" /></label>
-        <div class="row"><button type="submit" class="primary">메모 저장</button><span id="cashoutMsg" class="msg"></span></div>
-      </form>
-    </section>
-
-    <section class="card wide">
-      <h2>GPU별 채굴 vs 대여 <span class="muted small">정보 표시만 — 대여가는 수동값 또는 Vast.ai 공개 오퍼 중앙값</span></h2>
-      <table class="table" id="compare"></table>
-    </section>
-
-    <section class="card wide">
-      <h2>GPU 설정 · 전력 제한</h2>
-      <table class="table" id="gpuTable"></table>
-      <div class="row">
-        <button id="saveGpus" class="primary">GPU 설정 저장</button>
-        <button id="powerRegister">전력 제한 예약 작업 등록 (UAC 1회)</button>
-        <button id="powerApply">전력 제한 지금 적용</button>
-        <span id="gpuMsg" class="msg"></span>
-      </div>
-      <p class="muted small" id="powerTask"></p>
-      <pre id="powerLog" class="log"></pre>
-    </section>
-
-    <section class="card wide" id="remoteCard">
-      <h2>원격 호스트 연결 <span class="muted small">헤드리스 Crypthy(예: Ubuntu 서버)에 Tailscale 같은 사설망으로 붙어 같은 화면을 봅니다</span></h2>
-      <form id="remoteForm" class="grid">
-        <label>주소 <input id="remoteUrl" placeholder="100.x.y.z:47321" spellcheck="false" autocomplete="off" /></label>
-        <label>읽기 토큰 <input id="remoteRead" type="password" autocomplete="off" spellcheck="false" /></label>
-        <label>쓰기 토큰 (선택 · 원격 조작) <input id="remoteWrite" type="password" autocomplete="off" spellcheck="false" /></label>
-        <div class="row"><button type="submit" class="primary">연결</button><button type="button" id="remoteOff">이 PC 화면으로</button><span id="remoteMsg" class="msg"></span></div>
-      </form>
-      <p class="muted small" id="remoteInfo"></p>
-    </section>
-
-    <section class="card wide">
-      <h2>설정</h2>
-      <form id="settingsForm" class="grid">
-        <label>코인 <select name="coin" id="coinSelect"></select></label>
-        <label>채굴기 통계 API <select name="minerApi.adapter"><option value="srbminer">SRBMiner-MULTI</option><option value="none">사용 안 함</option></select></label>
-        <label>채굴기 API 포트 <input name="minerApi.port" type="number" /></label>
-        <label class="check"><input name="safetyKill" type="checkbox" /> 위험 조건에서 실행 중인 채굴기 자동 정지 (재시작 안 함)</label>
-        <label>채굴 켜기·끄기 방식 <select name="minerControl.mode" id="controlMode">
-          <option value="none">사용 안 함</option><option value="task">Windows 예약 작업</option>
-          <option value="systemd">Linux systemd --user 유닛</option><option value="direct">실행 파일 직접 실행</option>
-        </select></label>
-        <label data-ctl="task">예약 작업 이름 <input name="minerControl.taskName" placeholder="PearlMiner" spellcheck="false" /></label>
-        <label data-ctl="systemd">systemd 유닛 <input name="minerControl.unit" placeholder="srbminer.service" spellcheck="false" /></label>
-        <label data-ctl="task systemd direct">채굴기 실행 파일 (직접 실행은 필수, 그 외는 감지용)
-          <span class="pick"><input name="minerControl.exe" placeholder="C:\Mining\SRBMiner\SRBMiner-MULTI.exe" spellcheck="false" /><button type="button" data-pick="exe" data-for="minerControl.exe">찾아보기…</button></span></label>
-        <label data-ctl="direct">인자 (셸 없이 실행, 공백 구분 · 공백 포함은 "따옴표") <input name="minerControl.args" placeholder="--algorithm pearlhash --pool host:port --wallet 주소.워커 --api-enable --api-port 21550" spellcheck="false" /></label>
-        <label class="check" data-ctl="task systemd direct"><input name="minerControl.confirmStop" type="checkbox" /> 끄기 전에 확인</label>
-        <label class="check" data-ctl="direct"><input name="minerControl.hideWindow" type="checkbox" /> 채굴기 콘솔 창 숨기기 (출력은 채굴기 상태의 "채굴 창 보기"에서)</label>
-        <label class="check" data-ctl="task systemd direct"><input name="autoStartMining" type="checkbox" /> Crypthy 시작 시 채굴 자동 시작 (30초 뒤 · 처음 켤 때 동의 · 안전 보류·최근 위험 정지·이미 실행 중이면 안 함)</label>
-        <p class="small warn" data-ctl="task">예약 작업 방식은 작업 스케줄러가 채굴기를 띄우므로 콘솔 창을 숨길 수 없습니다. 아래 버튼으로 작업의 실행 파일·인자를 가져와 실행 파일 방식으로 바꾸세요.</p>
-        <div class="row" data-ctl="task"><button type="button" id="importTask" class="primary">실행 파일 방식으로 전환 (작업에서 실행 파일·인자 가져오기)</button><span id="importTaskMsg" class="msg"></span></div>
-        <div class="row" data-ctl="direct" id="taskOnRow" hidden><span class="small warn" id="taskOnText"></span><button type="button" id="disableTask">예약 작업 끄기</button><span id="disableTaskMsg" class="msg"></span></div>
-        <label class="check"><input name="openAtLogin" type="checkbox" /> 로그인 시 앱 실행</label>
-        <label class="check"><input name="loginShowWindow" type="checkbox" /> 로그인 시 창 띄우기 (끄면 트레이에만)</label>
-        <label>공유 장부 폴더 (듀얼부팅 다른 OS 와 같은 PnL, 비우면 이 PC 만)
-          <span class="pick"><input name="sharedLedgerDir" placeholder="U:\ 또는 /mnt/crypthy" spellcheck="false" /><button type="button" data-pick="folder" data-for="sharedLedgerDir">찾아보기…</button></span></label>
-        <label>업데이트 확인 주기(분, 30~1440) <input name="updateIntervalMin" type="number" min="30" max="1440" step="30" /></label>
-        <label>팬 정지 판정 전력(W) <input name="safety.fanStopPowerW" type="number" /></label>
-        <label>팬 정지 판정 시간(초) <input name="safety.fanStopSeconds" type="number" /></label>
-        <label>온도 경고(°C) <input name="safety.tempWarnC" type="number" /></label>
-        <label>온도 정지(°C) <input name="safety.tempStopC" type="number" /></label>
-        <label>전기 단가(원/kWh) <input name="profit.krwPerKwh" type="number" /></label>
-        <label>환율(원/$) <input name="profit.krwPerUsd" type="number" /></label>
-        <label>대여 호스트 몫(0~1) <input name="profit.vastHostShare" type="number" step="0.01" /></label>
-        <label>임대 중 GPU 전력(W) <input name="profit.rentalPowerW" type="number" /></label>
-        <label>재검토: 시세 하락(%) <input name="profit.reviewPrlDropPct" type="number" /></label>
-        <label class="check"><input name="profit.vastVerifiedOnly" type="checkbox" /> Vast 시세: 인증(verified) 매물만</label>
-        <label>Vast 매물 유형 <select name="profit.vastType"><option value="on-demand">온디맨드</option><option value="interruptible">중단 가능(입찰)</option></select></label>
-        <label>Vast 지역(국가 코드, 비우면 전체) <input name="profit.vastRegions" placeholder="KR,JP" spellcheck="false" /></label>
-        <label>시세 기준가($, 0=다음 조회값) <input name="profit.baselinePrlUsd" type="number" step="0.01" /></label>
-        <div class="row"><button type="submit" class="primary">설정 저장</button><span id="settingsMsg" class="msg"></span></div>
-      </form>
-      <p class="muted small">로컬 상태 API: http://127.0.0.1:47321/v1/status (읽기 전용, 이 PC에서만 접근)</p>
+    <!-- 채굴기 -->
+    <section class="tab-panel" data-panel="miner" hidden>
+      <article class="card">
+        <h2>채굴기 상태 <span class="muted small">켜기·끄기는 설정한 방식으로만 · 위험 정지 뒤 자동으로 다시 켜지 않음</span>
+          <span class="spacer"></span>
+          <button type="button" id="minerLogBtn" title="채굴기 출력 보기 (실행 파일 방식)">채굴 창 보기</button>
+          <button type="button" data-settings="miner">제어 방식 설정</button>
+          <span id="minerMsg" class="msg"></span>
+        </h2>
+        <p class="muted small" id="minerControlInfo"></p>
+        <p class="small" id="gpuSelInfo" hidden></p>
+        <div class="strip warn" id="taskStrip" hidden><span id="taskStripText"></span><button type="button" data-settings="miner">설정 › 채굴기</button></div>
+        <dl class="stats" id="minerStats"></dl>
+        <pre id="minerLogView" class="log tall" hidden></pre>
+      </article>
     </section>
   </main>
   <footer class="muted small">
     Crypthy · MIT · 차트: <a href="#" data-link="https://www.tradingview.com/">TradingView Lightweight Charts™</a>
     (Copyright (c) 2025 TradingView, Inc., Apache-2.0)
   </footer>
-  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+
+  <!-- 설정 시트: 섹션별 저장·취소, 바뀐 섹션 표시, 저장 안 하고 닫으면 확인 -->
+  <dialog class="sheet" id="settingsSheet" aria-labelledby="settingsTitle">
+    <div class="sheet-head">
+      <h2 id="settingsTitle">설정</h2>
+      <span class="muted small" id="settingsRO"></span>
+      <span class="spacer"></span>
+      <button type="button" class="ghost" data-close>닫기 <span class="muted small">Esc</span></button>
+    </div>
+    <div class="sheet-body">
+      <nav class="sheet-nav" id="settingsNav">
+        <button type="button" data-sec="miner" class="on">채굴기</button>
+        <button type="button" data-sec="gpu">GPU · 전력</button>
+        <button type="button" data-sec="safety">안전</button>
+        <button type="button" data-sec="profit">수익 계산</button>
+        <button type="button" data-sec="app">앱</button>
+        <button type="button" data-sec="remote">원격 연결</button>
+        <button type="button" data-sec="hub">코인·채굴기 목록</button>
+      </nav>
+      <div class="sheet-content">
+        <form class="sec" data-sec="miner" novalidate>
+          <h3>채굴기</h3>
+          <div class="field wide"><span class="lbl">켜기·끄기 방식</span>
+            <select name="minerControl.mode" id="controlMode" class="seg">
+              <option value="none">사용 안 함</option><option value="task">예약 작업</option><option value="systemd">systemd 유닛</option><option value="direct">실행 파일</option>
+            </select></div>
+          <label class="field" data-ctl="task"><span class="lbl">예약 작업 이름</span><input name="minerControl.taskName" placeholder="PearlMiner" spellcheck="false" maxlength="200" /></label>
+          <label class="field" data-ctl="systemd"><span class="lbl">systemd 유닛</span><input name="minerControl.unit" placeholder="srbminer.service" spellcheck="false" maxlength="200" /></label>
+          <label class="field wide" data-ctl="task systemd direct"><span class="lbl">채굴기 실행 파일 (직접 실행은 필수, 그 외는 감지용)</span>
+            <span class="pick"><input name="minerControl.exe" placeholder="C:\Mining\SRBMiner\SRBMiner-MULTI.exe" spellcheck="false" /><button type="button" data-pick="exe" data-for="minerControl.exe">찾아보기…</button></span></label>
+          <label class="field wide" data-ctl="direct"><span class="lbl">인자 (셸 없이 실행, 공백 구분 · 공백 포함은 "따옴표")</span><input name="minerControl.args" placeholder="--algorithm pearlhash --pool host:port --wallet 주소.워커 --api-enable --api-port 21550" spellcheck="false" /></label>
+          <label class="toggle" data-ctl="direct"><input name="minerControl.hideWindow" type="checkbox" /><span>채굴기 콘솔 창 숨기기 <em>출력은 채굴기 탭의 "채굴 창 보기"에서</em></span></label>
+          <label class="toggle" data-ctl="task systemd direct"><input name="minerControl.confirmStop" type="checkbox" /><span>끄기 전에 확인</span></label>
+          <label class="toggle" data-ctl="task systemd direct"><input name="autoStartMining" type="checkbox" /><span>Crypthy 시작 시 채굴 자동 시작 <em>30초 뒤 · 처음 켤 때 동의 · 안전 보류·최근 위험 정지·이미 실행 중이면 안 함</em></span></label>
+          <p class="small warn" data-ctl="task">예약 작업 방식은 작업 스케줄러가 채굴기를 띄우므로 콘솔 창을 숨길 수 없습니다. 아래 버튼으로 작업의 실행 파일·인자를 가져와 실행 파일 방식으로 바꾸세요.</p>
+          <div class="row" data-ctl="task"><button type="button" id="importTask" class="primary">실행 파일 방식으로 전환 (작업에서 실행 파일·인자 가져오기)</button><span id="importTaskMsg" class="msg"></span></div>
+          <div class="row" data-ctl="direct" id="taskOnRow" hidden><span class="small warn" id="taskOnText"></span><button type="button" id="disableTask">예약 작업 끄기</button><span id="disableTaskMsg" class="msg"></span></div>
+          <div class="field"><span class="lbl">채굴기 통계 API</span>
+            <select name="minerApi.adapter" class="seg"><option value="srbminer">SRBMiner-MULTI</option><option value="none">사용 안 함</option></select></div>
+          <label class="field"><span class="lbl">채굴기 API 포트</span><span class="unit"><input name="minerApi.port" type="number" min="1024" max="65535" step="1" required /><i>port</i></span></label>
+          <p class="muted small wide">SRBMiner-MULTI 는 <code>--api-enable --api-port 21550</code> 옵션으로 실행해야 해시레이트·share 를 읽습니다.</p>
+        </form>
+
+        <form class="sec" data-sec="gpu" novalidate hidden>
+          <h3>GPU · 전력</h3>
+          <div class="wide scroll-x"><table class="table" id="gpuTable"></table></div>
+          <div class="row wide">
+            <button type="button" id="powerRegister">전력 제한 예약 작업 등록 (UAC 1회)</button>
+            <button type="button" id="powerApply">전력 제한 지금 적용</button>
+            <span id="gpuMsg" class="msg"></span>
+          </div>
+          <p class="muted small wide" id="powerTask"></p>
+          <pre id="powerLog" class="log wide"></pre>
+        </form>
+
+        <form class="sec" data-sec="safety" novalidate hidden>
+          <h3>안전</h3>
+          <label class="toggle wide"><input name="safetyKill" type="checkbox" /><span>위험 조건에서 실행 중인 채굴기 자동 정지 <em>재시작 안 함</em></span></label>
+          <label class="field"><span class="lbl">팬 정지 판정 전력</span><span class="unit"><input name="safety.fanStopPowerW" type="number" min="1" step="any" required /><i>W</i></span></label>
+          <label class="field"><span class="lbl">팬 정지 판정 시간</span><span class="unit"><input name="safety.fanStopSeconds" type="number" min="2" step="any" required /><i>초</i></span></label>
+          <label class="field"><span class="lbl">온도 경고</span><span class="unit"><input name="safety.tempWarnC" type="number" min="30" max="94" step="any" required data-lt="safety.tempStopC" /><i>°C</i></span></label>
+          <label class="field"><span class="lbl">온도 정지 (95 이하)</span><span class="unit"><input name="safety.tempStopC" type="number" min="31" max="95" step="any" required /><i>°C</i></span></label>
+        </form>
+
+        <form class="sec" data-sec="profit" novalidate hidden>
+          <h3>수익 계산</h3>
+          <label class="field"><span class="lbl">코인</span><select name="coin" id="coinSelect"></select></label>
+          <label class="field"><span class="lbl">전기 단가</span><span class="unit"><input name="profit.krwPerKwh" type="number" min="0" step="any" required /><i>원/kWh</i></span></label>
+          <label class="field"><span class="lbl">환율</span><span class="unit"><input name="profit.krwPerUsd" type="number" min="0" step="any" required /><i>원/$</i></span></label>
+          <label class="field"><span class="lbl">대여 호스트 몫</span><span class="unit"><input name="profit.vastHostShare" type="number" min="0" max="1" step="any" required /><i>0~1</i></span></label>
+          <label class="field"><span class="lbl">임대 중 GPU 전력</span><span class="unit"><input name="profit.rentalPowerW" type="number" min="0" step="any" required /><i>W</i></span></label>
+          <label class="field"><span class="lbl">재검토: 시세 하락</span><span class="unit"><input name="profit.reviewPrlDropPct" type="number" min="0" step="any" required /><i>%</i></span></label>
+          <label class="field"><span class="lbl">시세 기준가 (0 = 다음 조회값)</span><span class="unit"><input name="profit.baselinePrlUsd" type="number" min="0" step="any" required /><i>$</i></span></label>
+          <label class="toggle"><input name="profit.vastVerifiedOnly" type="checkbox" /><span>Vast 시세: 인증(verified) 매물만</span></label>
+          <div class="field"><span class="lbl">Vast 매물 유형</span><select name="profit.vastType" class="seg"><option value="on-demand">온디맨드</option><option value="interruptible">중단 가능(입찰)</option></select></div>
+          <label class="field"><span class="lbl">Vast 지역 (국가 코드, 비우면 전체)</span><input name="profit.vastRegions" placeholder="KR,JP" spellcheck="false" pattern="\s*([A-Za-z]{2}(\s*,\s*[A-Za-z]{2})*)?\s*" /></label>
+        </form>
+
+        <form class="sec" data-sec="app" novalidate hidden>
+          <h3>앱</h3>
+          <label class="field"><span class="lbl">공개 지갑 주소.워커</span><input name="wallet" placeholder="prl1...(공개 주소).worker1" spellcheck="false" /></label>
+          <label class="field"><span class="lbl">풀 (host:port)</span><input name="pool" list="poolExamples" placeholder="prl.kryptex.network:8048" spellcheck="false" /></label>
+          <datalist id="poolExamples"></datalist>
+          <div class="row wide"><button type="button" id="importBat">기존 bat 에서 지갑·풀 가져오기</button><span id="walletMsg" class="msg"></span>
+            <span class="muted small">풀 공개 통계(잔액·지급)를 조회하는 데만 씁니다. 공개 주소만 입력하고, 시드 문구·비밀번호·토큰은 절대 넣지 마세요.</span></div>
+          <label class="toggle"><input name="openAtLogin" type="checkbox" /><span>로그인 시 앱 실행</span></label>
+          <label class="toggle"><input name="loginShowWindow" type="checkbox" /><span>로그인 시 창 띄우기 <em>끄면 트레이에만</em></span></label>
+          <label class="field"><span class="lbl">업데이트 확인 주기 (30~1440)</span><span class="unit"><input name="updateIntervalMin" type="number" min="30" max="1440" step="1" required /><i>분</i></span></label>
+          <div class="field"><span class="lbl">테마 <em class="muted">이 화면에만 저장</em></span>
+            <div class="segbar" id="themeSeg"><button type="button" data-theme-set="dark">다크</button><button type="button" data-theme-set="light">라이트</button><button type="button" data-theme-set="system">시스템</button></div></div>
+          <label class="field wide"><span class="lbl">공유 장부 폴더 (듀얼부팅 다른 OS 와 같은 PnL, 비우면 이 PC 만)</span>
+            <span class="pick"><input name="sharedLedgerDir" placeholder="U:\ 또는 /mnt/crypthy" spellcheck="false" /><button type="button" data-pick="folder" data-for="sharedLedgerDir">찾아보기…</button></span></label>
+          <div class="row wide"><button type="button" id="appLogFolder">로그 폴더 열기</button>
+            <span class="muted small">로컬 상태 API: http://127.0.0.1:47321/v1/status (읽기 전용, 이 PC에서만 접근)</span></div>
+        </form>
+
+        <form class="sec" data-sec="remote" id="remoteForm" novalidate hidden>
+          <h3>원격 연결 <span class="muted small">헤드리스 Crypthy(예: Ubuntu 서버)에 Tailscale 같은 사설망으로 붙어 같은 화면을 봅니다</span></h3>
+          <label class="field"><span class="lbl">주소</span><input id="remoteUrl" placeholder="100.x.y.z:47321" spellcheck="false" autocomplete="off" /></label>
+          <label class="field"><span class="lbl">읽기 토큰</span><input id="remoteRead" type="password" autocomplete="off" spellcheck="false" /></label>
+          <label class="field"><span class="lbl">쓰기 토큰 (선택 · 원격 조작)</span><input id="remoteWrite" type="password" autocomplete="off" spellcheck="false" /></label>
+          <div class="row wide"><button type="submit" class="primary">연결</button><button type="button" id="remoteOff">이 PC 화면으로</button><span id="remoteMsg" class="msg"></span></div>
+          <p class="muted small wide" id="remoteInfo"></p>
+        </form>
+
+        <form class="sec" data-sec="hub" novalidate hidden>
+          <h3>코인·채굴기 목록 <span class="muted small" id="hubSub"></span></h3>
+          <p class="muted small wide" id="hubInfo"></p>
+          <div class="wide scroll-x"><table class="table" id="hubTable"></table></div>
+          <p class="muted small wide">Crypthy 는 채굴기를 내려받거나 설치하지 않습니다. 저장소 링크를 열어 직접 확인·설치하세요. dev fee 는 각 출처에서 확인한 값이며, 확인하지 못한 값은 "미확인"으로 표시합니다. 채굴기 바이너리는 보안 프로그램에 탐지될 수 있으니 출처와 해시를 직접 확인하세요. 코인은 "수익 계산"에서 고릅니다.</p>
+        </form>
+      </div>
+    </div>
+    <div class="sheet-foot" id="settingsFoot">
+      <span class="msg" id="settingsMsg"></span>
+      <span class="spacer"></span>
+      <button type="button" id="secCancel">취소</button>
+      <button type="button" id="secSave" class="primary">저장</button>
+    </div>
+  </dialog>
+
+  <!-- 모달 (공통: Esc·바깥 클릭으로 닫기, 입력값이 있으면 확인, 포커스는 모달 안에서만) -->
+  <dialog class="modal" id="wizardModal" aria-labelledby="wizTitle">
+    <h2 id="wizTitle">처음 설정 <span class="muted small">Crypthy 는 채굴기를 설치하지 않습니다. 채굴기는 직접 설치·구성하고, 여기서는 감시·수익 확인과 켜기·끄기를 합니다</span></h2>
+    <ol class="steps">
+      <li id="stepWallet"><b>지갑·풀</b> <span class="state"></span>
+        <form id="wizardForm" class="grid" novalidate>
+          <label class="field"><span class="lbl">공개 지갑 주소.워커</span><input id="wizWallet" placeholder="prl1...(공개 주소).worker1" spellcheck="false" /></label>
+          <label class="field"><span class="lbl">풀 (host:port)</span><input id="wizPool" list="poolExamples" placeholder="prl.kryptex.network:8048" spellcheck="false" /></label>
+        </form>
+        <div class="row"><button type="button" id="wizSave" class="primary">저장</button><button type="button" id="wizBat">기존 bat 에서 가져오기</button><span id="wizMsg" class="msg"></span></div>
+        <p class="muted small">풀 공개 통계(잔액·지급)를 조회하는 데만 씁니다. 공개 주소만 입력하고, 시드 문구·비밀번호·토큰은 절대 넣지 마세요.</p>
+      </li>
+      <li id="stepApi"><b>채굴기 통계 API</b> <span class="state"></span>
+        <p class="muted small">실행 중인 채굴기의 해시레이트·share 를 읽습니다. SRBMiner-MULTI 는 <code>--api-enable --api-port 21550</code> 옵션으로 실행하세요. 포트는 설정 › 채굴기에서 바꿀 수 있습니다.</p>
+      </li>
+      <li id="stepControl"><b>켜기·끄기 방식 (선택)</b> <span class="state"></span>
+        <p class="muted small">앱과 트레이에서 채굴을 켜고 끄려면 설정 › 채굴기에서 방식(예약 작업·systemd 유닛·실행 파일)을 고르세요.</p>
+        <button type="button" data-settings="miner">설정 › 채굴기 열기</button>
+      </li>
+    </ol>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" data-close>나중에</button></div>
+  </dialog>
+
+  <dialog class="modal" id="autoSellModal" aria-labelledby="asTitle">
+    <h2 id="asTitle">자동 매도 설정 <span class="muted small" id="asRemoteNote"></span></h2>
+    <form id="autoSellForm" class="grid" novalidate>
+      <label class="toggle wide"><input name="enabled" type="checkbox" /><span>이 기기에서 자동 매도 <em>한 기기에서만 켜세요</em></span></label>
+      <label class="toggle wide"><input name="dryRun" type="checkbox" /><span>모의 실행 <em>주문 없이 계획만 · 처음에는 켜 두세요</em></span></label>
+      <label class="field"><span class="lbl">실행 시각 (이 PC 시간)</span><input name="time" type="time" required /></label>
+      <label class="field"><span class="lbl">남겨 둘 PRL</span><span class="unit"><input name="reservePrl" type="number" min="0" step="any" required /><i>PRL</i></span></label>
+      <label class="field"><span class="lbl">최저가 (실제 매도에는 필수)</span><span class="unit"><input name="floorUsd" type="number" min="0" step="any" required /><i>$</i></span></label>
+      <details class="wide adv">
+        <summary>고급 — 하한가·호가·한도·값 내림</summary>
+        <div class="grid">
+          <label class="field"><span class="lbl">기준가 대비 최대 하락</span><span class="unit"><input name="maxDropPct" type="number" min="0.1" max="50" step="any" required /><i>%</i></span></label>
+          <label class="field"><span class="lbl">최대 스프레드 (넘으면 그날 안 팜)</span><span class="unit"><input name="maxSpreadPct" type="number" min="0.1" max="20" step="any" required /><i>%</i></span></label>
+          <label class="field"><span class="lbl">최소 매수 호가 깊이</span><span class="unit"><input name="minBidDepthUsd" type="number" min="0" step="any" required /><i>$</i></span></label>
+          <label class="field"><span class="lbl">하루 최대 매도</span><span class="unit"><input name="dailyMaxPrl" type="number" min="0.0001" max="100000" step="any" required /><i>PRL</i></span></label>
+          <label class="field"><span class="lbl">주문 1건 최대</span><span class="unit"><input name="orderMaxUsd" type="number" min="1" max="10000" step="any" required /><i>$</i></span></label>
+          <label class="field"><span class="lbl">안 팔리면 값 내림 간격</span><span class="unit"><input name="repriceMinutes" type="number" min="1" max="240" step="any" required /><i>분</i></span></label>
+          <label class="field"><span class="lbl">한 번에 내리는 폭</span><span class="unit"><input name="repriceStepPct" type="number" min="0.1" max="5" step="any" required /><i>%</i></span></label>
+          <label class="field"><span class="lbl">값 내림 최대 횟수</span><span class="unit"><input name="maxReprices" type="number" min="0" max="20" step="1" required /><i>회</i></span></label>
+        </div>
+      </details>
+      <p class="muted small wide">하한가 = max(최저가, 기준가 × (1 − 최대 하락%)). 기준가는 SafeTrade 24시간 평균가와 CoinGecko 시세 중 높은 값입니다. 가장 낮은 매도 호가보다 한 틱 아래에 지정가로 걸고, 안 팔리면 정한 시간마다 조금씩 내리되 하한가 아래로는 내리지 않습니다. 호가가 비정상이면 그날은 팔지 않고 알립니다.</p>
+    </form>
+    <div class="modal-foot"><span class="msg" id="asSaveMsg"></span><span class="spacer"></span><button type="button" data-close>취소</button><button type="submit" form="autoSellForm" class="primary" id="asSave">저장</button></div>
+  </dialog>
+
+  <dialog class="modal" id="keyModal" aria-labelledby="keyTitle">
+    <h2 id="keyTitle">SafeTrade API 키 <span class="muted small" id="keyState"></span></h2>
+    <form id="keyForm" class="grid" novalidate>
+      <label class="field"><span class="lbl">API 키</span><input id="exKey" type="password" autocomplete="off" spellcheck="false" /></label>
+      <label class="field"><span class="lbl">시크릿</span><input id="exSecret" type="password" autocomplete="off" spellcheck="false" /></label>
+      <p class="small warn wide">SafeTrade 에서 키를 만들 때 <b>거래(Trade) 권한만</b> 주고 <b>출금 권한은 주지 마세요</b>. 가능하면 이 PC 의 IP 로 제한하세요. SafeTrade API 로는 키의 권한을 확인할 수 없으므로 Crypthy 가 대신 막아 주지 못합니다.</p>
+      <p class="muted small wide" id="keyHelp">키는 이 PC 의 OS 보안 저장소로 암호화해 저장하고, 화면·원격 화면·로그·상태 API 로 내보내지 않습니다. 저장한 값은 다시 보여 주지 않습니다. 헤드리스(Ubuntu)는 install.sh --safetrade-key 파일 (root 0600, systemd LoadCredential) 로 넣습니다.</p>
+    </form>
+    <div class="modal-foot"><span class="msg" id="keyMsg"></span><span class="spacer"></span><button type="button" id="exKeyClear" class="danger">키 삭제</button><button type="button" data-close>닫기</button><button type="submit" form="keyForm" class="primary" id="exKeySave">키 저장</button></div>
+  </dialog>
+
+  <dialog class="modal" id="saleModal" aria-labelledby="saleTitle">
+    <h2 id="saleTitle">매도 기록 추가 <span class="muted small">실현 손익 계산용, 로컬에만 저장</span></h2>
+    <form id="saleForm" class="grid" novalidate>
+      <label class="field"><span class="lbl">수량</span><span class="unit"><input id="saleQty" type="number" step="any" min="0.00000001" required /><i id="saleSym">PRL</i></span></label>
+      <label class="field"><span class="lbl">매도 대금</span><span class="unit"><input id="saleProceeds" type="number" step="any" min="0" required /><i>원</i></span></label>
+      <label class="field"><span class="lbl">수수료</span><span class="unit"><input id="saleFee" type="number" step="any" min="0" value="0" /><i>원</i></span></label>
+      <label class="field"><span class="lbl">거래소</span><input id="saleVenue" maxlength="60" /></label>
+      <label class="field wide"><span class="lbl">메모</span><input id="saleNote" maxlength="200" /></label>
+    </form>
+    <div class="modal-foot"><span class="msg" id="saleMsg"></span><span class="spacer"></span><button type="button" data-close>취소</button><button type="submit" form="saleForm" class="primary" id="saleSave">기록</button></div>
+  </dialog>
+
+  <dialog class="modal" id="bootstrapModal" aria-labelledby="bootTitle">
+    <h2 id="bootTitle">소급 적용</h2>
+    <p class="muted small" id="bootstrapInfo"></p>
+    <form id="bootstrapForm" class="grid" novalidate>
+      <label class="field"><span class="lbl">채굴 시작</span><input type="datetime-local" id="bootstrapFrom" required /></label>
+      <label class="field"><span class="lbl">추정 GPU 전력</span><span class="unit"><input type="number" id="bootstrapWatts" min="0" step="any" required /><i>W</i></span></label>
+    </form>
+    <div class="modal-foot"><span class="msg" id="bootstrapMsg"></span><span class="spacer"></span><button type="button" data-close>취소</button><button type="submit" form="bootstrapForm" class="primary" id="bootstrapSubmit">소급 적용</button></div>
+  </dialog>
+
+  <dialog class="modal" id="cashoutModal" aria-labelledby="coTitle">
+    <h2 id="coTitle">현금화 경로 메모 편집</h2>
+    <form id="cashoutForm" class="grid" novalidate>
+      <label class="field"><span class="lbl">PRL 입금 최소</span><span class="unit"><input name="prlDepositMin" type="number" min="0" step="any" required /><i>PRL</i></span></label>
+      <label class="field"><span class="lbl">PRL 입금 컨펌 수</span><span class="unit"><input name="prlConfirmations" type="number" min="0" step="1" required /><i>회</i></span></label>
+      <label class="field"><span class="lbl">SafeTrade 매도 수수료</span><span class="unit"><input name="sellFeePct" type="number" min="0" step="any" required /><i>%</i></span></label>
+      <label class="field"><span class="lbl">USDT 출금 네트워크</span><input name="withdrawNetwork" maxlength="20" spellcheck="false" required /></label>
+      <label class="field"><span class="lbl">USDT 출금 수수료</span><span class="unit"><input name="withdrawFeeUsdt" type="number" min="0" step="any" required /><i>USDT</i></span></label>
+      <label class="field"><span class="lbl">USDT 출금 최소</span><span class="unit"><input name="withdrawMinUsdt" type="number" min="0" step="any" required /><i>USDT</i></span></label>
+      <label class="field"><span class="lbl">출금 권장 잔고 (일요일 알림)</span><span class="unit"><input name="withdrawSuggestUsdt" type="number" min="0" step="any" required /><i>USDT</i></span></label>
+      <label class="field"><span class="lbl">측정일</span><input name="measuredAt" type="date" required /></label>
+    </form>
+    <div class="modal-foot"><span class="msg" id="cashoutMsg"></span><span class="spacer"></span><button type="button" data-close>취소</button><button type="submit" form="cashoutForm" class="primary" id="cashoutSave">저장</button></div>
+  </dialog>
+
+  <dialog class="modal" id="alertsModal" aria-labelledby="alTitle">
+    <h2 id="alTitle">알림 <span class="muted small">최근 30건</span></h2>
+    <ul id="alerts" class="alerts"></ul>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" data-close>닫기</button></div>
+  </dialog>
+
   <script type="module" src="renderer.js"></script>
 </body>
 </html>
