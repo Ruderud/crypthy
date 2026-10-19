@@ -8,6 +8,16 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-19
+
+### Fixed
+- **Auto-sell used the old market**: on 2026-10-18 SafeTrade renamed PRL/USDT to **PEARL/USDT** (`pearlusdt`, currency `pearl`) and disabled `prlusdt`/`prlusdc` (public `/trade/public/markets`, checked 2026-10-19). Auto-sell now looks up an enabled market with base currency `pearl` (or `prl`) and the chosen quote (USDT/USDC) in the market list at each run, and reads the balance of that currency. Saved settings keep working.
+- SafeTrade's Cloudflare blocks plain Node requests (403 "Attention Required"); the desktop app now sends SafeTrade requests through Electron's network stack (`net.fetch`), which passes. On a headless host the block is reported clearly and the day is skipped.
+
+### Changed
+- Sell fee: taken from the fills, else the public taker rate (`/trade/public/trading_fees`, 0.1%), else 0.1%. A dry run shows the estimated fee.
+- Cash-out memo: PEARL/USDT (renamed), SafeTrade sell fee 0.1% (measured 2026-10-19, editable).
+
 ## [0.5.1] - 2026-10-19
 
 ### Fixed

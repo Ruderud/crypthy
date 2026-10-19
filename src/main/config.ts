@@ -13,7 +13,7 @@ export const DEFAULT_SETTINGS: Settings = {
   minerControl: { mode: 'none', taskName: '', unit: '', exe: '', args: '', confirmStop: true, hideWindow: true },
   sharedLedgerDir: '',
   autoSell: { ...DEFAULT_AUTOSELL },
-  cashout: { prlDepositMin: 1, prlConfirmations: 10, withdrawNetwork: 'BSC', withdrawFeeUsdt: 1, withdrawMinUsdt: 2, withdrawSuggestUsdt: 20, measuredAt: '2026-10-19' },
+  cashout: { prlDepositMin: 1, prlConfirmations: 10, sellFeePct: 0.1, withdrawNetwork: 'BSC', withdrawFeeUsdt: 1, withdrawMinUsdt: 2, withdrawSuggestUsdt: 20, measuredAt: '2026-10-19' },
   openAtLogin: false,
   loginShowWindow: false,
   autoStartMining: false,

@@ -228,8 +228,8 @@ function renderAutoSell(st: AppState) {
   const co = st.settings.cashout;
   $('cashoutSub').textContent = `측정일 ${co.measuredAt} · 수수료·최소 수량은 바뀔 수 있으니 거래소에서 다시 확인하세요`;
   $('cashoutSteps').innerHTML = [
-    `<b>Pearl 지갑 → SafeTrade</b> PRL 입금 (네트워크 Pearl, prl1… 주소). 수수료 0, 최소 ${esc(co.prlDepositMin)} PRL, ${esc(co.prlConfirmations)} 컨펌(약 30분). 지갑 송금은 직접 합니다.`,
-    `<b>SafeTrade 에서 매도</b> PRL/USDT (주 시장, 스프레드 약 0.5%). PRL/USDC·PRL/BTC 도 있습니다. 자동 매도는 매일 이 단계만 합니다.`,
+    `<b>Pearl 지갑 → SafeTrade</b> PEARL(PRL) 입금 (네트워크 Pearl, prl1… 주소). 수수료 0, 최소 ${esc(co.prlDepositMin)} PRL, ${esc(co.prlConfirmations)} 컨펌(약 30분). 지갑 송금은 직접 합니다.`,
+    `<b>SafeTrade 에서 매도</b> PEARL/USDT (2026-10-18 에 PRL/USDT 에서 이름이 바뀜, 스프레드 약 0.5%). PEARL/USDC·PEARL/BTC 도 있습니다. 매도 수수료 ${esc(co.sellFeePct)}% (2026-10-19 실측). 자동 매도는 매일 이 단계만 합니다.`,
     `<b>SafeTrade → 바이낸스</b> USDT 출금 ${esc(co.withdrawNetwork)} (수수료 ${esc(co.withdrawFeeUsdt)} USDT 고정, 최소 ${esc(co.withdrawMinUsdt)} USDT). TRON 도 됩니다. 고정 수수료라 <b>매도는 매일, 출금은 주 1회</b> (잔고 ${esc(co.withdrawSuggestUsdt)} USDT 이상이면 일요일에 알림). 출금은 직접 합니다.`,
     `<b>바이낸스 → 업비트·빗썸</b> 트래블룰에 따라 이체한 뒤 원화로 매도.`,
   ].map((t) => `<li>${t}</li>`).join('');

@@ -97,6 +97,8 @@ export interface CashoutConfig {
   prlDepositMin: number;
   /** PRL 입금 컨펌 수 */
   prlConfirmations: number;
+  /** SafeTrade 매도 수수료(%) */
+  sellFeePct: number;
   /** SafeTrade → 바이낸스 USDT 출금 네트워크 */
   withdrawNetwork: string;
   withdrawFeeUsdt: number;

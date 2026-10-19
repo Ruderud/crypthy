@@ -83,7 +83,7 @@ Drawn with [TradingView Lightweight Charts™](https://www.tradingview.com/light
 - On an abnormal book (spread above Y%, thin bids, API error) nothing is sold that day and an alert is shown. There are a daily maximum and a per-order maximum.
 - Order IDs, fills, average price, fee and USDT received are recorded in the PnL as realized sales and in the shared ledger. It runs once a day on one device only (a per-day record in the shared ledger folder). If the app stops mid-sale, the open order is cancelled and what was sold is recorded at the next start.
 - **Not automated**: withdrawals (SafeTrade → Binance) and sending from the Pearl wallet. Crypthy only reminds you: PRL to send to SafeTrade, and a weekly withdrawal suggestion.
-- **Cash-out route memo** with editable fees and the date they were measured: Pearl wallet → SafeTrade (PRL deposit, no fee, minimum 1 PRL, 10 confirmations) → sell PRL/USDT → Binance (USDT on BSC, 1 USDT fixed fee, minimum 2) → Upbit/Bithumb (travel rule). Because the withdrawal fee is fixed: sell daily, withdraw weekly.
+- **Cash-out route memo** with editable fees and the date they were measured: Pearl wallet → SafeTrade (PRL deposit, no fee, minimum 1 PRL, 10 confirmations) → sell PEARL/USDT (renamed from PRL/USDT on 2026-10-18; sell fee 0.1%, measured 2026-10-19) → Binance (USDT on BSC, 1 USDT fixed fee, minimum 2) → Upbit/Bithumb (travel rule). Because the withdrawal fee is fixed: sell daily, withdraw weekly.
 
 ### Theme
 
@@ -331,6 +331,8 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 2. Desktop: on the **SafeTrade auto-sell** card enter the key and secret and save. They are encrypted with the OS secure storage (Windows DPAPI) and never shown again, sent to remote screens, logged or put in the status API. **Delete key** removes them.
 3. Set a **minimum price**, leave **dry run** on, turn on **auto-sell on this device** and check the planned price and amount with **dry run** (or wait for the daily run).
 4. When the plans look right, turn **dry run** off (asks first). **Sell once now** also asks first and still respects the floor and limits.
+
+Auto-sell finds the PRL market (currency `pearl`, formerly `prl`) in SafeTrade's market list at each run, so a renamed market is followed. SafeTrade's Cloudflare blocks plain Node requests (measured 2026-10-19), so the desktop app sends them through Electron's network stack; on a headless host the requests may be blocked and auto-sell then skips the day with that reason.
 
 Headless host: put `{"key": "...", "secret": "..."}` in a file only you can read and install it; it is copied to `/etc/crypthy/safetrade-key.json` (root, 0600) and passed to the service with systemd `LoadCredential` (systemd 247 or later). Keep the file out of shell history:
 ```bash
