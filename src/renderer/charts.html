@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+  <title>Crypthy 차트</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="charts-page">
+  <nav class="tabbar" role="tablist" id="chartTabs">
+    <button role="tab" data-ctab="gpu" class="on">GPU 해시·온도·전력</button>
+    <button role="tab" data-ctab="price">시세</button>
+    <button role="tab" data-ctab="daily">일별 채굴·순익</button>
+    <button role="tab" data-ctab="pnl">누적 PnL</button>
+    <span class="spacer"></span>
+    <span class="muted small" id="chartSource"></span>
+  </nav>
+  <main class="chart-main">
+    <section class="card chart-panel" data-cpanel="gpu">
+      <h2>GPU <span class="tabs" id="metricTabs"><button data-metric="hash" class="on">해시레이트</button><button data-metric="temp">온도</button><button data-metric="power">전력</button></span>
+        <span class="muted small" id="chartLegend"></span></h2>
+      <div class="chart fill" id="gpuChart"></div>
+    </section>
+    <section class="card chart-panel" data-cpanel="price" hidden>
+      <h2 id="priceTitle">시세 (USD, 30일)</h2>
+      <div class="chart fill" id="priceChart"></div>
+    </section>
+    <section class="card chart-panel" data-cpanel="daily" hidden>
+      <h2>일별 채굴량 <span class="muted small">(막대, 왼쪽)</span> · 순수익 원 <span class="muted small">(선, 오른쪽)</span></h2>
+      <div class="chart fill" id="dailyChart"></div>
+    </section>
+    <section class="card chart-panel" data-cpanel="pnl" hidden>
+      <h2>일별 순익 <span class="muted small">(막대, 왼쪽 · 흐린 막대 = 추정)</span> · 누적 PnL <span class="muted small">(선, 오른쪽)</span></h2>
+      <div class="chart fill" id="pnlChart"></div>
+    </section>
+  </main>
+  <footer class="muted small">차트: <a href="#" data-link="https://www.tradingview.com/">TradingView Lightweight Charts™</a> (Copyright (c) 2025 TradingView, Inc., Apache-2.0)</footer>
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="chartsWindow.js"></script>
+</body>
+</html>

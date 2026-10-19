@@ -1,6 +1,6 @@
 import { cpSync, mkdirSync } from 'node:fs';
 mkdirSync('dist/renderer/vendor', { recursive: true });
-for (const f of ['index.html', 'style.css']) cpSync(`src/renderer/${f}`, `dist/renderer/${f}`);
+for (const f of ['index.html', 'charts.html', 'style.css']) cpSync(`src/renderer/${f}`, `dist/renderer/${f}`);
 cpSync('resources/icon.png', 'dist/icon.png');
 cpSync('catalog/catalog.json', 'dist/catalog.json');
 // TradingView Lightweight Charts (Apache-2.0): standalone 빌드 + LICENSE + NOTICE 를 함께 배포

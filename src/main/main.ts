@@ -1,5 +1,5 @@
 // Electron 셸: 창·트레이·OS 알림·대화상자·자동 업데이트. 상태와 동작은 core.ts 가 맡는다.
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, nativeImage, safeStorage, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, nativeImage, safeStorage, screen, shell, Tray } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Alert, AppState, ChartsView, RemoteSettingsView, Settings } from '../shared/types';
@@ -11,6 +11,7 @@ import { createFileLogger, type Logger } from './log';
 import type { ExchangeKey } from './safetrade';
 import { createRemoteClient, normalizeRemoteUrl, postWithConfirm, type RemoteTarget } from './remoteClient';
 import { startStatusServer } from './statusApi';
+import { trayTooltip } from './trayText';
 import { createNotificationKeeper, updateToast } from './updatePrompt';
 import { createUpdateController, DISABLED_UPDATE, mockUpdater, type UpdaterLike } from './updater';
 
@@ -235,6 +236,7 @@ function routed<A extends unknown[]>(local: (...a: A) => unknown, path: string, 
 function broadcast(): void {
   const st = currentState();
   if (win && !win.isDestroyed() && win.isVisible()) win.webContents.send('state', st);
+  if (chartWin && !chartWin.isDestroyed() && chartWin.isVisible()) chartWin.webContents.send('state', st);
   updateTray(st);
 }
 
@@ -278,6 +280,16 @@ export const dialogConfirm: core.Confirm = async (kind, detail) => {
 
 const iconPath = () => path.join(__dirname, '..', 'icon.png');
 
+/** 창을 새로 열지 않는다. 차트의 TradingView 출처 링크(라이선스 고지)만 기본 브라우저로 */
+const tradingViewOnly = ({ url }: { url: string }): { action: 'deny' } => {
+  try {
+    if (new URL(url).origin === 'https://www.tradingview.com') void shell.openExternal(url);
+  } catch {
+    // 잘못된 URL 은 무시
+  }
+  return { action: 'deny' };
+};
+
 function showWindow(): void {
   if (win && !win.isDestroyed()) {
     win.show();
@@ -296,15 +308,7 @@ function showWindow(): void {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    // 차트의 TradingView 출처 링크(라이선스 고지)만 기본 브라우저로 연다
-    try {
-      if (new URL(url).origin === 'https://www.tradingview.com') void shell.openExternal(url);
-    } catch {
-      // 잘못된 URL 은 무시
-    }
-    return { action: 'deny' };
-  });
+  win.webContents.setWindowOpenHandler(tradingViewOnly);
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.on('close', (e) => {
     if (!quitting) {
@@ -317,8 +321,8 @@ function showWindow(): void {
 function updateTray(st: AppState): void {
   if (!tray) return;
   const status = st.miner.running ? `채굴기 실행 중 (${st.miner.processes.join(', ') || 'API'})` : '채굴기 없음';
-  const temps = st.gpus.filter((g) => g.present).map((g) => `${g.label} ${g.tempC ?? '-'}°C${g.hold ? ' 보류' : ''}`).join(' / ');
-  tray.setToolTip(`${APP_NAME}\n${status}\n${temps}`.slice(0, 127));
+  // 실시간 순수익·오늘 순익까지 (게임 중에도 트레이에 마우스만 올리면 보이게)
+  tray.setToolTip(trayTooltip(st, APP_NAME));
   const u = st.update;
   const ctl = st.miner.control;
   const key = `${st.remote?.url ?? ''}|${status}|${u.status}|${u.version}|${u.prompt}|${ctl.mode}|${ctl.canStart}|${ctl.canStop}`;
@@ -339,6 +343,7 @@ function updateTray(st: AppState): void {
       { label: st.remote ? `원격 ${st.remote.url.replace(/^https?:\/\//, '')} · ${status}` : status, enabled: false },
       { type: 'separator' },
       { label: '대시보드 열기', click: showWindow },
+      { label: '차트 열기', click: () => openCharts() },
       ...(ctl.mode === 'none'
         ? []
         : [
@@ -350,6 +355,78 @@ function updateTray(st: AppState): void {
       { label: '종료', click: () => { quitting = true; app.quit(); } },
     ]),
   );
+}
+
+// ---------- 차트 창 (하나만, 크기·위치 기억, 메인 창을 숨겨도 남음) ----------
+
+let chartWin: BrowserWindow | null = null;
+const chartWinFile = () => file('chart-window.json');
+const CHART_TABS = ['gpu', 'price', 'daily', 'pnl'];
+
+/** 저장한 위치가 지금 연결된 화면 안에 있을 때만 쓴다 (모니터를 뺀 경우 화면 밖에 뜨지 않게) */
+function savedChartBounds(): (Electron.Rectangle & { maximized: boolean }) | null {
+  const saved = readJson<{ bounds?: Partial<Electron.Rectangle>; maximized?: boolean } | null>(chartWinFile(), null);
+  const b = saved?.bounds;
+  if (!b || ![b.x, b.y, b.width, b.height].every((v) => Number.isFinite(v))) return null;
+  const r = b as Electron.Rectangle;
+  const area = screen.getDisplayMatching(r).workArea;
+  const visible = r.x + 80 > area.x && r.x < area.x + area.width - 80 && r.y >= area.y - 10 && r.y < area.y + area.height - 80;
+  if (!visible) return null;
+  // 다른(작은) 화면으로 옮겨졌으면 그 화면 안에 들어가게
+  const width = Math.min(area.width, Math.max(560, r.width));
+  const height = Math.min(area.height, Math.max(400, r.height));
+  return { x: Math.min(r.x, area.x + area.width - width), y: Math.min(r.y, area.y + area.height - height), width, height, maximized: saved?.maximized === true };
+}
+
+function openCharts(tab?: unknown): void {
+  const t = typeof tab === 'string' && CHART_TABS.includes(tab) ? tab : null;
+  if (chartWin && !chartWin.isDestroyed()) {
+    if (chartWin.isMinimized()) chartWin.restore();
+    chartWin.show();
+    chartWin.focus();
+    const wc = chartWin.webContents;
+    // 아직 읽는 중이면 다 읽은 뒤에 보낸다 (그 전에는 받을 곳이 없다)
+    if (t) wc.isLoading() ? wc.once('did-finish-load', () => wc.send('charts:tab', t)) : wc.send('charts:tab', t);
+    return;
+  }
+  const b = savedChartBounds();
+  const w = new BrowserWindow({
+    width: b?.width ?? 1000,
+    height: b?.height ?? 680,
+    ...(b ? { x: b.x, y: b.y } : {}),
+    minWidth: 560,
+    minHeight: 400,
+    title: `${APP_NAME} 차트`,
+    icon: iconPath(),
+    autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false },
+  });
+  chartWin = w;
+  if (b?.maximized) w.maximize();
+  void w.loadFile(path.join(__dirname, '..', 'renderer', 'charts.html'), t ? { query: { tab: t } } : undefined);
+  w.webContents.setWindowOpenHandler(tradingViewOnly);
+  w.webContents.on('will-navigate', (e) => e.preventDefault());
+  // 크기·위치는 바뀔 때마다(잠시 뒤) 저장한다: 어떤 방식으로 닫혀도 다음에 같은 자리로
+  let saveTimer: NodeJS.Timeout | null = null;
+  const saveBounds = () => {
+    if (w.isDestroyed()) return;
+    try {
+      writeJson(chartWinFile(), { bounds: w.getNormalBounds(), maximized: w.isMaximized() });
+    } catch (e) {
+      log.warn(`charts: cannot save window bounds: ${(e as Error).message}`);
+    }
+  };
+  const later = () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveBounds, 500);
+  };
+  w.on('resize', later);
+  w.on('move', later);
+  w.on('close', saveBounds);
+  w.on('closed', () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    if (chartWin === w) chartWin = null;
+  });
 }
 
 // ---------- 자동 업데이트 ----------
@@ -448,6 +525,7 @@ function prepareForInstall(): void {
     w.destroy();
   }
   win = null;
+  chartWin = null;
   log.info('update: app resources released, handing over to the installer');
 }
 
@@ -455,6 +533,7 @@ function prepareForInstall(): void {
 
 function registerIpc(): void {
   ipcMain.handle('state:get', () => currentState());
+  ipcMain.handle('charts:open', (_e, tab: unknown) => openCharts(tab));
   ipcMain.handle('charts:get', async () => {
     if (!remote) return core.chartsView();
     try {

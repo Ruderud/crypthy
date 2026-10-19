@@ -36,6 +36,10 @@ const api: Api = {
   pickPath: (kind, current) => ipcRenderer.invoke('dialog:pickPath', kind, current),
   setExchangeKey: (key, secret) => ipcRenderer.invoke('autosell:setKey', key, secret),
   runAutoSell: (dryRun) => ipcRenderer.invoke('autosell:run', dryRun),
+  openCharts: (tab) => ipcRenderer.invoke('charts:open', tab),
+  onChartsTab: (cb) => {
+    ipcRenderer.on('charts:tab', (_e, tab: string) => cb(tab));
+  },
 };
 
 contextBridge.exposeInMainWorld('crypthy', api);

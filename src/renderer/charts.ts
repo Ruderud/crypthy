@@ -95,6 +95,10 @@ export function createCharts(els: { gpu: HTMLElement; price: HTMLElement; daily:
   return {
     render,
     applyTheme,
+    /** 탭을 바꿔 보이게 된 차트를 데이터에 맞춘다 */
+    fit() {
+      for (const c of [gpuChart, priceChart, dailyChart, pnlChart]) c.timeScale().fitContent();
+    },
     setMetric(m: Metric) {
       metric = m;
       if (last) renderGpu(last);

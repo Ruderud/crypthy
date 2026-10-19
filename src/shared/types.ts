@@ -490,6 +490,10 @@ export interface Api {
   runAutoSell(dryRun: boolean): Promise<string | null>;
   /** GPU 별 채굴 켜기·끄기 (채굴 중이면 선택을 바꿔 다시 시작) */
   setGpuMining(id: GpuId, mine: boolean): Promise<string | null>;
+  /** 차트 창 열기 (이미 열려 있으면 앞으로, tab 이 있으면 그 탭으로) */
+  openCharts(tab?: string): Promise<void>;
+  /** 차트 창: 다른 탭을 보여 달라는 요청 */
+  onChartsTab(cb: (tab: string) => void): void;
   minerLog(): Promise<{ text: string; path: string; at: number | null; available: boolean }>;
   /** 찾아보기: kind 'exe' 는 실행 파일, 'folder' 는 폴더. 취소하면 null */
   pickPath(kind: 'exe' | 'folder', current: string): Promise<string | null>;
