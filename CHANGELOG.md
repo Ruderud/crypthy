@@ -8,6 +8,22 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-19
+
+Screen layout only: mining, selling and ledger logic, `settings.json`, IPC and the remote API are unchanged, so 0.5.x settings are read as they are.
+
+### Changed
+- **HUD** pinned at the top: mining state (mining x/y GPUs / stopped / safety hold / off but mining), start or stop, live net profit, today's net, price and 24 h change, a chip per GPU (temperature, power, hashrate), unread alerts, and remote / MOCK / update badges. Narrow windows (760–1000 px) keep only GPU temperatures, without horizontal scrolling.
+- The single long page is split into four tabs: **dashboard** (compact GPU cards with the mine switch, pool and wallet, auto-sell status, latest three alerts, last-hour hashrate line), **profit & ledger**, **sell & cash-out**, **miner** (stats, control method, miner output). The dashboard has no input fields except the mine switches.
+- **Settings** moved into a sheet with seven sections — miner, GPU & power, safety, profit, app, remote, coins & miners — with per-section save and cancel, a dot on changed sections, a confirmation before closing with unsaved changes, and validation messages under the field (saving is disabled while a value is invalid). On/off values are toggles, modes are segmented buttons, numbers show their unit, paths have browse buttons.
+- Forms moved into dialogs: first-run setup (opens when wallet and pool are not set), auto-sell settings (advanced options folded), SafeTrade API key (the saved key is never shown again), add a sale, backfill (only when there is something to backfill), cash-out memo, and the alert list. Esc and outside clicks close them, asking first if something was typed.
+- Remote read-only screens disable every write action and say why; host-only settings stay locked on remote screens as before.
+- Auto-sell errors that need the key or the connection checked (authentication, IP restriction, Cloudflare) show a strip with an **API key** button on the sell tab.
+
+### Added
+- **Chart window**: one window with four tabs (GPU hashrate/temperature/power, price, daily output and net, cumulative PnL), opened from the HUD (**charts**, price), the dashboard line (**enlarge**) or the tray (**open charts**). Only one opens; it remembers its size, position and last tab, stays open when the main window is hidden and shows the remote host's data while connected.
+- The tray tooltip adds live net profit and today's net.
+
 ## [0.5.2] - 2026-10-19
 
 ### Fixed

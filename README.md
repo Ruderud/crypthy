@@ -24,6 +24,15 @@ Coin-mining hub, GPU/PC manager and mining profit tracker for **Windows and Ubun
 
 ## Features
 
+### Screen layout (v0.6.0)
+
+- **HUD** pinned at the top of every tab: mining state (mining x/y GPUs, stopped, safety hold, off but mining), **start / stop**, live net profit, today's net, price with 24 h change, a chip per GPU (temperature, power, hashrate), alerts and remote / MOCK / update badges. In a narrow window (760–1000 px) the GPU chips keep only the temperature.
+- **Tabs**: **dashboard** (GPU cards with the mine switch, pool and wallet, auto-sell status, latest alerts, last-hour hashrate line), **profit & ledger**, **sell & cash-out**, **miner** (stats, control method, miner output).
+- **Settings** opens as a sheet with seven sections (miner, GPU & power, safety, profit, app, remote, coins & miners); each section saves on its own, shows a dot when changed and asks before closing with unsaved changes. Invalid values are shown under the field and block saving.
+- Short forms open as dialogs: first-run setup, auto-sell settings (advanced options folded), SafeTrade API key, add a sale, backfill, cash-out memo.
+- **Charts** open in their own window (one window, four tabs) that remembers its size, position and tab, stays open when the main window is hidden and shows the remote host's data while connected.
+- The tray tooltip shows the mining state, live net profit, today's net and GPU temperatures.
+
 ### Coin hub
 
 - Pick a coin to see its algorithm, the GPU vendors detected on this PC (NVIDIA, AMD, Intel) and a ranked list of compatible mining tools with official repository links, supported GPUs, dev fee and notes.
@@ -47,14 +56,14 @@ Catalog as of 2026-10-17:
 
 - **GPU dashboard**: `nvidia-smi` every 2 seconds: temperature, fan, power/limit, utilization. GPUs are identified by PCI bus id.
 - **Safety watch**: stops known miners on a stopped fan, overheating or lost temperature readings. See [Safety watch](#safety-watch).
-- **Mining on/off**: start and stop the miner you configured from the miner card and the tray. See [Mining on/off](#mining-on-off).
+- **Mining on/off**: start and stop the miner you configured from the HUD and the tray. See [Mining on/off](#mining-on-off).
 - **Headless host and remote screen**: run Crypthy as a service on a PC without a screen and view or control it from another Crypthy over Tailscale. See [Headless host](#headless).
 - **Power limits**: watts per GPU, re-applied automatically after a one-time admin approval (Windows scheduled task / Linux systemd service). The app itself runs as a normal user.
 - **Tray app** with optional start at login, a read-only **local status API**, and **auto-update** from GitHub Releases.
 
 ### Charts
 
-Drawn with [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/) (Apache-2.0):
+In the chart window (HUD **charts**, tray **open charts**), drawn with [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/) (Apache-2.0):
 - per-GPU hashrate, temperature and power (1-minute averages, last 3 days, up to 4,320 points per GPU and 16 GPUs)
 - 30-day coin price (CoinGecko, USD)
 - daily mined amount (bars) and net profit in KRW (line), using that day's closing price or the current price, minus electricity
@@ -223,9 +232,9 @@ Crypthy starts and stops only a miner you set up yourself; it never downloads or
 | Linux systemd user unit | `systemctl --user start -- <unit>` | `systemctl --user stop -- <unit>`, then stop the miner process |
 | Executable | runs the `.exe` (Windows) or binary with your arguments, without a shell, detached from the app | stops the miner process |
 
-- Use the **start / stop** buttons on the miner card or the tray menu; only the one that applies is enabled.
+- Use the **start / stop** button in the HUD or the tray menu; only the one that applies is enabled.
 - The first start asks you to accept a risk and cost notice. Stopping asks once for confirmation (can be turned off).
-- If a miner is already running (for example started outside the app), **start** is disabled and the card shows "started outside the app"; a second miner is never launched. **Stop** still works.
+- If a miner is already running (for example started outside the app), **start** is disabled and the miner tab shows "started outside the app"; a second miner is never launched. **Stop** still works.
 - For a scheduled task, **import from scheduled task** reads the task's executable and arguments; the executable name is also added to the processes the app watches and stops.
 - Arguments are split on spaces (use "double quotes" for spaces) and passed as a list, so shell characters such as `&` or `|` have no effect. On Windows only `.exe` files can be run directly; use a scheduled task for a `.bat`.
 - The app runs as a normal user. A miner started as administrator cannot be stopped by it; you are told to stop it in Task Manager.
@@ -328,7 +337,7 @@ sudo ./install.sh --user "$USER" --bind "$(tailscale ip -4)" --shared-ledger /mn
 ### SafeTrade auto-sell
 
 1. On SafeTrade create an API key with **trade permission only**: **no withdrawal permission**, and an IP restriction to this PC if you can. Crypthy cannot check a key's permissions through the API.
-2. Desktop: on the **SafeTrade auto-sell** card enter the key and secret and save. They are encrypted with the OS secure storage (Windows DPAPI) and never shown again, sent to remote screens, logged or put in the status API. **Delete key** removes them.
+2. Desktop: **sell & cash-out → API key**, enter the key and secret and save. They are encrypted with the OS secure storage (Windows DPAPI) and never shown again, sent to remote screens, logged or put in the status API. **Delete key** removes them.
 3. Set a **minimum price**, leave **dry run** on, turn on **auto-sell on this device** and check the planned price and amount with **dry run** (or wait for the daily run).
 4. When the plans look right, turn **dry run** off (asks first). **Sell once now** also asks first and still respects the floor and limits.
 
