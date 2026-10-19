@@ -11,13 +11,13 @@
 import type { AutoSellConfig, SellResult } from '../shared/types';
 import type { Depth, MarketInfo, Order } from './safetrade';
 export type { AutoSellConfig, SellOrderRecord, SellResult } from '../shared/types';
-import { ceilTo, floorTo } from './safetrade';
+import { ceilTo, DEFAULT_FEE_RATE, floorTo, PRL_BASES } from './safetrade';
 
 export const DEFAULT_AUTOSELL: AutoSellConfig = {
   enabled: false,
   dryRun: true,
   time: '10:00',
-  market: 'prlusdt',
+  market: 'pearlusdt',
   reservePrl: 0,
   floorUsd: 0,
   maxDropPct: 5,
@@ -30,8 +30,12 @@ export const DEFAULT_AUTOSELL: AutoSellConfig = {
   maxReprices: 8,
 };
 
-/** 자동 매도는 PRL 의 이 마켓에서만 (다른 자산을 파는 일이 없게) */
-export const AUTOSELL_MARKETS = ['prlusdt', 'prlusdc'] as const;
+/**
+ * 설정의 마켓은 받을 통화(USDT·USDC)만 뜻한다. 실제 마켓은 실행 때 마켓 목록에서 기준 통화가 PRL(pearl·prl)인 것을 찾는다
+ * (다른 자산을 파는 일이 없게, 거래소가 마켓 이름을 바꿔도 따라가게)
+ */
+export const AUTOSELL_MARKETS = ['pearlusdt', 'pearlusdc', 'prlusdt', 'prlusdc'] as const;
+export const quoteOf = (market: string) => (market.endsWith('usdc') ? 'usdc' : 'usdt');
 
 export function validateAutoSell(c: AutoSellConfig): string | null {
   if (typeof c.enabled !== 'boolean' || typeof c.dryRun !== 'boolean' || typeof c.time !== 'string' || typeof c.market !== 'string') return '자동 매도 값 형식이 올바르지 않습니다';
@@ -53,7 +57,8 @@ export function validateAutoSell(c: AutoSellConfig): string | null {
 }
 
 export interface SellClient {
-  market(id: string): Promise<MarketInfo>;
+  findMarket(quote: string): Promise<MarketInfo | null>;
+  takerFee?(id: string): Promise<number | null>;
   depth(id: string): Promise<Depth>;
   ticker(id: string): Promise<{ avgPrice: number; last: number }>;
   balances(): Promise<Record<string, { available: number; locked: number }>>;
@@ -113,16 +118,18 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
   const skip = (reason: string): SellResult => ({ ...r, status: r.soldPrl > 0 ? 'partial' : 'skipped', reason });
   let open: Order | null = null;
   try {
-    const m = await d.client.market(cfg.market);
-    if (m.id !== cfg.market || !m.id.startsWith('prl')) return skip(`PRL 마켓이 아닙니다 (${m.id})`);
-    if (m.state !== 'enabled') return skip(`마켓 ${cfg.market} 상태: ${m.state}`);
-    const [bal, tk] = await Promise.all([d.client.balances(), d.client.ticker(cfg.market)]);
+    const quote = quoteOf(cfg.market);
+    const m = await d.client.findMarket(quote);
+    if (!m) return skip(`거래 가능한 PRL/${quote.toUpperCase()} 마켓이 없습니다`);
+    if (!PRL_BASES.includes(m.baseUnit) || m.quoteUnit !== quote || m.state !== 'enabled') return skip(`PRL 마켓이 아닙니다 (${m.id})`);
+    const [bal, tk, fee] = await Promise.all([d.client.balances(), d.client.ticker(m.id), d.client.takerFee?.(m.id).catch(() => null) ?? Promise.resolve(null)]);
+    const feeRate = fee ?? DEFAULT_FEE_RATE;
     const refs = [tk.avgPrice, d.refPriceUsd() ?? Number.NaN].filter((v) => Number.isFinite(v) && v > 0);
     if (!refs.length) return skip('기준가를 알 수 없습니다 (24시간 평균가·시세 없음)');
     r.refUsd = Math.max(...refs);
     const floor = floorPrice(cfg, r.refUsd, m.pricePrecision);
     r.floorUsd = floor;
-    const avail = bal.prl?.available ?? 0;
+    const avail = bal[m.baseUnit]?.available ?? 0;
     let remaining = floorTo(Math.min(avail - cfg.reservePrl, cfg.dailyMaxPrl - d.soldTodayPrl), m.amountPrecision);
     if (remaining < m.minAmount) return { ...r, status: 'nothing', reason: `팔 수 있는 PRL ${Math.max(0, remaining)} (가용 ${avail}, 남길 양 ${cfg.reservePrl}, 오늘 ${d.soldTodayPrl}/${cfg.dailyMaxPrl}) < 최소 ${m.minAmount}` };
 
@@ -135,7 +142,7 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
         stopReason = '자동 매도를 꺼서 멈췄습니다';
         break;
       }
-      const book = checkBook(await d.client.depth(cfg.market), cfg);
+      const book = checkBook(await d.client.depth(m.id), cfg);
       if ('skip' in book) {
         stopReason = book.skip;
         break;
@@ -152,7 +159,9 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
         stopReason = `1회 주문 한도 ${cfg.orderMaxUsd} USDT 로는 최소 수량 ${m.minAmount} PRL 을 살 수 없습니다`;
         break;
       }
-      if (cfg.dryRun) return { ...r, status: 'planned', plan: { price, amount }, reason: `${amount} PRL 을 ${price} USDT 에 지정가 매도할 계획 (하한가 ${floor}, 기준가 ${r.refUsd})` };
+      if (cfg.dryRun) {
+        return { ...r, status: 'planned', plan: { price, amount }, feeUsdt: amount * price * feeRate, reason: `${m.id} 에서 ${amount} PRL 을 ${price} ${quote.toUpperCase()} 에 지정가 매도할 계획 (하한가 ${floor}, 기준가 ${r.refUsd}, 수수료 약 ${(feeRate * 100).toFixed(2)}%)` };
+      }
 
       try {
         open = await d.client.sellLimit(m, amount, price);
@@ -160,7 +169,7 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
         // 상태를 모르는 실패(5xx·연결 끊김)는 방금 넣었을 수 있는 같은 주문을 찾아 취소한다
         const status = (e as { status?: number | null }).status;
         if (status === null || status === undefined || status >= 500) {
-          for (const o of await d.client.openSells(cfg.market).catch(() => [])) {
+          for (const o of await d.client.openSells(m.id).catch(() => [])) {
             if (Math.abs(o.price - price) < 1e-9 && Math.abs(o.originAmount - amount) < 1e-9) await d.client.cancel(o.id).catch(() => undefined);
           }
         }
@@ -190,11 +199,15 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
 
     // 체결 금액·수수료 (체결 내역 기준, 없으면 평균가로)
     for (const ord of r.orders.filter((x) => x.filled > 0)) {
-      const fills = await d.client.fills(cfg.market, ord.id, startedAt / 1000 - 60).catch(() => []);
+      const fills = await d.client.fills(m.id, ord.id, startedAt / 1000 - 60).catch(() => []);
+      // 수수료는 체결 내역의 값을 쓰고 (기준 통화로 떼면 가격을 곱해 USDT 로), 체결 내역이 없으면 수수료율로 추정
       if (fills.length) {
         r.proceedsUsdt += fills.reduce((s, f) => s + (f.total || f.amount * f.price), 0);
-        r.feeUsdt += fills.reduce((s, f) => s + (/prl/i.test(f.feeCurrency) ? f.fee * f.price : f.fee), 0);
-      } else r.proceedsUsdt += ord.filled * ord.avgPrice;
+        r.feeUsdt += fills.reduce((s, f) => s + (PRL_BASES.includes(f.feeCurrency.toLowerCase()) ? f.fee * f.price : f.fee), 0);
+      } else {
+        r.proceedsUsdt += ord.filled * ord.avgPrice;
+        r.feeUsdt += ord.filled * ord.avgPrice * feeRate;
+      }
     }
     r.status = r.soldPrl <= 0 ? (stopReason ? 'skipped' : 'nothing') : remaining >= m.minAmount ? 'partial' : 'sold';
     if (stopReason) r.reason = stopReason;
@@ -213,6 +226,7 @@ export async function runAutoSell(cfg: AutoSellConfig, d: SellDeps): Promise<Sel
       d.onOpen?.(null);
     }
     r.proceedsUsdt = r.orders.reduce((s, x) => s + x.filled * x.avgPrice, 0);
+    r.feeUsdt = r.proceedsUsdt * DEFAULT_FEE_RATE;
     return { ...r, status: 'error', reason: (e as Error).message.slice(0, 300) };
   }
 }

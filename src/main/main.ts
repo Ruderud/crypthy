@@ -1,5 +1,5 @@
 // Electron 셸: 창·트레이·OS 알림·대화상자·자동 업데이트. 상태와 동작은 core.ts 가 맡는다.
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, safeStorage, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, nativeImage, safeStorage, shell, Tray } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Alert, AppState, ChartsView, RemoteSettingsView, Settings } from '../shared/types';
@@ -580,6 +580,8 @@ if (!app.requestSingleInstanceLock()) {
     loadExchangeKey();
     await core.initCore({
       exchangeKey: () => exchangeKey,
+      // SafeTrade 는 Cloudflare 가 Node fetch 를 막는다: Chromium 네트워크(net.fetch)로 보낸다
+      exchangeFetch: ((input: string | URL | Request, init?: RequestInit) => net.fetch(typeof input === 'string' || input instanceof Request ? input : input.toString(), init)) as typeof fetch,
       exchangeKeyStore: () => (exchangeKey ? (process.platform === 'win32' ? 'Windows 보안 저장소' : 'OS 보안 저장소') : null),
       dataDir: app.getPath('userData'),
       version: app.getVersion(),

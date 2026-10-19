@@ -18,6 +18,9 @@ export interface ExchangeKey {
 
 export interface MarketInfo {
   id: string;
+  /** 기준 통화 id (2026-10-18 부터 pearl, 그 전 prl) */
+  baseUnit: string;
+  quoteUnit: string;
   amountPrecision: number;
   pricePrecision: number;
   minAmount: number;
@@ -72,6 +75,19 @@ export function redact(text: string, k: ExchangeKey | null): string {
 export const floorTo = (v: number, digits: number) => Math.floor(v * 10 ** digits + 1e-9) / 10 ** digits;
 export const ceilTo = (v: number, digits: number) => Math.ceil(v * 10 ** digits - 1e-9) / 10 ** digits;
 export const fixed = (v: number, digits: number) => v.toFixed(digits);
+
+/** PRL 의 기준 통화 id: 새 id 우선 */
+export const PRL_BASES = ['pearl', 'prl'];
+/** SafeTrade 매도 수수료 기본값 (공개 trading_fees maker·taker 0.001, 2026-10-19 실제 매도 0.1% 확인) */
+export const DEFAULT_FEE_RATE = 0.001;
+
+export function parseMarket(j: unknown): MarketInfo {
+  const o = (j ?? {}) as Record<string, unknown>;
+  return {
+    id: String(o.id ?? ''), baseUnit: String(o.base_unit ?? '').toLowerCase(), quoteUnit: String(o.quote_unit ?? '').toLowerCase(),
+    amountPrecision: num(o.amount_precision), pricePrecision: num(o.price_precision), minAmount: num(o.min_amount), minPrice: num(o.min_price), state: String(o.state ?? ''),
+  };
+}
 
 export function parseDepth(j: unknown): Depth {
   const o = (j ?? {}) as { asks?: unknown; bids?: unknown };
@@ -128,6 +144,10 @@ export function createSafeTrade(key: ExchangeKey | null, fetchImpl: typeof fetch
       throw new ExchangeError(`SafeTrade 연결 실패: ${redact((e as Error).message, key)}`, null);
     }
     const text = await res.text();
+    // Cloudflare 가 브라우저가 아닌 요청을 막으면 HTML 확인 페이지가 온다 (Node fetch·curl 은 막히고 Electron net.fetch 는 통과, 2026-10-19 확인)
+    if (res.status === 403 && /cloudflare|Attention Required/i.test(text)) {
+      throw new ExchangeError('SafeTrade 가 Cloudflare 로 이 프로그램의 요청을 막았습니다 (403) — 데스크톱 Crypthy 에서 자동 매도를 쓰세요 (헤드리스는 막힐 수 있습니다)', 403);
+    }
     if (!res.ok) throw new ExchangeError(`SafeTrade ${res.status}: ${redact(text, key)}`, res.status);
     try {
       return JSON.parse(text);
@@ -139,8 +159,24 @@ export function createSafeTrade(key: ExchangeKey | null, fetchImpl: typeof fetch
   return {
     hasKey: () => !!key,
     async market(id: string): Promise<MarketInfo> {
-      const o = (await call('GET', `/trade/public/markets/${encodeURIComponent(id)}`, undefined, false)) as Record<string, unknown>;
-      return { id: String(o.id), amountPrecision: num(o.amount_precision), pricePrecision: num(o.price_precision), minAmount: num(o.min_amount), minPrice: num(o.min_price), state: String(o.state ?? '') };
+      return parseMarket(await call('GET', `/trade/public/markets/${encodeURIComponent(id)}`, undefined, false));
+    },
+    /**
+     * PRL 을 quote(usdt·usdc)로 파는 거래 가능한 마켓을 마켓 목록에서 찾는다. 이름을 박아 두지 않는다:
+     * 2026-10-18 에 prlusdt 가 꺼지고 pearlusdt(기준 통화 pearl)로 바뀌었다
+     */
+    async findMarket(quote: string): Promise<MarketInfo | null> {
+      const list = (await call('GET', '/trade/public/markets?limit=1000', undefined, false)) as unknown;
+      const all = (Array.isArray(list) ? list : []).map(parseMarket).filter((m) => m.state === 'enabled' && m.quoteUnit === quote && PRL_BASES.includes(m.baseUnit));
+      return all.sort((a, z) => PRL_BASES.indexOf(a.baseUnit) - PRL_BASES.indexOf(z.baseUnit))[0] ?? null;
+    },
+    /** 이 마켓의 taker 수수료율 (공개 trading_fees, 없으면 null) */
+    async takerFee(id: string): Promise<number | null> {
+      const list = (await call('GET', '/trade/public/trading_fees', undefined, false)) as unknown;
+      const rows = (Array.isArray(list) ? list : []) as Record<string, unknown>[];
+      const row = rows.find((f) => f.market_id === id) ?? rows.find((f) => f.market_id === 'any' && f.group === 'any');
+      const fee = num(row?.taker);
+      return Number.isFinite(fee) && fee >= 0 && fee < 0.05 ? fee : null;
     },
     async depth(id: string): Promise<Depth> {
       return parseDepth(await call('GET', `/trade/public/markets/${encodeURIComponent(id)}/depth?limit=50`, undefined, false));

@@ -38,7 +38,7 @@ import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetch
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
 import { nextRunAt, runAutoSell, validateAutoSell, type SellResult } from './autosell';
-import { createSafeTrade, type ExchangeKey, type Order } from './safetrade';
+import { createSafeTrade, DEFAULT_FEE_RATE, type ExchangeKey, type Order } from './safetrade';
 import { mapFromApi, mapFromListed, mergeMap, parseListDevices, resolveGpuIds, srbCacheKey, type SrbDeviceCache } from './srbDevices';
 import { DISABLED_UPDATE, MAX_INTERVAL_MIN, MIN_INTERVAL_MIN } from './updater';
 
@@ -66,6 +66,8 @@ export interface CoreEnv {
   exchangeKey?(): ExchangeKey | null;
   /** 키 보관 방식 (화면 표시용) */
   exchangeKeyStore?(): string | null;
+  /** 거래소 요청에 쓸 fetch (데스크톱: Electron net.fetch — SafeTrade 의 Cloudflare 가 Node fetch 를 막는다) */
+  exchangeFetch?: typeof fetch;
 }
 
 let env: CoreEnv;
@@ -765,7 +767,7 @@ function autoSellView(): AppState['autoSell'] {
 }
 
 function sellClient(key: ExchangeKey) {
-  return createSafeTrade(key);
+  return createSafeTrade(key, env.exchangeFetch ?? fetch);
 }
 
 /** 매도 결과를 PnL 장부에 "실현 매도" 로 (USDT → 원은 설정 환율). 공유 장부면 이벤트로 다른 OS 에도 */
@@ -808,7 +810,8 @@ function noteResult(r: SellResult): void {
 async function refreshExchangeBalance(key: ExchangeKey): Promise<void> {
   const b = await sellClient(key).balances().catch(() => null);
   if (!b) return;
-  autoSell.balance = { prl: b.prl?.available ?? 0, usdt: b.usdt?.available ?? 0, at: Date.now() };
+  // 2026-10-18 부터 PRL 의 통화 id 는 pearl (그 전 prl)
+  autoSell.balance = { prl: (b.pearl ?? b.prl)?.available ?? 0, usdt: b.usdt?.available ?? 0, at: Date.now() };
   const now = new Date();
   const c = settings.cashout;
   if (now.getDay() === 0 && autoSell.balance.usdt >= c.withdrawSuggestUsdt && autoSell.withdrawHintDay !== dateKey(now.getTime())) {
@@ -845,9 +848,9 @@ async function recoverInterrupted(key: ExchangeKey): Promise<void> {
   const sold = orders.reduce((s, x) => s + x.filled, 0);
   if (sold > 0) {
     noteResult({
-      day: p?.day ?? o!.day, at: Date.now(), dryRun: false, status: 'partial', reason: '앱이 매도 중에 꺼져 남은 주문을 취소했습니다 (수수료는 거래소에서 확인)',
+      day: p?.day ?? o!.day, at: Date.now(), dryRun: false, status: 'partial', reason: '앱이 매도 중에 꺼져 남은 주문을 취소했습니다 (수수료는 0.1% 로 추정)',
       floorUsd: p?.floorUsd ?? null, refUsd: p?.refUsd ?? null, plan: p?.plan ?? (o ? { price: o.price, amount: o.amount } : null),
-      orders, soldPrl: sold, proceedsUsdt: orders.reduce((s, x) => s + x.filled * x.avgPrice, 0), feeUsdt: 0,
+      orders, soldPrl: sold, proceedsUsdt: orders.reduce((s, x) => s + x.filled * x.avgPrice, 0), feeUsdt: orders.reduce((s, x) => s + x.filled * x.avgPrice, 0) * DEFAULT_FEE_RATE,
     });
   }
 }
@@ -1382,7 +1385,7 @@ function validatePatch(p: Partial<Settings>): string | null {
   const asErr = p.autoSell !== undefined && !turningOff ? validateAutoSell(next.autoSell) : null;
   if (asErr) return `자동 매도: ${asErr}`;
   const co = next.cashout;
-  if (![co.prlDepositMin, co.prlConfirmations, co.withdrawFeeUsdt, co.withdrawMinUsdt, co.withdrawSuggestUsdt].every((v) => Number.isFinite(v) && v >= 0) || typeof co.withdrawNetwork !== 'string' || co.withdrawNetwork.length > 20 || typeof co.measuredAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(co.measuredAt)) {
+  if (![co.prlDepositMin, co.prlConfirmations, co.sellFeePct, co.withdrawFeeUsdt, co.withdrawMinUsdt, co.withdrawSuggestUsdt].every((v) => Number.isFinite(v) && v >= 0) || typeof co.withdrawNetwork !== 'string' || co.withdrawNetwork.length > 20 || typeof co.measuredAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(co.measuredAt)) {
     return '현금화 경로 값이 올바르지 않습니다';
   }
   if (typeof next.sharedLedgerDir !== 'string' || (next.sharedLedgerDir && !path.isAbsolute(next.sharedLedgerDir)) || /[\0\r\n]/.test(next.sharedLedgerDir)) {

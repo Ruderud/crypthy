@@ -6,7 +6,7 @@ import { checkBook, DEFAULT_AUTOSELL, floorPrice, nextRunAt, quotePrice, runAuto
 import { ExchangeError, type Depth, type MarketInfo, type Order } from './safetrade';
 import { claimAutoSellDay } from './shared';
 
-const PRL: MarketInfo = { id: 'prlusdt', amountPrecision: 4, pricePrecision: 2, minAmount: 2, minPrice: 0.01, state: 'enabled' };
+const PRL: MarketInfo = { id: 'pearlusdt', baseUnit: 'pearl', quoteUnit: 'usdt', amountPrecision: 4, pricePrecision: 2, minAmount: 2, minPrice: 0.01, state: 'enabled' };
 // 2026-10-19 실측 호가 (매도 1.97 / 매수 1.96, 24시간 평균 1.88)
 const BOOK: Depth = { asks: [[1.97, 2971], [1.98, 10578]], bids: [[1.96, 2505], [1.95, 20306]] };
 
@@ -18,19 +18,19 @@ function exchange(o: { prl?: number; book?: Depth; avg?: number; fill?: (price: 
   const orders = new Map<number, Order>();
   let seq = 0;
   const client: SellClient = {
-    market: async () => PRL,
+    findMarket: async () => PRL,
     depth: async () => o.book ?? BOOK,
     ticker: async () => ({ avgPrice: o.avg ?? 1.88, last: 1.96 }),
-    balances: async () => ({ prl: { available: o.prl ?? 100, locked: 0 }, usdt: { available: 5, locked: 0 } }),
+    balances: async () => ({ pearl: { available: o.prl ?? 100, locked: 0 }, prl: { available: 999, locked: 0 }, usdt: { available: 5, locked: 0 } }),
     async sellLimit(_m, amount, price) {
       if (o.failCreate) {
-        orders.set(++seq, { id: seq, market: 'prlusdt', side: 'sell', type: 'limit', state: 'wait', price, originAmount: amount, filledAmount: 0, avgPrice: 0 });
+        orders.set(++seq, { id: seq, market: 'pearlusdt', side: 'sell', type: 'limit', state: 'wait', price, originAmount: amount, filledAmount: 0, avgPrice: 0 });
         log.push(`create? ${amount}@${price}`);
         throw o.failCreate;
       }
       const id = ++seq;
       const filled = Math.min(amount, o.fill ? o.fill(price, amount, id) : amount);
-      orders.set(id, { id, market: 'prlusdt', side: 'sell', type: 'limit', state: filled >= amount ? 'done' : 'wait', price, originAmount: amount, filledAmount: filled, avgPrice: filled ? price : 0 });
+      orders.set(id, { id, market: 'pearlusdt', side: 'sell', type: 'limit', state: filled >= amount ? 'done' : 'wait', price, originAmount: amount, filledAmount: filled, avgPrice: filled ? price : 0 });
       log.push(`sell ${amount}@${price}`);
       return { ...orders.get(id)! };
     },
@@ -133,6 +133,29 @@ describe('auto sell: orders', () => {
     expect(r.feeUsdt).toBeCloseTo(50 * 1.96 * 0.001, 6);
   });
 
+  it('sells the PEARL balance on the market found in the list (not the old prl balance), with the fee from the fills', async () => {
+    const ex = exchange({ prl: 10 });
+    const r = await runAutoSell(cfg({ orderMaxUsd: 1000, market: 'prlusdt' }), deps(ex.client));
+    expect(r.soldPrl).toBeCloseTo(10, 6);
+    expect(r.feeUsdt).toBeCloseTo(10 * 1.96 * 0.001, 8);
+  });
+
+  it('without fill details the fee is estimated at the taker rate (0.1%)', async () => {
+    const ex = exchange({ prl: 10 });
+    ex.client.fills = async () => [];
+    ex.client.takerFee = async () => 0.002;
+    expect((await runAutoSell(cfg({ orderMaxUsd: 1000 }), deps(ex.client))).feeUsdt).toBeCloseTo(10 * 1.96 * 0.002, 8);
+    delete ex.client.takerFee;
+    expect((await runAutoSell(cfg({ orderMaxUsd: 1000 }), deps(ex.client))).feeUsdt).toBeCloseTo(10 * 1.96 * 0.001, 8);
+  });
+
+  it('no tradable PRL market → no sale', async () => {
+    const ex = exchange({});
+    ex.client.findMarket = async () => null;
+    expect((await runAutoSell(cfg(), deps(ex.client))).status).toBe('skipped');
+    expect(ex.log).toEqual([]);
+  });
+
   it('partial fill → cancel → reprice one step lower → filled', async () => {
     let n = 0;
     const ex = exchange({ prl: 20, fill: (_p, amount) => (++n === 1 ? amount / 2 : amount) });
@@ -170,7 +193,7 @@ describe('auto sell: orders', () => {
 describe('auto sell: safety stops', () => {
   it('never sells another asset even if the exchange returns a different market', async () => {
     const ex = exchange({});
-    ex.client.market = async () => ({ ...PRL, id: 'btcusdt' });
+    ex.client.findMarket = async () => ({ ...PRL, id: 'btcusdt', baseUnit: 'btc' });
     const r = await runAutoSell(cfg(), deps(ex.client));
     expect(r.status).toBe('skipped');
     expect(ex.log).toEqual([]);
@@ -192,7 +215,7 @@ describe('auto sell: settings and once-per-day across machines', () => {
   it('validates the settings', () => {
     expect(validateAutoSell(DEFAULT_AUTOSELL)).toBeNull();
     // PRL 마켓만, 타입·상한, 실제 매도에는 최저가 필수
-    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, market: 'btcusdt' })).toMatch(/prlusdt/);
+    expect(validateAutoSell({ ...DEFAULT_AUTOSELL, market: 'btcusdt' })).toMatch(/pearlusdt/);
     expect(validateAutoSell({ ...DEFAULT_AUTOSELL, time: ['10:00'] as unknown as string })).not.toBeNull();
     expect(validateAutoSell({ ...DEFAULT_AUTOSELL, dailyMaxPrl: '50' as unknown as number })).not.toBeNull();
     expect(validateAutoSell({ ...DEFAULT_AUTOSELL, orderMaxUsd: 1e9 })).not.toBeNull();
