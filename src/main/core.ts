@@ -20,7 +20,7 @@ import {
   rentalNetKrwPerHour, reviewAlerts, summarize, type Ledger, type Payout, type PoolStats,
 } from './profit';
 import {
-  buildLimitsJson, isPowerTaskRegistered, readPowerLog, registerPowerTask, runPowerTask, validateWatts,
+  buildLimitsJson, followNvidiaLimits, isPowerTaskRegistered, readPowerLog, registerPowerTask, runPowerTask, validateWatts,
 } from './powerLimit';
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
@@ -160,6 +160,10 @@ const ENERGY_EVENT_MS = 10 * 60_000;
 let priceSeries: { t: number; usd: number }[] = [];
 let powerRegistered = false;
 let powerLog: string | null = null;
+/** GPU 별 직전 nvidia-smi 전력 제한 (앱 밖에서 바꾼 값을 알아채는 기준) */
+let seenLimits: Record<GpuId, number> = {};
+/** 재적용 파일을 마지막으로 쓸 때의 GPU 구성 (구성이 바뀌면 옛 bus id 를 바로 걷어낸다) */
+let writtenGpuSet = '';
 const remote = {
   prlUsd: null as number | null,
   /** 시세를 받은 시각 (조회 실패 시 마지막 정상 시세를 계속 쓰고 이 시각을 보여 준다) */
@@ -1135,6 +1139,31 @@ function discoverGpus(): void {
   if (added) saveSettings();
 }
 
+/**
+ * 로그온·부팅 재적용 파일: 이번 실행에서 한 번이라도 보인 GPU 만 (슬롯을 옮겨 사라진 bus id 제외).
+ * 한 번 빠졌다 돌아오는 GPU 를 지우지 않도록 직전 목록이 아니라 seenGpus 기준. 아직 아무 GPU 도 못 읽었으면 거르지 않는다
+ */
+function writePowerLimits(): void {
+  writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus.filter((g) => !mineOff(g)), seenGpus.size ? seenGpus : undefined));
+}
+
+/** 전력 제한 목표값이 NVIDIA 실제값을 따르게 하고, 값이나 GPU 구성이 바뀌면 재적용 파일도 맞춘다 */
+function followLiveLimits(): void {
+  if (!lastNv.length) return;
+  const r = followNvidiaLimits(settings.gpus, lastNv, seenLimits);
+  seenLimits = r.seen;
+  if (r.changed) {
+    settings = { ...settings, gpus: r.gpus };
+    saveSettings();
+    env.onSettings?.(settings);
+  }
+  const gpuSet = [...seenGpus].sort().join(',');
+  if (r.changed || gpuSet !== writtenGpuSet) {
+    writePowerLimits();
+    writtenGpuSet = gpuSet;
+  }
+}
+
 export async function poll(): Promise<void> {
   const now = Date.now();
   const useApi = settings.minerApi.adapter !== 'none';
@@ -1157,6 +1186,7 @@ export async function poll(): Promise<void> {
     if (ownMiners.size > 1) refreshKnownMiners();
   }
   discoverGpus();
+  followLiveLimits();
 
   for (const g of gpuViews()) {
     if (g.present) history = addSample(history, g.id, { hash: g.hashrate, temp: g.tempC, power: g.powerW }, now);
@@ -1548,7 +1578,7 @@ export const isAllowedLink = (url: unknown): url is string => typeof url === 'st
 export async function registerPowerLimits(): Promise<string | null> {
   if (MOCK) return 'mock 모드에서는 예약 작업을 등록하지 않습니다';
   try {
-    writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus.filter((g) => !mineOff(g))));
+    writePowerLimits();
     await power.register(env.resourcesDir, file('power-limits.json'), powerUser());
     powerRegistered = await power.isRegistered();
     await sleep(4000);
@@ -1561,7 +1591,7 @@ export async function registerPowerLimits(): Promise<string | null> {
 
 export async function applyPowerLimits(): Promise<string | null> {
   if (MOCK) return 'mock 모드에서는 전력 제한을 적용하지 않습니다';
-  writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus.filter((g) => !mineOff(g))));
+  writePowerLimits();
   if (!powerRegistered) return '먼저 전력 제한 등록을 1회 실행해 주세요';
   try {
     await power.run();

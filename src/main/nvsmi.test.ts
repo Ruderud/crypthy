@@ -9,7 +9,7 @@ describe('parseNvsmiCsv', () => {
     expect(gpus).toHaveLength(2);
     expect(gpus[0]).toEqual({
       index: 0, name: 'NVIDIA GeForce RTX 5090', busId: '00000000:01:00.0', bus: 1,
-      tempC: 63, fanPct: 72, powerW: 588.12, powerLimitW: 600, powerMinW: 400, powerMaxW: 600, utilPct: 100, uuid: null, driver: null,
+      tempC: 63, fanPct: 72, powerW: 588.12, powerLimitW: 600, powerMinW: 400, powerMaxW: 600, utilPct: 100, uuid: null, driver: null, powerDefaultW: null,
     });
     expect(gpus[1]).toMatchObject({ busId: '00000000:10:00.0', bus: 16, powerLimitW: 280, powerMaxW: 400 });
   });
@@ -26,6 +26,15 @@ describe('parseNvsmiCsv', () => {
     const [a, b] = parseNvsmiCsv('0, RTX 5090, 00000000:01:00.0, 40, 30, 20, 600, 150, 600, 0, GPU-1a2b3c4d-0000-1111-2222-333344445555\n1, RTX 5080, 00000000:10:00.0, 40, 30, 20, 280, 150, 400, 0, [N/A]\n');
     expect(a.uuid).toBe('GPU-1a2b3c4d-0000-1111-2222-333344445555');
     expect(b.uuid).toBeNull();
+  });
+
+  it('reads the default power limit (tells a reboot/driver reset apart from a user change)', () => {
+    const [a, b] = parseNvsmiCsv(
+      '0, RTX 5090, 00000000:01:00.0, 40, 30, 20, 480, 400, 600, 0, GPU-1a2b3c4d-0000-1111-2222-333344445555, 591.86, 600.00\n' +
+        '1, RTX 5080, 00000000:0D:00.0, 40, 30, 20, 300, 250, 400, 0\n',
+    );
+    expect(a.powerDefaultW).toBe(600);
+    expect(b.powerDefaultW).toBeNull();
   });
 
   it('parsePciBus handles hex bus ids', () => {

@@ -10,11 +10,56 @@ export const PROGRAM_DATA_DIR = 'Crypthy';
 export const MIN_W = 100;
 export const MAX_W = 1000;
 
-/** nvidia-smi -i 는 PCI bus id 도 받으므로 index(바뀔 수 있음) 대신 bus id 로 기록 */
-export function buildLimitsJson(gpus: GpuConfig[]): { limits: { gpu: string; watts: number }[] } {
+/**
+ * nvidia-smi -i 는 PCI bus id 도 받으므로 index(바뀔 수 있음) 대신 bus id 로 기록.
+ * present 가 있으면 지금 장착된 GPU 만 넣는다 (슬롯을 옮겨 bus id 가 바뀐 옛 항목은 "No devices were found" 로 실패한다)
+ */
+export function buildLimitsJson(gpus: GpuConfig[], present?: ReadonlySet<string>): { limits: { gpu: string; watts: number }[] } {
   return {
-    limits: gpus.filter((g) => g.powerLimitW !== null).map((g) => ({ gpu: g.id, watts: g.powerLimitW as number })),
+    limits: gpus
+      .filter((g) => g.powerLimitW !== null && (!present || present.has(g.id)))
+      .map((g) => ({ gpu: g.id, watts: g.powerLimitW as number })),
   };
+}
+
+/** followNvidiaLimits 가 보는 nvidia-smi 값 */
+export interface LiveLimit {
+  busId: string;
+  powerLimitW: number | null;
+  powerDefaultW: number | null;
+  powerMinW?: number | null;
+  powerMaxW?: number | null;
+}
+
+/**
+ * 전력 제한 목표값은 NVIDIA 실제값을 따른다 (nvidia-smi -pl 등 앱 밖에서 바꿔도 설정·로그온 재적용에 반영).
+ * - 기본값으로 돌아간 것은 재부팅·드라이버 재시작일 수 있어 따르지 않는다 (목표값을 지우려면 설정에서 비운다)
+ * - 앞선 확인 이후 실제값이 그대로면 목표값을 덮지 않는다 (입력했지만 아직 적용하지 않은 값 보존)
+ * - 처음 보는 값은 기본값을 알 때만 따른다
+ * seen 은 GPU 별 직전 실제값 (앱 실행 중 메모리에만 둔다)
+ */
+export function followNvidiaLimits(
+  gpus: GpuConfig[],
+  live: LiveLimit[],
+  seen: Readonly<Record<string, number>>,
+): { gpus: GpuConfig[]; seen: Record<string, number>; changed: boolean } {
+  const next = { ...seen };
+  let changed = false;
+  const out = gpus.map((g) => {
+    const nv = live.find((n) => n.busId === g.id);
+    if (!nv || nv.powerLimitW === null) return g;
+    const w = Math.round(nv.powerLimitW);
+    const prev = seen[g.id];
+    next[g.id] = w;
+    const atDefault = nv.powerDefaultW !== null && w === Math.round(nv.powerDefaultW);
+    const userChange = prev === undefined ? nv.powerDefaultW !== null && !atDefault : w !== prev && !atDefault;
+    // 설정에서 저장할 수 없는 값(예: 100W 미만 저전력 카드)은 들이지 않는다: 들이면 이후 설정 저장이 모두 거부된다
+    const valid = validateWatts(w, nv.powerMinW ?? null, nv.powerMaxW ?? null) === null;
+    if (!userChange || !valid || g.powerLimitW === w) return g;
+    changed = true;
+    return { ...g, powerLimitW: w };
+  });
+  return { gpus: out, seen: next, changed };
 }
 
 /** min/max 는 nvidia-smi 가 알려 준 GPU 허용 범위 (모르면 100~1000W) */

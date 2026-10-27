@@ -58,7 +58,7 @@ Catalog as of 2026-10-17:
 - **Safety watch**: stops known miners on a stopped fan, overheating or lost temperature readings. See [Safety watch](#safety-watch).
 - **Mining on/off**: start and stop the miner you configured from the HUD and the tray. See [Mining on/off](#mining-on-off).
 - **Headless host and remote screen**: run Crypthy as a service on a PC without a screen and view or control it from another Crypthy over Tailscale. See [Headless host](#headless).
-- **Power limits**: watts per GPU, re-applied automatically after a one-time admin approval (Windows scheduled task / Linux systemd service). The app itself runs as a normal user.
+- **Power limits**: watts per GPU, re-applied automatically after a one-time admin approval (Windows scheduled task / Linux systemd service). The app itself runs as a normal user. The target follows the live NVIDIA limit: a change made outside the app (for example `nvidia-smi -pl`) is picked up and re-applied after reboot, while a reset to the default after a reboot or driver restart is ignored. GPUs that are no longer installed are left out.
 - **Tray app** with optional start at login, a read-only **local status API**, and **auto-update** from GitHub Releases.
 
 ### Charts
