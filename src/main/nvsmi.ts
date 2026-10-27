@@ -13,7 +13,11 @@ export const NVSMI_FIELDS = [
   'utilization.gpu',
   'uuid',
   'driver_version',
+  'power.default_limit',
 ] as const;
+
+/** uuid·driver_version·power.default_limit 은 나중에 추가된 열: 그 열이 없는 출력(테스트·구버전 형식)도 받는다 */
+const MIN_COLUMNS = 10;
 
 export interface NvGpu {
   index: number;
@@ -33,6 +37,8 @@ export interface NvGpu {
   uuid: string | null;
   /** 드라이버 버전 (SRBMiner 장치 번호 캐시가 바뀌었는지 판단) */
   driver: string | null;
+  /** 기본 전력 제한 (재부팅·드라이버 재시작 시 돌아가는 값). 사용자 변경과 구분할 때 */
+  powerDefaultW: number | null;
 }
 
 function num(v: string | undefined): number | null {
@@ -55,8 +61,7 @@ export function parseNvsmiCsv(out: string): NvGpu[] {
   for (const line of out.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const c = line.split(',').map((s) => s.trim());
-    // uuid(0.4.4)·driver_version(0.4.5) 은 나중에 추가: 그 열이 없는 출력(테스트·구버전 형식)도 받는다
-    if (c.length < NVSMI_FIELDS.length - 2) continue;
+    if (c.length < MIN_COLUMNS) continue;
     const index = Number.parseInt(c[0], 10);
     if (!Number.isInteger(index) || !BUS_ID_RE.test(c[2])) continue;
     gpus.push({
@@ -73,6 +78,7 @@ export function parseNvsmiCsv(out: string): NvGpu[] {
       utilPct: num(c[9]),
       uuid: /^GPU-[0-9a-f-]+$/i.test(c[10] ?? '') ? c[10] : null,
       driver: /^\d+(\.\d+)+$/.test(c[11] ?? '') ? c[11] : null,
+      powerDefaultW: num(c[12]),
     });
   }
   return gpus;

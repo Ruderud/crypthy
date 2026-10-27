@@ -96,6 +96,7 @@ export function mockHardware(): Hardware & { start(): void } {
         utilPct: mining ? 100 : 3,
         uuid: `GPU-0000000${g.index}-mock`,
         driver: '999.99',
+        powerDefaultW: g.index === 0 ? 600 : 360,
       }));
     },
     async gpuVendors() {

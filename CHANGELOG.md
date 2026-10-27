@@ -8,6 +8,14 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+### Changed
+- **Power limits follow NVIDIA**: the per-GPU target now tracks the live NVIDIA power limit. A limit changed outside Crypthy (for example `nvidia-smi -pl`) is saved and re-applied at logon/boot; a reset to the default value after a reboot or driver restart is not taken over, and a value typed but not yet applied is not overwritten.
+
+### Fixed
+- Power limits stopped being re-applied after a card moved to another slot (new PCI bus id): the old id stayed in `power-limits.json` and `nvidia-smi` failed with "No devices were found". Only GPUs seen since the app started are written now, and the file is rewritten as soon as the set of GPUs changes.
+- The Windows scheduled task now ends with a failure code when a limit could not be applied, instead of reporting success in Task Scheduler.
+- Saving the GPU table no longer writes back an old power limit that changed on the card while the table was open; a live value outside the range the form accepts (for example under 100 W) is not taken over.
+
 ## [0.6.0] - 2026-10-19
 
 Screen layout only: mining, selling and ledger logic, `settings.json`, IPC and the remote API are unchanged, so 0.5.x settings are read as they are.

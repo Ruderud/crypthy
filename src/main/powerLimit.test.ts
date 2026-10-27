@@ -54,6 +54,13 @@ describe('followNvidiaLimits (NVIDIA is the source of truth)', () => {
     expect(r.changed).toBe(false);
   });
 
+  it('does not adopt a value the settings form would reject (keeps every later save working)', () => {
+    const r = followNvidiaLimits([newGpu(A, 'GTX 1650')], [{ ...live(A, 60, 75), powerMinW: 50, powerMaxW: 75 }], {});
+    expect(r.gpus[0].powerLimitW).toBeNull();
+    expect(r.changed).toBe(false);
+    expect(r.seen).toEqual({ [A]: 60 });
+  });
+
   it('rounds fractional nvidia-smi values to whole watts', () => {
     const r = followNvidiaLimits([newGpu(A, '5090')], [live(A, 479.98)], {});
     expect(r.gpus[0].powerLimitW).toBe(480);

@@ -1138,7 +1138,7 @@ function renderGpuTable(st: AppState) {
       <td><input data-f="label" value="${esc(g.label)}" maxlength="40" required /></td>
       <td>${esc(v?.index ?? '-')}</td>
       <td><code>${esc(g.id)}</code></td>
-      <td><span class="unit"><input data-f="powerLimitW" type="number" step="1" ${v?.powerMinW ? `min="${esc(v.powerMinW)}"` : ''} ${v?.powerMaxW ? `max="${esc(v.powerMaxW)}"` : ''} value="${esc(g.powerLimitW ?? '')}" placeholder="변경 안 함" /><i>W</i></span> <span class="muted small">${esc(range)}</span></td>
+      <td><span class="unit"><input data-f="powerLimitW" type="number" step="1" ${v?.powerMinW ? `min="${esc(v.powerMinW)}"` : ''} ${v?.powerMaxW ? `max="${esc(v.powerMaxW)}"` : ''} value="${esc(g.powerLimitW ?? '')}" data-orig="${esc(g.powerLimitW ?? '')}" placeholder="변경 안 함" /><i>W</i></span> <span class="muted small">${esc(range)}</span></td>
       <td><span class="unit"><input data-f="rentalUsdManual" type="number" step="any" min="0" value="${esc(g.rentalUsdManual)}" /><i>$/h</i></span></td>
       <td><span class="unit"><input data-f="reviewRentalUsd" type="number" step="any" min="0" value="${esc(g.reviewRentalUsd)}" /><i>$/h</i></span></td>
     </tr>`;
@@ -1158,10 +1158,13 @@ function readGpuTable(): GpuConfig[] {
     // 표에 아직 없는 GPU(표를 연 뒤 새로 인식) 는 그대로 둔다
     if (!row) return g;
     const f = (name: string) => row?.querySelector<HTMLInputElement>(`input[data-f="${name}"]`)?.value.trim() ?? '';
+    // 전력 제한은 NVIDIA 실제값을 따라 백그라운드에서 바뀔 수 있다: 손대지 않은 칸은 표를 연 뒤 바뀐 현재 값을 지킨다
+    const limit = row.querySelector<HTMLInputElement>('input[data-f="powerLimitW"]');
+    const limitEdited = !!limit && limit.value.trim() !== (limit.dataset.orig ?? '');
     return {
       ...g,
       label: f('label') || g.label,
-      powerLimitW: f('powerLimitW') === '' ? null : Number(f('powerLimitW')),
+      powerLimitW: !limitEdited ? g.powerLimitW : f('powerLimitW') === '' ? null : Number(f('powerLimitW')),
       rentalUsdManual: Number(f('rentalUsdManual') || 0),
       reviewRentalUsd: Number(f('reviewRentalUsd') || 0),
     };
