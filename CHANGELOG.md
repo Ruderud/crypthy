@@ -8,6 +8,10 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-28
+
+Power limits only. `settings.json` is read as before. The scheduled task script in `C:\ProgramData\Crypthy` is copied only when you register power limits; run **register power limits** once more to get the script that reports failures in Task Scheduler (optional).
+
 ### Changed
 - **Power limits follow NVIDIA**: the per-GPU target now tracks the live NVIDIA power limit. A limit changed outside Crypthy (for example `nvidia-smi -pl`) is saved and re-applied at logon/boot; a reset to the default value after a reboot or driver restart is not taken over, and a value typed but not yet applied is not overwritten.
 
