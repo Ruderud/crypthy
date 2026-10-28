@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { newGpu } from './config';
-import { buildLimitsJson, buildRegisterCommand, followNvidiaLimits, validateWatts } from './powerLimit';
+import { buildLimitsJson, buildRegisterCommand, followNvidiaLimits, limitMismatches, limitsReset, validateWatts } from './powerLimit';
 
 const decode = (b64: string) => Buffer.from(b64, 'base64').toString('utf16le');
 
@@ -64,6 +64,42 @@ describe('followNvidiaLimits (NVIDIA is the source of truth)', () => {
   it('rounds fractional nvidia-smi values to whole watts', () => {
     const r = followNvidiaLimits([newGpu(A, '5090')], [live(A, 479.98)], {});
     expect(r.gpus[0].powerLimitW).toBe(480);
+  });
+});
+
+describe('limitMismatches (check before auto start)', () => {
+  const g = (id: string, label: string, w: number | null) => ({ ...newGpu(id, label), powerLimitW: w });
+
+  it('lists GPUs whose live limit is still the default after a reboot', () => {
+    expect(limitMismatches([g(A, '5090', 480), g(B, '5080', 300)], [live(A, 600), live(B, 300, 360)])).toEqual(['5090']);
+  });
+
+  it('is empty once the limits are applied (rounding within 1 W)', () => {
+    expect(limitMismatches([g(A, '5090', 480), g(B, '5080', 300)], [live(A, 480.4), live(B, 299.6, 360)])).toEqual([]);
+  });
+
+  it('ignores GPUs with no target, absent GPUs and unknown live values', () => {
+    expect(limitMismatches([g(A, '5090', null), g(B, '5080', 300)], [live(A, 600)])).toEqual([]);
+    expect(limitMismatches([g(A, '5090', 480)], [live(A, null)])).toEqual([]);
+  });
+});
+
+describe('limitsReset (re-apply after reboot or driver reset)', () => {
+  const g = (id: string, label: string, w: number | null) => ({ ...newGpu(id, label), powerLimitW: w });
+
+  it('lists GPUs back at the default while a lower target is saved', () => {
+    expect(limitsReset([g(A, '5090', 480), g(B, '5080', 300)], [live(A, 600), live(B, 300, 360)])).toEqual(['5090']);
+  });
+
+  it('leaves a typed but not yet applied value alone (live is not the default)', () => {
+    expect(limitsReset([g(A, '5090', 450)], [live(A, 480)])).toEqual([]);
+  });
+
+  it('ignores no target, a target equal to the default, absent GPUs and unknown defaults', () => {
+    expect(limitsReset([g(A, '5090', null)], [live(A, 600)])).toEqual([]);
+    expect(limitsReset([g(A, '5090', 600)], [live(A, 600)])).toEqual([]);
+    expect(limitsReset([g(B, '5080', 300)], [live(A, 600)])).toEqual([]);
+    expect(limitsReset([g(A, '5090', 480)], [live(A, 600, null)])).toEqual([]);
   });
 });
 

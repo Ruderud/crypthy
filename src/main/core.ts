@@ -20,7 +20,7 @@ import {
   rentalNetKrwPerHour, reviewAlerts, summarize, type Ledger, type Payout, type PoolStats,
 } from './profit';
 import {
-  buildLimitsJson, followNvidiaLimits, isPowerTaskRegistered, readPowerLog, registerPowerTask, runPowerTask, validateWatts,
+  buildLimitsJson, followNvidiaLimits, isPowerTaskRegistered, limitMismatches, limitsReset, readPowerLog, registerPowerTask, runPowerTask, validateWatts,
 } from './powerLimit';
 import { addSample, dailyClose, dailySeries, emptyHistory, historyToJson, loadHistory, parseMarketChart, seriesOf, type History } from './history';
 import { linuxPower } from './powerLimitLinux';
@@ -164,6 +164,13 @@ let powerLog: string | null = null;
 let seenLimits: Record<GpuId, number> = {};
 /** 재적용 파일을 마지막으로 쓸 때의 GPU 구성 (구성이 바뀌면 옛 bus id 를 바로 걷어낸다) */
 let writtenGpuSet = '';
+/** 마지막 전력 제한 적용 요청 시각 (기본값으로 돌아간 GPU 재적용을 너무 자주 하지 않게) */
+let lastPowerApplyAt = 0;
+const POWER_REAPPLY_MS = 5 * 60_000;
+/** 재적용해도 그대로 기본값이면 이만큼 쉰다 (예약 작업 실패·-pl 을 받지 않는 카드에서 5분마다 반복하지 않게) */
+const POWER_REAPPLY_FAILED_MS = 60 * 60_000;
+let reapplyPausedUntil = 0;
+let reapplying = false;
 const remote = {
   prlUsd: null as number | null,
   /** 시세를 받은 시각 (조회 실패 시 마지막 정상 시세를 계속 쓰고 이 시각을 보여 준다) */
@@ -960,13 +967,43 @@ export const isConsented = () => runtime.minerConsentAt !== null;
 export const AUTO_START_DELAY_MS = 30_000;
 
 /**
+ * 채굴 자동 시작 전: 설정한 전력 제한이 실제로 걸려 있는지 확인하고, 아니면 직접 적용한다.
+ * 로그온 예약 작업보다 먼저 켜거나 재적용이 실패하면 제한 없이(기본 전력으로) 채굴하게 되므로, 맞추지 못하면 켜지 않는다
+ */
+async function ensurePowerLimits(): Promise<string | null> {
+  // Windows 만 (Linux 는 부팅 시 systemd 서비스가 적용하고, 무인 적용은 pkexec 암호 창으로 넘어갈 수 있다)
+  if (MOCK || PLATFORM !== 'windows') return null;
+  const targets = powerTargets();
+  if (!targets.some((g) => g.powerLimitW !== null)) return null;
+  const unknown = '전력 제한을 확인하지 못했습니다 (nvidia-smi 응답 없음)';
+  /** 맞지 않는 GPU 이름, 실제값을 읽지 못하면 null */
+  const pending = async () => {
+    const nv = (await hw.queryGpus().catch(() => null)) ?? (lastNv.length ? lastNv : null);
+    return nv ? limitMismatches(targets, nv) : null;
+  };
+  let off = await pending();
+  if (!off) return unknown;
+  if (!off.length) return null;
+  env.log.info(`auto start: applying power limits first (${off.join(', ')})`);
+  const err = await applyPowerLimits();
+  if (err) return `전력 제한을 적용하지 못했습니다 — ${err}`;
+  // 예약 작업은 비동기로 끝나므로 몇 번 다시 확인한다
+  for (let i = 0; (!(off = await pending()) || off.length) && i < 3; i++) await sleep(3000);
+  if (!off) return unknown;
+  return off.length ? `전력 제한이 걸리지 않았습니다: ${off.join(', ')} (설정 → 전력 제한 적용 기록 확인)` : null;
+}
+
+/**
  * Crypthy 시작 시 채굴 자동 시작 (설정을 켰을 때 한 번만). 버튼과 같은 조건을 쓰되 확인이 필요하면 묻지 않고 건너뛴다.
  * 위험 정지 뒤 자동으로 다시 켜지 않는다는 원칙은 그대로: 보류·최근 위험 정지가 있으면 하지 않는다.
  */
 export async function autoStartMining(): Promise<void> {
   const d = autoStartDecision({ enabled: settings.autoStartMining, consented: isConsented(), recentDanger: recentDangerStop() !== null, blocker: controlBlocker() });
   let reason = d.reason;
-  if (d.start) {
+  // 전력 제한 때문에 건너뛰면 알림으로도 알린다 (채굴이 왜 안 켜졌는지 모르게 두지 않게)
+  let level: Alert['level'] = 'info';
+  if (d.start && (reason = await ensurePowerLimits())) level = 'warn';
+  if (d.start && !reason) {
     // 확인이 필요한 경우(동의·위험 정지)는 위에서 걸렀다. 그 사이 상태가 바뀌어 확인이 필요해지면 켜지 않는다
     const err = await startMining(async () => false);
     if (!err) {
@@ -978,7 +1015,7 @@ export async function autoStartMining(): Promise<void> {
   }
   if (!reason) return;
   env.log.info(`auto start skipped: ${reason}`);
-  pushAlert({ ts: Date.now(), level: 'info', code: 'auto_start_skipped', message: `채굴 자동 시작 안 함: ${reason}` }, false);
+  pushAlert({ ts: Date.now(), level, code: 'auto_start_skipped', message: `채굴 자동 시작 안 함: ${reason}` }, level === 'warn');
   env.onChange();
 }
 
@@ -1144,8 +1181,11 @@ function discoverGpus(): void {
  * 한 번 빠졌다 돌아오는 GPU 를 지우지 않도록 직전 목록이 아니라 seenGpus 기준. 아직 아무 GPU 도 못 읽었으면 거르지 않는다
  */
 function writePowerLimits(): void {
-  writeJson(file('power-limits.json'), buildLimitsJson(settings.gpus.filter((g) => !mineOff(g)), seenGpus.size ? seenGpus : undefined));
+  writeJson(file('power-limits.json'), buildLimitsJson(powerTargets(), seenGpus.size ? seenGpus : undefined));
 }
+
+/** 전력 제한 대상: 채굴하지 않기로 고른 GPU 는 뺀다 */
+const powerTargets = () => settings.gpus.filter((g) => !mineOff(g));
 
 /** 전력 제한 목표값이 NVIDIA 실제값을 따르게 하고, 값이나 GPU 구성이 바뀌면 재적용 파일도 맞춘다 */
 function followLiveLimits(): void {
@@ -1162,6 +1202,36 @@ function followLiveLimits(): void {
     writePowerLimits();
     writtenGpuSet = gpuSet;
   }
+  maybeReapplyLimits();
+}
+
+/**
+ * 재부팅·드라이버 재시작으로 기본값이 된 GPU 에 설정한 전력 제한을 다시 건다 (5분에 한 번까지).
+ * 로그온 예약 작업은 로그온할 때만 돌므로, 그 전후로 기본값이 되면 제한 없이 채굴하게 된다
+ */
+function maybeReapplyLimits(): void {
+  // Windows 만: Linux 는 polkit 규칙이 없으면 pkexec 암호 창으로 넘어가므로 무인 재적용을 하지 않는다
+  if (MOCK || PLATFORM !== 'windows' || !powerRegistered || reapplying) return;
+  const now = Date.now();
+  if (now - lastPowerApplyAt < POWER_REAPPLY_MS || now < reapplyPausedUntil) return;
+  const reset = limitsReset(powerTargets(), lastNv);
+  if (!reset.length) return;
+  reapplying = true;
+  env.log.info(`power limits back at default (${reset.join(', ')}): re-applying`);
+  void (async () => {
+    const err = await applyPowerLimits();
+    // schtasks /run 은 작업 안의 실패를 알려 주지 않으므로 실제값으로 확인한다
+    const nv = await hw.queryGpus().catch(() => null);
+    const still = err || !nv ? reset : limitsReset(powerTargets(), nv);
+    if (still.length) {
+      reapplyPausedUntil = Date.now() + POWER_REAPPLY_FAILED_MS;
+      alertOnce({ ts: Date.now(), level: 'warn', code: 'power_reapply_failed', message: `전력 제한 재적용 실패: ${err ?? `${still.join(', ')} 가 기본값 그대로입니다 (설정 → 전력 제한 적용 기록 확인)`} — 1시간 뒤 다시 시도` }, 6 * 3600_000);
+    } else {
+      alertOnce({ ts: Date.now(), level: 'info', code: 'power_reapply', message: `전력 제한 재적용: ${reset.join(', ')} (기본값으로 돌아가 있었음)` }, 3600_000);
+    }
+  })().finally(() => {
+    reapplying = false;
+  });
 }
 
 export async function poll(): Promise<void> {
@@ -1593,6 +1663,7 @@ export async function applyPowerLimits(): Promise<string | null> {
   if (MOCK) return 'mock 모드에서는 전력 제한을 적용하지 않습니다';
   writePowerLimits();
   if (!powerRegistered) return '먼저 전력 제한 등록을 1회 실행해 주세요';
+  lastPowerApplyAt = Date.now();
   try {
     await power.run();
     await sleep(4000);
