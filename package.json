@@ -130,12 +130,12 @@
     "electron-updater": "6.8.10"
   },
   "devDependencies": {
-    "@types/node": "24.19.1",
-    "electron": "44.5.1",
-    "electron-builder": "26.15.3",
+    "@types/node": "26.6.5",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
     "lightweight-charts": "5.2.1",
-    "typescript": "6.0.3",
-    "vitest": "5.0.3"
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
   },
   "homepage": "https://github.com/Ruderud/crypthy",
   "desktopName": "crypthy.desktop"
