@@ -62,6 +62,31 @@ export function followNvidiaLimits(
   return { gpus: out, seen: next, changed };
 }
 
+/**
+ * 목표 전력 제한이 실제로 걸려 있지 않은 GPU 이름 (채굴 자동 시작 전 확인).
+ * 목표가 없거나, 지금 안 보이거나, 실제값을 모르는 GPU 는 건너뛴다. 1W 이내는 같은 값으로 본다
+ */
+export function limitMismatches(gpus: GpuConfig[], live: LiveLimit[]): string[] {
+  return gpus.flatMap((g) => {
+    const nv = live.find((n) => n.busId === g.id);
+    if (g.powerLimitW === null || !nv || nv.powerLimitW === null) return [];
+    return Math.abs(nv.powerLimitW - g.powerLimitW) > 1 ? [g.label] : [];
+  });
+}
+
+/**
+ * 재부팅·드라이버 재시작으로 기본값으로 돌아간 GPU 이름 (목표가 기본값과 다를 때만).
+ * 실제값이 기본값이 아니면 넣지 않는다: 입력만 하고 아직 적용하지 않은 값을 앱이 대신 적용하지 않도록
+ */
+export function limitsReset(gpus: GpuConfig[], live: LiveLimit[]): string[] {
+  return gpus.flatMap((g) => {
+    const nv = live.find((n) => n.busId === g.id);
+    if (g.powerLimitW === null || !nv || nv.powerLimitW === null || nv.powerDefaultW === null) return [];
+    const def = Math.round(nv.powerDefaultW);
+    return Math.round(nv.powerLimitW) === def && g.powerLimitW !== def ? [g.label] : [];
+  });
+}
+
 /** min/max 는 nvidia-smi 가 알려 준 GPU 허용 범위 (모르면 100~1000W) */
 export function validateWatts(w: unknown, min: number | null = null, max: number | null = null): string | null {
   if (w === null) return null;

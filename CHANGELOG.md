@@ -15,6 +15,8 @@ Release notes on GitHub are taken from the matching section of this file.
 - Power limits stopped being re-applied after a card moved to another slot (new PCI bus id): the old id stayed in `power-limits.json` and `nvidia-smi` failed with "No devices were found". Only GPUs seen since the app started are written now, and the file is rewritten as soon as the set of GPUs changes.
 - The Windows scheduled task now ends with a failure code when a limit could not be applied, instead of reporting success in Task Scheduler.
 - Saving the GPU table no longer writes back an old power limit that changed on the card while the table was open; a live value outside the range the form accepts (for example under 100 W) is not taken over.
+- A GPU that falls back to its default power limit after a reboot or driver restart (while a lower limit is set) gets the limit re-applied by the app, at most once every 5 minutes. The logon task alone left the card unlimited when the reset happened after logon. A typed but not yet applied value is still not applied for you.
+- **Auto start mining** now checks the live power limits first, applies them if they are not in place, and skips starting (with an alert saying why) if they still do not match. The miner no longer starts at full power before the logon task has run.
 
 ## [0.6.0] - 2026-10-19
 
