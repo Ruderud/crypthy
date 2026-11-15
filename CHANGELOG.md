@@ -8,6 +8,9 @@ Release notes on GitHub are taken from the matching section of this file.
 
 ## [Unreleased]
 
+### Added
+- The dashboard shows confirmed Pearl output, balances, recent payouts, and the 24-hour effective hashrate for a configured Peryn pool and public wallet.
+
 ## [0.6.1] - 2026-10-28
 
 Power limits only. `settings.json` is read as before. The scheduled task script in `C:\ProgramData\Crypthy` is copied only when you register power limits; run **register power limits** once more to get the script that reports failures in Task Scheduler (optional).

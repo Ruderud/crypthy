@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Alert, AppState, ChartsView, CompareRow, PnlView, SaleInput, GpuConfig, GpuId, GpuView, HubView, ProfitView, Settings, SetupView, SharedLedgerView, UpdateView, Vendor } from '../shared/types';
 import { allowedLinks, knownProcessNames, loadCatalog, recommend, type Catalog } from './catalog';
-import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
+import { DEFAULT_SETTINGS, isKryptexPool, isPerynPool, mergeSettings, newGpu, parseBatArgs, readJson, shortName, validateAccount, writeJson } from './config';
 import { linuxHardware, mockHardware, mockSeed, windowsHardware } from './hardware';
 import { MINER_APIS, type MinerStats } from './minerApi';
 import {
@@ -34,7 +34,7 @@ import {
   adoptPoolState, claimAutoSellDay, createMirror, createTailReader, ensureInstanceId, poolStateOf, readPoolState, readSharedEvents, readSharedSettings,
   SHARED_SETTING_KEYS, sharedEventsFile, sharedEventsStamp, sharedRoot, sharedSettingsOf, writePoolState, writeSharedSettings, type SyncState,
 } from './shared';
-import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchVastStats, type VastStats } from './remote';
+import { fetchCoingecko, fetchKryptex, fetchKryptexPool, fetchMarketChart, fetchPerynMiner, fetchVastStats, walletAddress, type VastStats } from './remote';
 import { evaluateSafety, type SafetyState } from './safety';
 import { matchSrbDevice } from './srbminer';
 import { nextRunAt, runAutoSell, validateAutoSell, type SellResult } from './autosell';
@@ -184,6 +184,9 @@ const remote = {
   error: null as string | null,
 };
 
+let perynSnapshot: (NonNullable<ProfitView['peryn']> & { address: string }) | null = null;
+let perynRequest = 0;
+
 // ---------- 상태 ----------
 
 const holdSet = () => new Set(Object.keys(runtime.holds));
@@ -193,6 +196,27 @@ const nvOf = (id: GpuId) => lastNv.find((n) => n.busId === id);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const coin = () => catalog.coins.find((c) => c.id === settings.coin) ?? catalog.coins[0];
 const kryptexPool = () => (isKryptexPool(settings.pool) ? coin().pools.find((p) => p.stats === 'kryptex') : undefined);
+
+const perynSelected = () => coin().id === 'pearl' && isPerynPool(settings.pool);
+const perynAddress = () => perynSelected() ? walletAddress(settings.wallet) : '';
+
+async function refreshPeryn(): Promise<void> {
+  const request = ++perynRequest;
+  const address = perynAddress();
+  if (!address) {
+    perynSnapshot = null;
+    return;
+  }
+  const current = () => request === perynRequest && address === perynAddress();
+  try {
+    const stats = await fetchPerynMiner(address);
+    if (current()) perynSnapshot = { address, stats, error: null };
+  } catch (e) {
+    if (!current()) return;
+    const stats = perynSnapshot?.address === address ? perynSnapshot.stats : null;
+    perynSnapshot = { address, stats, error: (e as Error).message };
+  }
+}
 
 export function pushAlert(a: Alert, notify = a.level !== 'info' || a.code.startsWith('review')): void {
   alerts = [a, ...alerts].slice(0, MAX_ALERTS);
@@ -276,25 +300,28 @@ function profitView(gpus: GpuView[]): ProfitView {
   const usd = remote.prlUsd;
   const sum = summarize(ledger, now, usd, p);
   const supported = !!kryptexPool();
+  const showPeryn = perynSelected();
+  const peryn = perynSnapshot?.address === perynAddress() ? perynSnapshot : null;
   const hash = lastStats?.totalHashrate ?? null;
   // 채굴하지 않기로 고른 GPU 의 전력은 비용에서 뺀다
   const watts = gpus.reduce((s, g) => s + (g.present && !(g.selectable && !g.mine) ? (g.powerW ?? 0) : 0), 0);
-  const liveCoinPerH = hash && remote.pool ? prlPerHour(hash, remote.pool) : null;
+  const liveCoinPerH = !showPeryn && hash && remote.pool ? prlPerHour(hash, remote.pool) : null;
   return {
     supported,
+    ...(showPeryn ? { peryn: { stats: peryn?.stats ?? null, error: peryn?.error ?? null } } : {}),
     symbol: coin().symbol,
     price: usd === null || remote.priceAt === null ? null : { usd, at: remote.priceAt, stale: now - remote.priceAt > PRICE_STALE_MS },
     change24hPct: remote.change24h,
-    balanceCoin: remote.balance,
+    balanceCoin: showPeryn ? null : remote.balance,
     // 지급 합계는 지금까지 본 모든 지급 (지급 중 포함), 풀 누적 = 지급 + 풀 잔고 (지갑과 대조하기 쉽게 나눠 보여 준다)
     paidCoin: supported && ledger.lastTotal !== null ? ledger.paidTotal : null,
-    payingCoin: remote.payouts.some((x) => x.pending) ? remote.payouts.filter((x) => x.pending).reduce((s, x) => s + x.amount, 0) : 0,
+    payingCoin: !showPeryn && remote.payouts.some((x) => x.pending) ? remote.payouts.filter((x) => x.pending).reduce((s, x) => s + x.amount, 0) : 0,
     lifetimeCoin: supported ? (ledger.poolTotal ?? ledger.lastTotal) : null,
     liveCoinPerH,
     // 전체 GPU 전력비를 빼서 보수적으로 (채굴 안 하는 GPU 전력도 비용)
     liveKrwPerH: liveCoinPerH !== null && usd !== null ? liveCoinPerH * usd * p.krwPerUsd - (watts / 1000) * p.krwPerKwh : null,
-    today: sum.today,
-    month: sum.month,
+    today: showPeryn ? { ...sum.today, estNetKrw: null } : sum.today,
+    month: showPeryn ? { ...sum.month, estNetKrw: null } : sum.month,
     compare: compareRows(gpus),
     updatedAt: remote.updatedAt,
     error: remote.error,
@@ -1266,7 +1293,8 @@ export async function poll(): Promise<void> {
     const watts = miningWatts();
     const dt = Math.min(now - lastPollAt, 10_000);
     // 같은 시간의 해시레이트 기반 추정 채굴량 (풀 통계·채굴기 API 가 있을 때만)
-    const est = lastStats?.totalHashrate && remote.pool ? (prlPerHour(lastStats.totalHashrate, remote.pool) * dt) / 3_600_000 : 0;
+    const est = !perynSelected() && lastStats?.totalHashrate && remote.pool
+      ? (prlPerHour(lastStats.totalHashrate, remote.pool) * dt) / 3_600_000 : 0;
     ledger = recordEnergy(ledger, watts, dt, now, est);
     // 풀에 아직 반영되지 않은 몫 (다음 풀 증가 때 확정분으로 바뀜)
     addPending(pnl, settings.coin, now, est);
@@ -1315,10 +1343,12 @@ export async function poll(): Promise<void> {
 export async function refreshRemote(includeVast: boolean): Promise<void> {
   const c = coin();
   const kp = kryptexPool();
+  const wallet = settings.wallet;
   const errors: string[] = [];
   const now = Date.now();
   const models = [...new Set(settings.gpus.filter((g) => g.rentalUsdManual <= 0 && nvOf(g.id)).map((g) => shortName(nvOf(g.id)!.name)))];
   await Promise.all([
+    refreshPeryn(),
     fetchCoingecko(c.coingeckoId).then((r) => {
       if (!r) throw new Error('CoinGecko 응답 형식');
       remote.prlUsd = r.usd;
@@ -1332,11 +1362,14 @@ export async function refreshRemote(includeVast: boolean): Promise<void> {
         saveSettings();
       }
     }).catch((e) => errors.push(`시세: ${(e as Error).message}`)),
-    kp && !settings.wallet
-      ? fetchKryptexPool(kp.ticker).then((pool) => { remote.pool = pool ?? remote.pool; }).catch((e) => errors.push(`풀: ${(e as Error).message}`))
+    kp && !wallet
+      ? fetchKryptexPool(kp.ticker).then((pool) => {
+          if (kp === kryptexPool()) remote.pool = pool ?? remote.pool;
+        }).catch((e) => errors.push(`풀: ${(e as Error).message}`))
       : null,
-    kp && settings.wallet
-      ? fetchKryptex(kp.ticker, settings.wallet).then((k) => {
+    kp && wallet
+      ? fetchKryptex(kp.ticker, wallet).then((k) => {
+          if (kp !== kryptexPool() || wallet !== settings.wallet) return;
           remote.pool = k.pool ?? remote.pool;
           remote.payouts = k.payouts;
           if (k.balance !== null) {

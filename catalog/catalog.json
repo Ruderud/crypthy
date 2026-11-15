@@ -99,6 +99,17 @@
             "prl-eu.kryptex.network:8048"
           ],
           "source": "https://pool.kryptex.com/en/articles/how-to-mine-pearl-en"
+        },
+        {
+          "name": "Peryn",
+          "stats": "peryn",
+          "ticker": "prl",
+          "examples": [
+            "tokyo.pool.peryn.ai:3443",
+            "hk.pool.peryn.ai:3443",
+            "pool.peryn.ai:3443"
+          ],
+          "source": "https://peryn.ai/mine"
         }
       ],
       "tools": [

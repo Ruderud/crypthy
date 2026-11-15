@@ -88,6 +88,10 @@ export function isKryptexPool(pool: string): boolean {
   return /^([a-z0-9-]+\.)*kryptex\.network:\d+$/i.test(pool);
 }
 
+export function isPerynPool(pool: string): boolean {
+  return /^(?:[a-z0-9-]+\.)?pool\.peryn\.ai:(3333|3443)$/i.test(pool);
+}
+
 /** 기존 채굴기 bat 파일에서 --wallet / --pool 값을 읽는다 (환경변수 %X% 는 무시) */
 export function parseBatArgs(bat: string): { wallet?: string; pool?: string } {
   const flat = bat.replace(/\^\r?\n/g, ' ');
