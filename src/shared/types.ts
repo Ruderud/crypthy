@@ -256,7 +256,17 @@ export interface PeriodView {
   status: 'ok' | 'collecting' | 'noPrice';
 }
 
+export interface PerynMinerStats {
+  hashrate24h: number | null;
+  owedPrl: number;
+  pendingPrl: number;
+  paidPrl: number;
+  payouts: { at: number; amountPrl: number; status: string }[];
+  updatedAt: number;
+}
+
 export interface ProfitView {
+  peryn?: { stats: PerynMinerStats | null; error: string | null };
   supported: boolean;
   symbol: string;
   /** 시세. 조회 실패 시 마지막 정상 시세(at 시각, stale=true). 한 번도 못 받았으면 null */

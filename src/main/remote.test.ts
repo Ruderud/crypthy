@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCoingecko, parseKryptexBalance, parseKryptexPayouts, parseKryptexPool, payoutsComplete, walletAddress } from './remote';
+import { parseCoingecko, parseKryptexBalance, parseKryptexPayouts, parseKryptexPool, parsePerynMiner, payoutsComplete, walletAddress } from './remote';
 
 describe('kryptex', () => {
   it('balance uses total', () => {
@@ -47,6 +47,39 @@ describe('kryptex', () => {
 
   it('strips worker suffix from wallet', () => {
     expect(walletAddress('prl1abc.worker1')).toBe('prl1abc');
+  });
+});
+
+describe('Peryn', () => {
+  const updatedAt = '2026-11-15T10:00:00Z';
+  const payload = {
+    v: 1, unit: 'MAC/s', hashrate24h: 3.75e14, updatedAt,
+    balance: { owedPrl: '0.42000000', pendingPrl: '3.10000000', paidPrl: '25.00000000' },
+    payouts: [
+      { time: '2026-11-15T06:00:00Z', amountPrl: '1.20000000', status: 'sent' },
+      { time: '2026-11-15T08:00:00Z', amountPrl: '2.50000000', status: 'sent' },
+      { time: updatedAt, amountPrl: '1oops', status: 'sent' },
+    ],
+  };
+
+  it('uses pool lifetime totals and keeps immature rewards separate from the recent payouts', () => {
+    expect(parsePerynMiner(payload)).toEqual({
+      hashrate24h: 3.75e14,
+      owedPrl: 0.42,
+      pendingPrl: 3.1,
+      paidPrl: 25,
+      payouts: [
+        { at: Date.parse('2026-11-15T08:00:00Z'), amountPrl: 2.5, status: 'sent' },
+        { at: Date.parse('2026-11-15T06:00:00Z'), amountPrl: 1.2, status: 'sent' },
+      ],
+      updatedAt: Date.parse(updatedAt),
+    });
+  });
+
+  it('distinguishes an empty account from a malformed balance', () => {
+    const empty = { ...payload, hashrate24h: 0, balance: { owedPrl: '0', pendingPrl: '0', paidPrl: '0' }, payouts: [] };
+    expect(parsePerynMiner(empty)).toMatchObject({ hashrate24h: 0, owedPrl: 0, paidPrl: 0, payouts: [] });
+    expect(parsePerynMiner({ ...empty, balance: { ...empty.balance, paidPrl: 'bad' } })).toBeNull();
   });
 });
 

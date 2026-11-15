@@ -70,7 +70,8 @@ In the chart window (HUD **charts**, tray **open charts**), drawn with [TradingV
 
 ### Output and profit
 
-- **Live estimate (KRW/h)**: measured hashrate × expected output from pool statistics × price − measured GPU power cost. Hashrate comes from the miner's stats API (SRBMiner-MULTI with `--api-enable --api-port 21550`); pool statistics come from Kryptex and are read even without a wallet. Without a Kryptex pool, today/month estimates accumulate output and energy over the same time.
+- **Live estimate (KRW/h)**: measured hashrate × expected output from pool statistics × price − measured GPU power cost. Hashrate comes from the miner's stats API (SRBMiner-MULTI with `--api-enable --api-port 21550`); pool statistics come from Kryptex and are read even without a wallet.
+- **Peryn (Pearl)**: enter a public PRL wallet and a Peryn endpoint such as `tokyo.pool.peryn.ai:3443` in the app settings. The dashboard shows the wallet's 24-hour effective hashrate, confirmed output, balance, and the three most recent payouts. Peryn statistics are displayed directly in the pool card and are separate from the profit ledger. Configure the miner's pool arguments independently.
 - **Today / this month profit** (with a Kryptex pool): (pool-confirmed output + backfilled output + live estimate not yet reflected by the pool) × price − power cost of the same period. Each pool increase is split across days by time since the previous increase, so an increase that spans midnight is shared by both days. The live estimate is replaced by the confirmed amount once the pool shows it. The breakdown is shown under the number and in its tooltip. **Lifetime output** is the pool's public cumulative total (unpaid balance + payouts) and includes mining before the app was started. It is shown split into paid, paying and pool balance (unpaid) so you can compare it with your wallet; the PnL cumulative output equals it, with the live estimate shown separately. A payout is identified by its time and amount, so a payout that goes from paying to finished is counted once.
 - **Price**: CoinGecko, converted with the exchange rate in settings. On failure the last good price is used with its time (marked stale after 30 minutes); with no price at all, net profit is not calculated and "no price" is shown.
 - **Mining vs rental** (information only): per-GPU mining net vs rental net (listed price × host share − power while rented), with review alerts when renting wins, a per-GPU price threshold is exceeded, or the coin price drops by a set percentage.
@@ -409,7 +410,7 @@ rm ~/safetrade-key.json
 - It does not download or install miners and does not build miner command lines. It only starts or stops the miner you configured, when you click.
 - Outgoing requests are public reads, plus SafeTrade API calls signed with your key while auto-sell is set up:
   - CoinGecko prices
-  - Kryptex pool statistics and public wallet balance
+  - Kryptex pool statistics and public wallet balance, or Peryn public wallet statistics
   - Vast.ai public offers
   - GitHub Releases update checks
   - SafeTrade order book, balance and limit sell orders (auto-sell only)

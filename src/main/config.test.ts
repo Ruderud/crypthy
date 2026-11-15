@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, isKryptexPool, mergeSettings, newGpu, parseBatArgs, shortName, validateAccount } from './config';
+import { DEFAULT_SETTINGS, isKryptexPool, isPerynPool, mergeSettings, newGpu, parseBatArgs, shortName, validateAccount } from './config';
 
 const WALLET = 'prl1qexampleexampleexampleexample.worker1';
+
+describe('isPerynPool', () => {
+  it('accepts published Peryn hosts and ports only', () => {
+    expect(isPerynPool('pool.peryn.ai:3333')).toBe(true);
+    expect(isPerynPool('tokyo.pool.peryn.ai:3443')).toBe(true);
+    expect(isPerynPool('pool.peryn.ai.example:3443')).toBe(false);
+    expect(isPerynPool('prl-hk.kryptex.network:8048')).toBe(false);
+    expect(isPerynPool('pool.peryn.ai:8048')).toBe(false);
+  });
+});
 
 describe('defaults', () => {
   it('ship no personal values and keep safety stop on', () => {

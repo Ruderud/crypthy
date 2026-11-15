@@ -264,8 +264,10 @@ function renderGpus(st: AppState) {
 function renderDash(st: AppState) {
   const p = st.profit;
   const sym = esc(p.symbol);
-  $('poolSub').textContent = p.supported ? '' : '(Kryptex 풀이 아니면 풀 통계 없음)';
-  $('poolStats').innerHTML = p.supported
+  $('poolSub').textContent = p.peryn ? 'Peryn' : p.supported ? 'Kryptex' : '';
+  $('poolStats').innerHTML = p.peryn
+    ? renderPerynPool(p.peryn, st.setup.walletSet)
+    : p.supported
     ? [
         stat('풀 잔고 (미지급)', `${n(p.balanceCoin, 4)} ${sym}`),
         stat('지급 완료 / 지급 중', `${n(p.paidCoin === null ? null : p.paidCoin - p.payingCoin, 4)} / ${n(p.payingCoin, 4)}`),
@@ -292,6 +294,27 @@ function renderDash(st: AppState) {
     dm.className = 'small warn';
     dm.textContent = `카드 선택을 적용할 수 없음 — 모든 카드로 채굴 중 (${sel.reason})`;
   }
+}
+
+function renderPerynPool(pool: NonNullable<AppState['profit']['peryn']>, walletSet: boolean): string {
+  const { stats, error } = pool;
+  if (!walletSet) return stat('지갑', '공개 PRL 지갑 주소를 입력해 주세요');
+  if (!stats) return stat('풀 통계', error ? esc(error) : '조회 중');
+  const prl = (amount: number) => n(amount, 4, ' PRL');
+  const rows = [
+    stat('풀 유효 해시레이트 (24시간)', n(stats.hashrate24h === null ? null : stats.hashrate24h / 1e12, 1, ' TH/s')),
+    stat('누적 확정 채굴량', prl(stats.owedPrl + stats.paidPrl)),
+    stat('풀 잔고 (확정 · 미지급)', prl(stats.owedPrl)),
+    stat('확정 대기', prl(stats.pendingPrl)),
+    stat('지급 완료', prl(stats.paidPrl)),
+  ];
+  for (const payout of stats.payouts) {
+    const date = new Date(payout.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    rows.push(stat(`최근 지급 · ${date}`, `${prl(payout.amountPrl)} · ${esc(payout.status === 'sent' ? '전송됨' : payout.status)}`));
+  }
+  const at = new Date(stats.updatedAt).toLocaleString('ko-KR');
+  rows.push(stat('풀 집계 시각', error ? `${esc(at)} · <span class="warn">갱신 실패 (${esc(error)})</span>` : esc(at)));
+  return rows.join('');
 }
 
 /** 대시보드의 최근 1시간 해시 추이선 (차트 창 데이터의 GPU 합계) */
@@ -370,7 +393,7 @@ function renderProfit(p: AppState['profit'], pnl: AppState['pnl']): string {
     rows.push(
       stat('오늘 추정 순수익', est(p.today)),
       stat('이번 달 추정 순수익', est(p.month)),
-      stat('풀 확정 채굴량', '지갑과 Kryptex 풀(*.kryptex.network)을 입력하면 표시합니다'),
+      stat('풀 확정 채굴량', p.peryn ? '대시보드의 Peryn 풀 통계에서 확인할 수 있습니다' : '지갑과 Kryptex 또는 Peryn 풀을 입력하면 표시합니다'),
     );
   }
   return rows.join('');

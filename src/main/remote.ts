@@ -1,4 +1,5 @@
 // 공개 API 조회 (인증 없음). 지갑은 공개 주소만 사용한다.
+import type { PerynMinerStats } from '../shared/types';
 import type { Payout, PoolStats } from './profit';
 
 type Obj = Record<string, unknown>;
@@ -85,6 +86,46 @@ export async function fetchKryptex(ticker: string, wallet: string) {
     getJson(`${base}/pool/stats`),
   ]);
   return { balance: parseKryptexBalance(bal), payouts: parseKryptexPayouts(pay), payoutsComplete: payoutsComplete(pay), pool: parseKryptexPool(pool) };
+}
+
+// ---- Peryn public miner API ----
+
+export function parsePerynMiner(json: unknown): PerynMinerStats | null {
+  if (!isObj(json) || json.v !== 1 || json.unit !== 'MAC/s' || !isObj(json.balance) || !Array.isArray(json.payouts)) return null;
+  const amount = (v: unknown) => {
+    const n = typeof v === 'string' && /^\d+(?:\.\d+)?$/.test(v) ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
+  };
+  const { owedPrl, pendingPrl, paidPrl } = json.balance;
+  const owed = amount(owedPrl);
+  const pending = amount(pendingPrl);
+  const paid = amount(paidPrl);
+  const updatedAt = parseTime(json.updatedAt);
+  if (owed === null || pending === null || paid === null || updatedAt === null) return null;
+  const hash = json.hashrate24h;
+  const payouts: PerynMinerStats['payouts'] = [];
+  for (const row of json.payouts) {
+    if (!isObj(row) || typeof row.status !== 'string' || !row.status) continue;
+    const amountPrl = amount(row.amountPrl);
+    const at = parseTime(row.time);
+    if (at !== null && amountPrl !== null) payouts.push({ at, amountPrl, status: row.status });
+  }
+  payouts.sort((a, b) => b.at - a.at);
+  return {
+    hashrate24h: typeof hash === 'number' && Number.isFinite(hash) && hash >= 0 ? hash : null,
+    owedPrl: owed,
+    pendingPrl: pending,
+    paidPrl: paid,
+    payouts: payouts.slice(0, 3),
+    updatedAt,
+  };
+}
+
+export async function fetchPerynMiner(wallet: string): Promise<PerynMinerStats> {
+  const address = encodeURIComponent(walletAddress(wallet));
+  const stats = parsePerynMiner(await getJson(`https://app.peryn.ai/api/v1/miner/${address}?limit=1`));
+  if (!stats) throw new Error('Peryn 응답 형식');
+  return stats;
 }
 
 // ---- CoinGecko ----
